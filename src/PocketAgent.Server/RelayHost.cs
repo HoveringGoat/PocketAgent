@@ -15,6 +15,7 @@ public static class RelayHost
         var settings = configured ?? builder.Configuration.GetSection("PocketAgent").Get<HostSettings>() ?? new();
         settings.Validate();
         builder.Logging.ClearProviders();
+        var certificates = new AutomaticCertificates(settings);
 
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -22,24 +23,35 @@ public static class RelayHost
             options.Listen(IPAddress.Parse(settings.ListenAddress), settings.Port, listener =>
             {
                 if (settings.UseHttps)
+                {
+                    if (settings.AutomaticCertificate)
+                        listener.UseHttps(certificates.ConfigureHttps);
+                    else
                     // Windows Schannel requires a user-backed private key for TLS handshakes.
                     listener.UseHttps(X509CertificateLoader.LoadPkcs12FromFile(settings.CertificatePath, null,
                         OperatingSystem.IsWindows() ? X509KeyStorageFlags.UserKeySet : X509KeyStorageFlags.EphemeralKeySet));
+                }
             });
         });
         builder.Services.AddSingleton(settings);
-        builder.Services.AddHostedService<HostLease>();
-        builder.Services.AddSingleton<LocalStore>();
+        builder.Services.AddSingleton(certificates);
+        builder.Services.AddSingleton<HostLease>();
+        builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<HostLease>());
+        builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<AutomaticCertificates>());
+        builder.Services.AddSingleton(serviceProvider =>
+        {
+            // Service construction can precede hosted-service startup. Acquire ownership before schema migration.
+            serviceProvider.GetRequiredService<HostLease>().Acquire();
+            return new LocalStore(settings);
+        });
         builder.Services.AddSingleton<PairingCode>();
         builder.Services.AddSingleton<CodexConnection>();
         builder.Services.AddSingleton<ProviderDiagnostics>();
         builder.Services.AddSingleton<ProviderUsage>();
+        builder.Services.AddSingleton<WorkspaceDirectories>();
+        builder.Services.AddSingleton<ConnectivityDiagnostics>();
         builder.Services.AddSingleton<ProgressPublisher>();
-        builder.Services.AddSingleton(serviceProvider => new Conversations(
-            serviceProvider.GetRequiredService<CodexConnection>(),
-            serviceProvider.GetRequiredService<LocalStore>(),
-            serviceProvider.GetRequiredService<ProgressPublisher>(), settings, serviceProvider.GetRequiredService<ProviderUsage>())
-        { Repository = settings.RepositoryPath });
+        builder.Services.AddSingleton<Conversations>();
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<Conversations>());
         builder.Services.AddSingleton<ScheduledMessages>();
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ScheduledMessages>());
@@ -62,7 +74,7 @@ public static class RelayHost
             context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
             var localAuthority = new Uri(settings.Origin).Authority;
-            var publicAuthority = settings.PublicOrigin.Length > 0 ? new Uri(settings.PublicOrigin).Authority : null;
+            var publicAuthority = settings.DirectOrigin.Length > 0 || settings.PublicOrigin.Length > 0 ? new Uri(settings.ClientOrigin).Authority : null;
             if (!string.Equals(context.Request.Host.Value, localAuthority, StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(context.Request.Host.Value, publicAuthority, StringComparison.OrdinalIgnoreCase))
             {
@@ -73,7 +85,7 @@ public static class RelayHost
             var isMutation = context.Request.Method is not "GET" and not "HEAD" and not "OPTIONS";
             var origin = context.Request.Headers.Origin.ToString();
             var validOrigin = string.Equals(origin, settings.Origin, StringComparison.OrdinalIgnoreCase) ||
-                (settings.PublicOrigin.Length > 0 && string.Equals(origin, settings.PublicOrigin, StringComparison.OrdinalIgnoreCase));
+                ((settings.DirectOrigin.Length > 0 || settings.PublicOrigin.Length > 0) && string.Equals(origin, settings.ClientOrigin, StringComparison.OrdinalIgnoreCase));
             if ((origin.Length > 0 && !validOrigin) || (isHub && !validOrigin) ||
                 (isMutation && !isHub && context.Request.Headers["X-PocketAgent"] != "1"))
             {
@@ -138,6 +150,8 @@ public static class RelayHost
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/provider/status", (ProviderDiagnostics diagnostics) => diagnostics.Check());
+        api.MapGet("/models", (ProviderDiagnostics diagnostics) => diagnostics.Models());
+        api.MapGet("/directories", (string? path, WorkspaceDirectories directories) => directories.Browse(path));
         api.MapGet("/usage", (ProviderUsage usage) => usage.Check());
         api.MapGet("/scheduled", (LocalStore store) => store.Scheduled());
         api.MapGet("/conversations/{id}/scheduled", (string id, LocalStore store) => store.Scheduled(id));
@@ -150,9 +164,12 @@ public static class RelayHost
             context.Response.Cookies.Delete(DeviceAuthentication.CookieName);
             return Results.NoContent();
         });
-        api.MapGet("/conversations", (Conversations conversations) => conversations.List());
-        api.MapPost("/conversations", async (CreateInput input, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "")));
+        api.MapGet("/conversations", (bool? archived, Conversations conversations) => conversations.List(archived ?? false));
+        api.MapPost("/conversations", async (CreateInput input, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model)));
         api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, Conversations conversations) => conversations.Rename(id, input.Title ?? ""));
+        api.MapPost("/conversations/{id}/model", (string id, ModelInput input, Conversations conversations) => conversations.SetModel(id, input.Model ?? ""));
+        api.MapPost("/conversations/{id}/archive", (string id, Conversations conversations) => conversations.Archive(id, true));
+        api.MapPost("/conversations/{id}/restore", (string id, Conversations conversations) => conversations.Archive(id, false));
         api.MapGet("/conversations/{id}", (string id, Conversations conversations) => conversations.Get(id));
         api.MapPost("/conversations/{id}/messages", async (string id, MessageInput input, ScheduledMessages messages, HttpContext context) =>
         {
@@ -176,6 +193,7 @@ public static class RelayHost
 }
 
 public sealed record PairInput(string? Code, string? DeviceName);
-public sealed record CreateInput(string? Title);
+public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null);
+public sealed record ModelInput(string? Model);
 public sealed record MessageInput(string? Text, string? ExpectedTurnId = null);
 public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt);

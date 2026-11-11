@@ -14,11 +14,14 @@ public sealed class HostSettings
     public string CodexExecutable { get; set; } = "";
     public string CodexExtensionsDirectory { get; set; } = "";
     public string PublicOrigin { get; set; } = "";
+    public string DirectOrigin { get; set; } = "";
+    public bool AutomaticCertificate { get; set; }
+    public int AcmePort { get; set; } = 5080;
     public string PermissionMode { get; set; } = "inherit";
     public string[] CodexArguments { get; set; } = [];
     public bool UseHttps => CertificatePath.Length > 0;
     public string Origin => $"{(UseHttps ? "https" : "http")}://{ListenAddress}:{Port}";
-    public string ClientOrigin => PublicOrigin.Length > 0 ? PublicOrigin : Origin;
+    public string ClientOrigin => DirectOrigin.Length > 0 ? DirectOrigin : PublicOrigin.Length > 0 ? PublicOrigin : Origin;
 
     public void Validate(bool requireRepository = true, bool creatingCertificate = false)
     {
@@ -34,6 +37,20 @@ public sealed class HostSettings
             throw new InvalidOperationException("LAN access requires a private IPv4 address and CertificatePath. Run certificate setup first.");
         if (Port is < 1024 or > 65535)
             throw new InvalidOperationException("Port must be between 1024 and 65535.");
+        if (AutomaticCertificate && (DirectOrigin.Length == 0 || !UseHttps || AcmePort is < 1024 or > 65535 || AcmePort == Port))
+            throw new InvalidOperationException("Automatic HTTPS requires a direct internet address, certificate path and a separate challenge listener port between 1024 and 65535.");
+        if (DirectOrigin.Length > 0)
+        {
+            if (!Uri.TryCreate(DirectOrigin, UriKind.Absolute, out var direct) || direct.Scheme != "https" ||
+                direct.UserInfo.Length > 0 || direct.AbsolutePath != "/" || direct.Query.Length > 0 || direct.Fragment.Length > 0 || direct.Port is < 1 or > 65535 ||
+                !IPAddress.TryParse(direct.Host, out var publicIp) || !IsPublicIPv4(publicIp))
+                throw new InvalidOperationException("Direct internet address must be https://<public-IPv4>:<external-port> without a path or credentials. Use your router's WAN address, not a private or carrier-grade NAT address.");
+            if (PublicOrigin.Length > 0 || !UseHttps && !creatingCertificate)
+                throw new InvalidOperationException("Direct internet requires a server certificate and cannot be combined with proxy/tunnel mode.");
+            DirectOrigin = direct.GetLeftPart(UriPartial.Authority);
+            if (AutomaticCertificate && direct.Port == 80)
+                throw new InvalidOperationException("Use a chat port other than public TCP 80; TCP 80 is reserved for certificate validation.");
+        }
         if (PublicOrigin.Length > 0)
         {
             if (!Uri.TryCreate(PublicOrigin, UriKind.Absolute, out var origin) || origin.Scheme != "https" ||
@@ -51,6 +68,14 @@ public sealed class HostSettings
             CodexArguments = ["app-server", "--listen", "stdio://"];
     }
 
+    public static bool IsPublicIPv4(IPAddress address)
+    {
+        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        var bytes = address.GetAddressBytes();
+        return !IPAddress.IsLoopback(address) && !IsPrivate(address) && bytes[0] is > 0 and < 224 &&
+            !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127) && !(bytes[0] == 169 && bytes[1] == 254);
+    }
+
     private static bool IsPrivate(IPAddress address)
     {
         var bytes = address.GetAddressBytes();
@@ -60,7 +85,7 @@ public sealed class HostSettings
 
 public static class CertificateSetup
 {
-    public static void Create(string directory, string ip)
+    public static void Create(string directory, string ip, string? additionalIp = null)
     {
         if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
             throw new InvalidOperationException("Certificate setup requires an IPv4 address.");
@@ -77,6 +102,12 @@ public static class CertificateSetup
         var request = new CertificateRequest($"CN={ip}", serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         var names = new SubjectAlternativeNameBuilder();
         names.AddIpAddress(address);
+        if (additionalIp is not null)
+        {
+            if (!IPAddress.TryParse(additionalIp, out var additional) || additional.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                throw new InvalidOperationException("Additional certificate address must be IPv4.");
+            if (!additional.Equals(address)) names.AddIpAddress(additional);
+        }
         request.CertificateExtensions.Add(names.Build());
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));

@@ -19,6 +19,8 @@ import org.json.JSONObject;
 public final class SmokeInstrumentation extends Instrumentation {
   private Bundle arguments;
   private Activity activity;
+  private String checkStage = "startup";
+  private String workspace;
 
   @Override
   public void onCreate(Bundle args) {
@@ -47,16 +49,27 @@ public final class SmokeInstrumentation extends Instrumentation {
                             .equals("Next draft")));
         result.putString("checks", "encrypted-session restoration and draft restoration passed");
       } else {
+        workspace =
+            new String(
+                android.util.Base64.decode(
+                    arguments.getString("workspaceBase64"), android.util.Base64.DEFAULT),
+                java.nio.charset.StandardCharsets.UTF_8);
         await(() -> main(() -> description("Server address") != null));
+        check(
+            ApiClient.normalizeOrigin("203.0.113.10:5147").equals("https://203.0.113.10:5147"),
+            "Bare IP and port must default to HTTPS.");
         main(
             () -> {
               ((EditText) description("Server address")).setText(arguments.getString("origin"));
               ((EditText) description("Desktop pairing code")).setText(arguments.getString("code"));
-              text("Connect").performClick();
               return true;
             });
+        main(() -> text("Test connection").performClick());
+        await(() -> containsPart("Reached PocketAgent"));
+        main(() -> text("Connect").performClick());
         await(this::connected);
         main(() -> description("New conversation").performClick());
+        dialogClick("Create conversation");
         await(() -> main(() -> description("Conversation PocketAgent") != null));
         boolean persistedBeforeDelivery =
             main(
@@ -140,6 +153,7 @@ public final class SmokeInstrumentation extends Instrumentation {
           dialogClick("Work");
           await(this::connected);
           main(() -> description("New conversation").performClick());
+          dialogClick("Create conversation");
           await(() -> main(() -> description("Conversation PocketAgent") != null));
           main(
               () -> {
@@ -162,6 +176,71 @@ public final class SmokeInstrumentation extends Instrumentation {
                           .equals("Next draft")),
               "Draft leaked or was lost when switching servers.");
         }
+        // Create a second conversation in another folder without disturbing the first draft.
+        checkStage = "new folder dialog";
+        main(() -> description("New conversation").performClick());
+        dialogSetText("Conversation working folder", workspace);
+        checkStage = "new model dialog";
+        dialogClick("Model: Use Codex settings");
+        dialogClick("GPT-6 Astra");
+        dialogClick("Create conversation");
+        checkStage = "new folder creation";
+        await(() -> containsPart(workspace));
+        String unicodePrompt = "unicode:focus";
+        String unicodeReply = "It\u2019s ready \u2014 caf\u00e9 \u6f22\u5b57 \ud83d\ude00.";
+        main(
+            () -> {
+              ((EditText) description("Message Codex")).setText(unicodePrompt);
+              description("Send message").performClick();
+              EditText input = (EditText) description("Message Codex");
+              input.setText("Still typing");
+              input.requestFocus();
+              input.setSelection(5);
+              return true;
+            });
+        await(() -> contains(unicodeReply));
+        check(
+            main(
+                () -> {
+                  EditText input = (EditText) description("Message Codex");
+                  return input.hasFocus()
+                      && input.getSelectionStart() == 5
+                      && input.getSelectionEnd() == 5
+                      && input.getText().toString().equals("Still typing");
+                }),
+            "Incoming assistant output stole input focus, cursor position, or draft text.");
+        checkStage = "message appearance";
+        check(
+            main(
+                () ->
+                    text(unicodePrompt).getBackground() != null
+                        && text(unicodeReply).getBackground() == null),
+            "Only user messages should have chat bubbles.");
+        main(() -> description("Connection options").performClick());
+        checkStage = "change model";
+        dialogClick("Choose model");
+        dialogClick("GPT-5.6 Sol");
+        await(() -> containsPart("gpt-5.6-sol"));
+        checkStage = "archive";
+        main(() -> description("Connection options").performClick());
+        dialogClick("Archive conversation");
+        dialogClick("Archive");
+        await(() -> contains("Focus on tests"));
+        checkStage = "restore archive";
+        main(() -> description("Connection options").performClick());
+        dialogClick("Archived conversations");
+        dialogClick(new File(workspace).getName());
+        dialogClick("Restore");
+        await(() -> contains(unicodeReply));
+        Bitmap unicodeScreenshot = getUiAutomation().takeScreenshot();
+        if (unicodeScreenshot != null)
+          try (FileOutputStream output =
+              new FileOutputStream(new File(getTargetContext().getCacheDir(), "native-chat.png"))) {
+            unicodeScreenshot.compress(Bitmap.CompressFormat.PNG, 100, output);
+          }
+        main(() -> description("Conversation PocketAgent").performClick());
+        checkStage = "original conversation";
+        await(() -> contains("Focus on tests"));
         org.json.JSONObject session = new SessionStore(getTargetContext()).load();
         check(
             session != null && !session.optString("token").isEmpty(),
@@ -179,6 +258,18 @@ public final class SmokeInstrumentation extends Instrumentation {
       finish(Activity.RESULT_OK, result);
     } catch (Exception exception) {
       // Test errors must never include the pairing code or device token.
+      result.putString("stage", checkStage);
+      if (exception.getStackTrace().length > 0) {
+        StringBuilder frames = new StringBuilder();
+        for (StackTraceElement frame : exception.getStackTrace())
+          if (frame.getClassName().startsWith("dev.pocketagent"))
+            frames
+                .append(frame.getFileName())
+                .append(':')
+                .append(frame.getLineNumber())
+                .append(' ');
+        result.putString("location", frames.toString());
+      }
       result.putString(
           "failure",
           exception.getClass().getSimpleName()
@@ -264,6 +355,34 @@ public final class SmokeInstrumentation extends Instrumentation {
           return false;
         });
     Thread.sleep(150);
+  }
+
+  private android.view.accessibility.AccessibilityNodeInfo described(
+      android.view.accessibility.AccessibilityNodeInfo parent, String name) {
+    if (parent == null) return null;
+    if (parent.getContentDescription() != null
+        && name.contentEquals(parent.getContentDescription())) return parent;
+    for (int i = 0; i < parent.getChildCount(); i++) {
+      android.view.accessibility.AccessibilityNodeInfo found = described(parent.getChild(i), name);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  private void dialogSetText(String description, String value) throws Exception {
+    await(
+        () -> {
+          android.view.accessibility.AccessibilityNodeInfo field =
+              described(getUiAutomation().getRootInActiveWindow(), description);
+          if (field == null) return false;
+          Bundle data = new Bundle();
+          data.putCharSequence(
+              android.view.accessibility.AccessibilityNodeInfo
+                  .ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+              value);
+          return field.performAction(
+              android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, data);
+        });
   }
 
   private boolean connected() throws Exception {

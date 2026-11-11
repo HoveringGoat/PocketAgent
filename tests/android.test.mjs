@@ -62,6 +62,9 @@ test(
         '-e',
         'secondCode',
         second.pairingCode,
+        '-e',
+        'workspaceBase64',
+        Buffer.from(relay.directory, 'utf8').toString('base64'),
         'dev.pocketagent/.SmokeInstrumentation',
       );
       assert.ok(

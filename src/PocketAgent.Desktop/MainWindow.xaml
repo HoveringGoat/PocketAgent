@@ -1,5 +1,5 @@
 <Window x:Class="PocketAgent.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="PocketAgent" Width="1150" Height="820" MinWidth="800" MinHeight="580" Closing="WindowClosing">
-  <Grid Margin="22">
+  <Grid Margin="22" TextElement.Foreground="#C1DAA6">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Margin="0,0,0,20">
       <StackPanel DockPanel.Dock="Left"><TextBlock Text="PocketAgent" FontSize="28" FontWeight="Bold"/><TextBlock x:Name="ServerStatus" Text="Server stopped" Foreground="#A7BAA7"/><TextBlock x:Name="UsageDisplay" Foreground="#C1DAA6" FontSize="12"/></StackPanel>
@@ -9,11 +9,11 @@
       <TabItem Header="Sessions">
         <Grid Margin="0,16,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <DockPanel Margin="0,0,0,12"><Button DockPanel.Dock="Right" Content="+" AutomationProperties.Name="New conversation" Click="NewConversation"/><ListBox x:Name="SessionList" Background="#18271F" Foreground="#EBF1EA" BorderThickness="0" DisplayMemberPath="Label" SelectionChanged="SessionSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"><ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel><ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="16,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style></ListBox.ItemContainerStyle></ListBox></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button DockPanel.Dock="Right" Content="+" AutomationProperties.Name="New conversation" Click="NewConversation"/><Button DockPanel.Dock="Right" Content="Archived" Click="ShowArchived"/><ListBox x:Name="SessionList" Background="#18271F" Foreground="#EBF1EA" BorderThickness="0" DisplayMemberPath="Label" SelectionChanged="SessionSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"><ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel><ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource ReadableListItem}"><Setter Property="Padding" Value="16,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style></ListBox.ItemContainerStyle></ListBox></DockPanel>
           <Grid Grid.Row="1" x:Name="ConversationPanel" IsEnabled="False">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <DockPanel><Button DockPanel.Dock="Right" Content="Rename" Click="RenameConversation"/><TextBlock x:Name="ConversationTitle" Text="Select a conversation" FontSize="22" VerticalAlignment="Center"/></DockPanel>
-            <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" Margin="0,12"><StackPanel x:Name="Transcript"/></ScrollViewer>
+            <DockPanel><Button DockPanel.Dock="Right" Content="Archive" Click="ArchiveConversation"/><Button DockPanel.Dock="Right" Content="Rename" Click="RenameConversation"/><Button DockPanel.Dock="Right" x:Name="ModelButton" Content="Model" Click="ChangeModel"/><TextBlock x:Name="ConversationTitle" Text="Select a conversation" FontSize="22" VerticalAlignment="Center"/></DockPanel>
+            <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" Margin="0,12"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
             <!-- Native equivalent of conversation-meta: outside the transcript, immediately above input. -->
             <Border Grid.Row="2" Background="#213128" Padding="12,8" Margin="0,0,0,6">
               <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="Stop work" Click="InterruptWork"/><TextBlock x:Name="ConversationMeta" VerticalAlignment="Center" Foreground="#C1DAA6"/></DockPanel>
@@ -27,8 +27,10 @@
       </TabItem>
       <TabItem Header="Devices">
         <ScrollViewer><StackPanel Margin="20" MaxWidth="730" HorizontalAlignment="Left">
-          <TextBlock Text="Connect your phone" FontSize="24"/><TextBlock Text="Enter this server address and the code in the Android app. Internet access needs a configured tunnel or reverse proxy." Margin="0,10"/>
+          <TextBlock Text="Connect your phone" FontSize="24"/><TextBlock Text="Enter this server address and the code in the Android app. Direct internet requires router forwarding; trusted HTTPS setup handles certificates automatically." Margin="0,10"/>
+          <TextBlock x:Name="CertificateStatus" TextWrapping="Wrap" Foreground="#C1DAA6"/>
           <TextBox x:Name="ConnectionAddress" IsReadOnly="True"/><Button Content="Copy address" Click="CopyAddress" HorizontalAlignment="Left"/>
+          <Button Content="Connection diagnostics" Click="CheckConnectivity" HorizontalAlignment="Left"/>
           <Button Content="Locate Android installer APK" Click="LocateAndroid" HorizontalAlignment="Left"/>
           <TextBlock x:Name="PairingDisplay" FontSize="32" FontWeight="Bold" Margin="0,18,0,4"/><TextBlock x:Name="PairingExpiry"/><Button Content="Generate new pairing code" Click="RenewPairing" HorizontalAlignment="Left"/>
           <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><StackPanel x:Name="DeviceList"/>
@@ -37,7 +39,7 @@
       <TabItem Header="Settings">
         <ScrollViewer><StackPanel Margin="20" MaxWidth="760" HorizontalAlignment="Left" MinWidth="580">
           <TextBlock Text="Desktop setup" FontSize="24"/><TextBlock Text="Save settings while the server is stopped. Credentials stay on this computer." Margin="0,8,0,18"/>
-          <TextBlock Text="Working repository"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>
+          <TextBlock Text="Default working folder (new conversations can choose another)"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>
           <TextBlock Text="Codex executable override (leave blank to prefer VS Code)"/><TextBox x:Name="CodexSetting"/><TextBlock x:Name="CodexResolved" Foreground="#A7BAA7" Margin="0,0,0,14"/>
           <TextBlock Text="Codex permissions"/>
           <ComboBox x:Name="PermissionModeSetting" SelectedValuePath="Tag" Padding="10" Margin="0,5,0,8" AutomationProperties.Name="Codex permissions">
@@ -47,19 +49,18 @@
           </ComboBox>
           <TextBlock Text="Full access permits filesystem and network actions without command approvals. Save while stopped, then start the server. Applies to new and resumed PocketAgent conversations; managed restrictions remain authoritative." Foreground="#A7BAA7" Margin="0,0,0,16"/>
           <TextBlock Text="Listener IPv4 address / port"/><DockPanel><TextBox x:Name="PortSetting" DockPanel.Dock="Right" Width="90" Margin="10,5,0,12"/><TextBox x:Name="AddressSetting"/></DockPanel>
-          <Button Content="Set up Wi-Fi HTTPS…" Click="SetupWifi" HorizontalAlignment="Left"/>
-          <TextBlock Text="Wi-Fi setup selects a private desktop address and generates its certificate. Install the public CA certificate on your phone. The server must be stopped to apply it." Foreground="#A7BAA7" Margin="0,5,0,14"/>
-          <TextBlock Text="Certificate PFX path (only for direct LAN HTTPS)"/><TextBox x:Name="CertificateSetting"/>
-          <TextBlock Text="Public HTTPS address (e.g. https://pocket.example.com)"/><TextBox x:Name="PublicOriginSetting"/>
-          <TextBlock Text="cloudflared executable (blank uses packaged tools/cloudflared.exe)"/><TextBox x:Name="TunnelExecutableSetting"/>
-          <TextBlock Text="Named tunnel configuration file path (keep credentials outside the app folder)"/><TextBox x:Name="TunnelConfigurationSetting"/>
+          <Button Content="Set up direct internet (IP + port)…" Click="SetupDirectInternet" HorizontalAlignment="Left"/>
+          <TextBlock Text="Direct internet HTTPS address (public IPv4 + external port)"/><TextBox x:Name="DirectOriginSetting"/>
+          <TextBlock Text="Forward the chat TCP port to the desktop listener and router TCP 80 to the validation port shown during setup. Trusted HTTPS renews automatically while the server runs; no phone certificate installation is needed. Router/firewall rules are configured manually." TextWrapping="Wrap" Margin="0,0,0,12"/>
+          <Expander Header="Advanced certificate settings" Margin="0,10">
+            <StackPanel>
+              <TextBlock Text="Server certificate PFX path (managed by trusted HTTPS setup)"/><TextBox x:Name="CertificateSetting"/>
+              <Button Content="Manual Wi-Fi certificate setup…" Click="SetupWifi" HorizontalAlignment="Left"/>
+              <TextBlock Text="Local-only fallback: generates a private CA that must be installed manually on the phone. Trusted internet HTTPS does not require this." Foreground="#A7BAA7"/>
+            </StackPanel>
+          </Expander>
           <WrapPanel><Button x:Name="SaveButton" Content="Save settings" Click="SaveSettings"/><Button Content="Check Codex sign-in" Click="CheckProvider"/><Button Content="Open setup guide" Click="OpenGuide"/></WrapPanel>
           <TextBlock x:Name="ProviderDisplay" Margin="0,12" Foreground="#C1DAA6"/>
-          <TextBlock Text="Internet connector" FontSize="21" Margin="0,18,0,8"/><TextBlock Text="Your named tunnel needs a Cloudflare account, domain, and local configuration. Starting it exposes the paired-device API at your public address. It does not expose desktop administration."/>
-          <TextBlock Text="For a temporary trial, Quick Tunnel provides an HTTPS address without an account or domain. Its address changes on restart and has no uptime guarantee. Both modes send traffic through Cloudflare." Margin="0,10"/>
-          <WrapPanel><Button Content="Prepare internet listener" Click="PrepareInternet"/><Button Content="Start temporary internet" Click="StartTemporaryInternet"/></WrapPanel>
-          <Button Content="Create named tunnel configuration…" Click="CreateTunnelConfiguration" HorizontalAlignment="Left"/>
-          <WrapPanel><Button Content="Start internet connector" Click="StartInternet"/><Button Content="Stop internet connector" Click="StopInternet"/></WrapPanel><TextBlock x:Name="InternetStatus" Text="Connector stopped" Margin="0,10"/>
         </StackPanel></ScrollViewer>
       </TabItem>
     </TabControl>

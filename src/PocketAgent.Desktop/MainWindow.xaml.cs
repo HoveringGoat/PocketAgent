@@ -18,9 +18,13 @@ namespace PocketAgent.Desktop;
 
 public partial class MainWindow : Window
 {
+    // Keep a large or tool-heavy conversation from making the WPF visual tree
+    // unbounded while a turn is streaming. The complete history remains in
+    // Codex; this is only a rendering budget for the desktop view.
+    private const int MaxRenderedItems = 400;
+    private const int MaxRenderedCharacters = 300_000;
     private DesktopSettings settings = new();
     private WebApplication? relay;
-    private readonly InternetConnector connector = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Dictionary<string, string> drafts = [];
     private ConversationSnapshot? conversation;
@@ -33,7 +37,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        connector.AddressChanged += address => { if (!Dispatcher.HasShutdownStarted) Dispatcher.InvokeAsync(() => ConnectionAddress.Text = address); };
         Title = $"PocketAgent Server {BuildInfo.Version}";
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
@@ -47,9 +50,7 @@ public partial class MainWindow : Window
         AddressSetting.Text = settings.Host.ListenAddress;
         PortSetting.Text = settings.Host.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         CertificateSetting.Text = settings.Host.CertificatePath;
-        PublicOriginSetting.Text = settings.Host.PublicOrigin;
-        TunnelExecutableSetting.Text = settings.TunnelExecutable;
-        TunnelConfigurationSetting.Text = settings.TunnelConfiguration;
+        DirectOriginSetting.Text = settings.Host.DirectOrigin;
         if (settings.Host.RepositoryPath.Length == 0) Navigation.SelectedIndex = 2;
         ResolveCodex();
         timer.Tick += async (_, _) => await Refresh();
@@ -86,12 +87,13 @@ public partial class MainWindow : Window
                 ListenAddress = AddressSetting.Text.Trim(),
                 Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture),
                 CertificatePath = CertificateSetting.Text.Trim(),
-                PublicOrigin = PublicOriginSetting.Text.Trim(),
+                PublicOrigin = "",
+                DirectOrigin = DirectOriginSetting.Text.Trim(),
+                AutomaticCertificate = settings.Host.AutomaticCertificate && DirectOriginSetting.Text.Trim() == settings.Host.DirectOrigin && CertificateSetting.Text.Trim() == settings.Host.CertificatePath,
+                AcmePort = settings.Host.AcmePort,
                 PermissionMode = PermissionModeSetting.SelectedValue as string ?? "inherit",
                 DataDirectory = DesktopSettings.DirectoryPath
-            },
-            TunnelExecutable = TunnelExecutableSetting.Text.Trim(),
-            TunnelConfiguration = TunnelConfigurationSetting.Text.Trim()
+            }
         };
         candidate.Host.Validate();
         candidate.Save(); settings = candidate; ResolveCodex();
@@ -122,9 +124,9 @@ public partial class MainWindow : Window
         var certificateDirectory = Path.Combine(DesktopSettings.DirectoryPath, "certificates", address);
         var certificate = Path.Combine(certificateDirectory, "server.pfx");
         if (!File.Exists(certificate)) await Task.Run(() => CertificateSetup.Create(certificateDirectory, address));
-        AddressSetting.Text = address; CertificateSetting.Text = certificate; PublicOriginSetting.Text = "";
+        AddressSetting.Text = address; CertificateSetting.Text = certificate; DirectOriginSetting.Text = "";
         SaveConfiguration();
-        MessageBox.Show(this, $"Wi-Fi settings saved. Start the server, then enter https://{address}:{settings.Host.Port} in the Android app.\n\nTransfer ONLY pocketagent-root.cer from the certificate folder to your phone and install it as a CA certificate. Keep server.pfx private.\n\nAllow PocketAgent's port on the Windows private-network firewall if needed. No firewall or router changes were made.", "Wi-Fi setup", MessageBoxButton.OK, MessageBoxImage.Information);
+        AppDialogs.Show(this, $"Wi-Fi settings saved. Start the server, then enter https://{address}:{settings.Host.Port} in the Android app.\n\nTransfer ONLY pocketagent-root.cer from the certificate folder to your phone and install it as a CA certificate. Keep server.pfx private.\n\nAllow PocketAgent's port on the Windows private-network firewall if needed. No firewall or router changes were made.", "Wi-Fi setup");
         Process.Start(new ProcessStartInfo(certificateDirectory) { UseShellExecute = true });
     });
     private static bool IsPrivateAddress(IPAddress address)
@@ -132,6 +134,73 @@ public partial class MainWindow : Window
         var bytes = address.GetAddressBytes();
         return bytes[0] == 10 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31 || bytes[0] == 192 && bytes[1] == 168;
     }
+    private async void SetupDirectInternet(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (transitioning) return;
+        if (relay is not null) throw new InvalidOperationException("Stop the server before configuring direct internet. Active work ends when the server stops.");
+        var addresses = NetworkInterface.GetAllNetworkInterfaces().Where(network => network.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(network => network.GetIPProperties().UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivateAddress(item.Address)).Select(item => item.Address.ToString())).Distinct().ToArray();
+        if (addresses.Length == 0) throw new InvalidOperationException("No private desktop IPv4 address was found. Connect to your home network first.");
+        var interfaces = new ComboBox { ItemsSource = addresses, SelectedIndex = 0, Margin = new Thickness(16, 4, 16, 10) };
+        var publicIp = new TextBox { Text = settings.Host.DirectOrigin.Length > 0 ? new Uri(settings.Host.DirectOrigin).Host : "", Margin = new Thickness(16, 4, 16, 10) };
+        var detect = new Button { Content = "Detect public IP", Margin = new Thickness(16, 0, 16, 6), HorizontalAlignment = HorizontalAlignment.Left };
+        var detectionStatus = new TextBlock { Text = "Queries api.ipify.org for your IPv4 address. No chat, credentials or pairing code is sent. You can also enter the address manually.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 10) };
+        using var lookupCancellation = new CancellationTokenSource();
+        var externalPort = new TextBox { Text = settings.Host.DirectOrigin.Length > 0 ? new Uri(settings.Host.DirectOrigin).Port.ToString(System.Globalization.CultureInfo.InvariantCulture) : PortSetting.Text, Margin = new Thickness(16, 4, 16, 10) };
+        var apply = new Button { Content = "Set up trusted HTTPS", Margin = new Thickness(16) };
+        var challengePort = new TextBox { Text = settings.Host.AcmePort.ToString(System.Globalization.CultureInfo.InvariantCulture), Margin = new Thickness(16, 4, 16, 10) };
+        var consent = new CheckBox { Content = "I accept the Let's Encrypt Subscriber Agreement and public certificate logging.", Margin = new Thickness(16), Foreground = Brushes.DarkSeaGreen };
+        var terms = new Button { Content = "Read Let's Encrypt agreement", Margin = new Thickness(16, 0, 16, 0) };
+        terms.Click += (_, _) => Process.Start(new ProcessStartInfo("https://letsencrypt.org/repository/") { UseShellExecute = true });
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock { Text = "Use your router's public/WAN IPv4 address. No domain, tunnel, relay, or PocketAgent hosting is used. You must configure port forwarding and the firewall yourself.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) });
+        panel.Children.Add(new TextBlock { Text = "Desktop LAN address (forward traffic here)", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(interfaces);
+        panel.Children.Add(new TextBlock { Text = "Router public IPv4 address", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(publicIp); panel.Children.Add(detect); panel.Children.Add(detectionStatus);
+        panel.Children.Add(new TextBlock { Text = "External chat TCP port", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(externalPort);
+        panel.Children.Add(new TextBlock { Text = "Certificate validation LAN port: public TCP 80 must reach this port. Forward it in your router, or route only /.well-known/acme-challenge/ through an existing Caddy/web server (see setup guide). Allow this port through Windows Firewall. It serves only temporary validation requests.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(challengePort); panel.Children.Add(terms); panel.Children.Add(consent); panel.Children.Add(apply);
+        var dialog = new Window { Title = "Direct internet setup", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 620, MaxHeight = SystemParameters.WorkArea.Height - 60, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        dialog.Closed += (_, _) => lookupCancellation.Cancel();
+        detect.Click += async (_, _) =>
+        {
+            var original = publicIp.Text;
+            detect.IsEnabled = false; apply.IsEnabled = false; detectionStatus.Text = "Detecting public IPv4…";
+            try
+            {
+                var found = await PublicAddressLookup.Detect(lookupCancellation.Token);
+                if (publicIp.Text == original) publicIp.Text = found;
+                detectionStatus.Text = $"Detected {found}. Manual edits are preserved. A VPN may report its exit address; detection does not prove router forwarding or public reachability.";
+            }
+            catch (OperationCanceledException) { if (dialog.IsVisible) detectionStatus.Text = "Detection timed out. Retry or enter the public IPv4 manually."; }
+            catch (ApiException exception) { detectionStatus.Text = exception.Message; }
+            finally { detect.IsEnabled = true; apply.IsEnabled = true; }
+        };
+        apply.Click += (_, _) => { if (consent.IsChecked == true) dialog.DialogResult = true; };
+        if (dialog.ShowDialog() != true) return;
+        var localIp = (string)interfaces.SelectedItem;
+        var origin = $"https://{publicIp.Text.Trim()}:{int.Parse(externalPort.Text, System.Globalization.CultureInfo.InvariantCulture)}";
+        var certificateDirectory = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "trusted-" + publicIp.Text.Trim());
+        // Validate before using any user-entered text to construct filesystem paths or create keys.
+        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = localIp, Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture), DirectOrigin = origin, CertificatePath = Path.Combine(certificateDirectory, "server.pfx"), AutomaticCertificate = true, AcmePort = int.Parse(challengePort.Text, System.Globalization.CultureInfo.InvariantCulture) };
+        candidate.Validate();
+        using var setupLease = new HostLease(candidate);
+        setupLease.Acquire();
+        ErrorDisplay.Text = $"Testing certificate validation: public TCP 80 must reach {localIp}:{candidate.AcmePort} directly or through your existing web server's challenge route. This may take a few minutes…";
+        transitioning = true; StartButton.IsEnabled = false;
+        try { await Task.Run(async () => { await AutomaticCertificates.Issue(candidate, staging: true); await AutomaticCertificates.Issue(candidate, staging: false); }); }
+        catch (Exception) { throw new InvalidOperationException("Trusted HTTPS setup failed. Check router TCP 80 forwarding to the selected validation port, Windows Firewall, public IPv4/CGNAT and internet access. If TCP 80 is blocked by your ISP, this setup cannot validate. Existing configuration was preserved. Retry after fixing connectivity."); }
+        finally { transitioning = false; StartButton.IsEnabled = true; }
+        AddressSetting.Text = localIp; CertificateSetting.Text = candidate.CertificatePath; DirectOriginSetting.Text = candidate.DirectOrigin;
+        settings.Host.AutomaticCertificate = true; settings.Host.AcmePort = candidate.AcmePort; settings.Host.DirectOrigin = candidate.DirectOrigin; settings.Host.CertificatePath = candidate.CertificatePath;
+        SaveConfiguration();
+        AppDialogs.Show(this, $"Trusted HTTPS ready: {candidate.ClientOrigin}\n\nForward external TCP {new Uri(candidate.DirectOrigin).Port} to {localIp} TCP {candidate.Port}. Certificate validation needs public TCP 80 to reach {localIp}:{candidate.AcmePort}, either by router forwarding or a challenge-only route through your existing web server. Reserve the LAN address.\n\nStart the server and enter the address plus pairing code on the phone. No certificate installation is needed. Test with Wi-Fi off. Renewal requires the server to be running; certificates last about six days.", "Direct internet setup");
+    });
+    private async void CheckConnectivity(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null) throw new InvalidOperationException("Start the server before running connection diagnostics.");
+        var report = await relay.Services.GetRequiredService<ConnectivityDiagnostics>().Check();
+        var text = new TextBox { Text = string.Join("\n\n", report.Checks), IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(16) };
+        new Window { Title = report.LocalConnectionVerified ? "Connection diagnostics - local HTTPS verified" : "Connection diagnostics - setup needs attention", Owner = this, Content = text, Width = 760, Height = 580, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
+    });
     private async void StartServer(object sender, RoutedEventArgs e)
     {
         if (relay is not null || transitioning) return;
@@ -158,11 +227,10 @@ public partial class MainWindow : Window
         var sessions = await Conversations.List();
         var pending = relay.Services.GetRequiredService<LocalStore>().Scheduled().Count(job => job.Status == "pending");
         return !sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain") && pending == 0 ||
-            MessageBox.Show(this, $"Stopping ends the Codex process and active work. {pending} pending scheduled message(s) will wait until the server runs again. Stop anyway?", "Stop server", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+            AppDialogs.Show(this, $"Stopping ends the Codex process and active work. {pending} pending scheduled message(s) will wait until the server runs again. Stop anyway?", "Stop server", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
     }
     private async Task Shutdown()
     {
-        connector.Stop();
         var running = relay; relay = null;
         if (running is not null)
         {
@@ -190,7 +258,7 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             if (!await ConfirmStop()) return;
-            timer.Stop(); await Shutdown(); connector.Dispose(); closing = true;
+            timer.Stop(); await Shutdown(); closing = true;
             _ = Dispatcher.BeginInvoke(Close);
         });
     }
@@ -198,18 +266,24 @@ public partial class MainWindow : Window
     private sealed record SessionEntry(string Id, string Label);
     private async Task Refresh()
     {
-        InternetStatus.Text = connector.IsRunning ? "Connector process running · verify your public address from the phone" : "Connector stopped";
         if (relay is null || refreshing) return;
         refreshing = true;
         await Act(async () =>
         {
             var running = relay;
+            CertificateStatus.Text = running.Services.GetRequiredService<AutomaticCertificates>().Status;
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
             UsageDisplay.Text = $"5h: {UsageText(usage.FiveHour)} · Weekly: {UsageText(usage.Weekly)}";
             UsageDisplay.ToolTip = $"Five-hour reset: {usage.FiveHour?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}\nWeekly reset: {usage.Weekly?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}";
             var signature = JsonSerializer.Serialize(sessions);
+            if (selected is not null && !sessions.Any(session => session.Id == selected))
+            {
+                selected = null; conversation = null; rendered = "";
+                ConversationPanel.IsEnabled = false; Transcript.Children.Clear();
+                settingDraft = true; Composer.Clear(); settingDraft = false;
+            }
             if (signature != sessionSignature)
             {
                 changingList = true;
@@ -228,6 +302,8 @@ public partial class MainWindow : Window
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
             ConversationTitle.Text = snapshot.Title;
+            ModelButton.Content = snapshot.Model ?? "Model: Codex settings";
+            ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
             var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
@@ -264,9 +340,53 @@ public partial class MainWindow : Window
     private async void NewConversation(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is null) throw new InvalidOperationException("Start the server first.");
-        var created = await Conversations.Create(""); selected = created.Id; conversation = created; rendered = "";
+        var directory = new TextBox { Text = conversation?.WorkingDirectory ?? settings.Host.RepositoryPath, Margin = new Thickness(16, 4, 16, 8) };
+        var models = await relay.Services.GetRequiredService<ProviderDiagnostics>().Models();
+        var choices = new ComboBox { Margin = new Thickness(16, 4, 16, 8), DisplayMemberPath = "DisplayName", ItemsSource = new[] { new ModelChoice(null, "Use Codex settings") }.Concat(models.Select(model => new ModelChoice(model.Model, model.DisplayName))).ToArray(), SelectedIndex = 0 };
+        var browse = new Button { Content = "Browse folders", Margin = new Thickness(16, 0, 16, 8) };
+        browse.Click += (_, _) => { var picker = new OpenFolderDialog { InitialDirectory = directory.Text }; if (picker.ShowDialog(this) == true) directory.Text = picker.FolderName; };
+        var create = new Button { Content = "Create conversation", Margin = new Thickness(16) };
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock { Text = "Working folder on this machine", Margin = new Thickness(16, 16, 16, 0) });
+        panel.Children.Add(directory); panel.Children.Add(browse);
+        panel.Children.Add(new TextBlock { Text = "Model", Margin = new Thickness(16, 8, 16, 0) }); panel.Children.Add(choices); panel.Children.Add(create);
+        var dialog = new Window { Title = "New conversation", Owner = this, Content = panel, Width = 560, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        create.Click += (_, _) => dialog.DialogResult = true;
+        if (dialog.ShowDialog() != true) return;
+        var created = await Conversations.Create("", directory.Text, ((ModelChoice)choices.SelectedItem).Model); selected = created.Id; conversation = created; rendered = "";
         settingDraft = true; Composer.Text = ""; settingDraft = false;
         await Refresh(); Composer.Focus();
+    });
+    private sealed record ModelChoice(string? Model, string DisplayName);
+    private async void ChangeModel(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null || conversation is null) return;
+        var id = conversation.Id;
+        var models = await relay.Services.GetRequiredService<ProviderDiagnostics>().Models();
+        var choices = new ComboBox { Margin = new Thickness(16), DisplayMemberPath = "DisplayName", ItemsSource = models, SelectedIndex = Array.FindIndex(models, model => model.Model == conversation.Model) };
+        var save = new Button { Content = "Use selected model", Margin = new Thickness(16) };
+        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Applies to future messages, including scheduled messages.", Margin = new Thickness(16) }); panel.Children.Add(choices); panel.Children.Add(save);
+        var dialog = new Window { Title = "Conversation model", Owner = this, Content = panel, Width = 500, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        save.Click += (_, _) => { if (choices.SelectedItem is not null) dialog.DialogResult = true; };
+        if (dialog.ShowDialog() == true) { await Conversations.SetModel(id, ((ModelOption)choices.SelectedItem).Model); await Refresh(); }
+    });
+    private async void ArchiveConversation(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null || conversation is null) return;
+        var id = conversation.Id;
+        if (AppDialogs.Show(this, "Archive this conversation and cancel its pending scheduled messages? You can restore it from Archived.", "Archive conversation", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        await Conversations.Archive(id, true); await Refresh();
+    });
+    private async void ShowArchived(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null) throw new InvalidOperationException("Start the server first.");
+        var archived = await Conversations.List(true);
+        var list = new ListBox { ItemsSource = archived.Select(item => new SessionEntry(item.Id, $"{item.Title}\n{item.WorkingDirectory}")), DisplayMemberPath = "Label", Margin = new Thickness(16), Height = 280 };
+        var restore = new Button { Content = "Restore selected conversation", Margin = new Thickness(16) };
+        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = archived.Length == 0 ? "No archived conversations." : "Restoring does not requeue canceled messages.", Margin = new Thickness(16) }); panel.Children.Add(list); panel.Children.Add(restore);
+        var dialog = new Window { Title = "Archived conversations", Owner = this, Content = panel, Width = 560, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        restore.Click += (_, _) => { if (list.SelectedItem is not null) dialog.DialogResult = true; };
+        if (dialog.ShowDialog() == true) { await Conversations.Archive(((SessionEntry)list.SelectedItem).Id, false); await Refresh(); }
     });
     private void DraftChanged(object sender, TextChangedEventArgs e)
     {
@@ -313,8 +433,18 @@ public partial class MainWindow : Window
         var atBottom = TranscriptScroll.ScrollableHeight - TranscriptScroll.VerticalOffset < 60;
         Transcript.Children.Clear();
         if (snapshot.Items.Length == 0) Transcript.Children.Add(new TextBlock { Text = "Send a message to start working.", Margin = new Thickness(12) });
+        var start = snapshot.Items.Length;
+        var characters = 0;
+        while (start > 0 && snapshot.Items[start - 1].Text.Length + snapshot.Items[start - 1].Detail.Length <= MaxRenderedCharacters - characters && snapshot.Items.Length - start < MaxRenderedItems)
+        {
+            characters += snapshot.Items[start - 1].Text.Length + snapshot.Items[start - 1].Detail.Length;
+            start--;
+        }
+        if (start > 0)
+            Transcript.Children.Add(new TextBlock { Text = "Earlier messages are hidden in this view to keep the desktop responsive. They remain in the conversation history.", Foreground = Brushes.DarkSeaGreen, Margin = new Thickness(12, 8, 12, 12) });
+
         string? lastMinute = null;
-        foreach (var item in snapshot.Items)
+        foreach (var item in snapshot.Items.Skip(start))
         {
             if (item.Type is "userMessage" or "agentMessage" && item.Timestamp is { } timestamp)
             {
@@ -323,8 +453,8 @@ public partial class MainWindow : Window
                 lastMinute = minute;
             }
             var content = new TextBlock { Text = item.Type is "userMessage" or "agentMessage" ? item.Text : $"{item.Type} · {item.Status}\n{item.Detail}", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
-            var border = new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 0, 10) };
-            Transcript.Children.Add(border);
+            if (item.Type == "agentMessage") { content.Margin = new Thickness(8, 8, 8, 18); Transcript.Children.Add(content); }
+            else Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), HorizontalAlignment = item.Type == "userMessage" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch, MaxWidth = item.Type == "userMessage" ? 760 : double.PositiveInfinity, Margin = new Thickness(0, 0, 0, 10) });
         }
         if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Foreground = Brushes.Salmon, Margin = new Thickness(12) });
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
@@ -380,48 +510,6 @@ public partial class MainWindow : Window
         var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
         var binary = relay.Services.GetRequiredService<CodexConnection>().Executable;
         ProviderDisplay.Text = $"{(status.SignInAvailable ? "Desktop sign-in found" : "Desktop sign-in missing")}\nModel: {status.ConfiguredModel ?? status.DefaultModel ?? "provider default"}\n{(status.ConfiguredModelInCatalog == false ? "Configured model is absent from this executable's catalog. " : "")}Inference has not been verified.\n{binary?.Source}\n{binary?.Path}";
-    });
-    private void StartInternet(object sender, RoutedEventArgs e)
-    {
-        if (relay is null) { ErrorDisplay.Text = "Start the server first."; return; }
-        if (MessageBox.Show(this, $"Expose the paired-device API at {settings.Host.ClientOrigin} using your named tunnel? Only paired devices can read or control conversations. Cloudflare terminates TLS and can process relayed data.", "Start internet access", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-        _ = Act(() => { connector.Start(settings); return Task.CompletedTask; });
-    }
-    private void StopInternet(object sender, RoutedEventArgs e) => connector.Stop();
-    private async void PrepareInternet(object sender, RoutedEventArgs e) => await Act(() =>
-    {
-        if (relay is not null) throw new InvalidOperationException("Stop the server before changing its listener.");
-        AddressSetting.Text = "127.0.0.1"; CertificateSetting.Text = ""; PublicOriginSetting.Text = "";
-        SaveConfiguration(); ErrorDisplay.Text = "Loopback listener prepared. Start the server, then choose temporary or named internet access.";
-        return Task.CompletedTask;
-    });
-    private void StartTemporaryInternet(object sender, RoutedEventArgs e)
-    {
-        if (relay is null) { ErrorDisplay.Text = "Start the server first."; return; }
-        if (MessageBox.Show(this, "Create a temporary public HTTPS address for this relay through Cloudflare? Pairing is still required. Cloudflare terminates TLS and can process relayed data. The address changes when restarted; use a named tunnel for a stable connection.", "Start temporary internet access", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-        _ = Act(() => { connector.StartTemporary(settings); return Task.CompletedTask; });
-    }
-    private async void CreateTunnelConfiguration(object sender, RoutedEventArgs e) => await Act(() =>
-    {
-        if (relay is not null) throw new InvalidOperationException("Stop the server before configuring its public address.");
-        var origin = PublicOriginSetting.Text.Trim();
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var publicUri) || publicUri.Scheme != "https" || publicUri.HostNameType != UriHostNameType.Dns || publicUri.AbsolutePath != "/" || publicUri.UserInfo.Length > 0 || publicUri.Query.Length > 0 || publicUri.Fragment.Length > 0)
-            throw new InvalidOperationException("Enter your stable public HTTPS hostname first.");
-        var input = new TextBox { Margin = new Thickness(16) }; var create = new Button { Content = "Select credentials and create config", Margin = new Thickness(16) };
-        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Enter the UUID of a named tunnel already created in your Cloudflare account.", Margin = new Thickness(16) }); panel.Children.Add(input); panel.Children.Add(create);
-        var dialog = new Window { Title = "Named tunnel", Owner = this, Content = panel, Width = 540, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        create.Click += (_, _) => dialog.DialogResult = true;
-        if (dialog.ShowDialog() != true) return Task.CompletedTask;
-        if (!Guid.TryParse(input.Text, out var tunnelId)) throw new InvalidOperationException("Enter the tunnel UUID.");
-        var picker = new OpenFileDialog { Title = "Select this tunnel's local credential JSON", Filter = "Tunnel credential files (*.json)|*.json" };
-        if (picker.ShowDialog(this) != true) return Task.CompletedTask;
-        AddressSetting.Text = "127.0.0.1"; CertificateSetting.Text = "";
-        var configPath = Path.Combine(DesktopSettings.DirectoryPath, "cloudflared.yml");
-        Directory.CreateDirectory(DesktopSettings.DirectoryPath);
-        var config = $"tunnel: {tunnelId:D}\ncredentials-file: {JsonSerializer.Serialize(picker.FileName)}\ningress:\n  - hostname: {JsonSerializer.Serialize(publicUri.Host)}\n    service: http://127.0.0.1:{PortSetting.Text}\n    originRequest:\n      httpHostHeader: {JsonSerializer.Serialize(publicUri.Authority)}\n  - service: http_status:404\n";
-        File.WriteAllText(configPath, config); TunnelConfigurationSetting.Text = configPath; SaveConfiguration();
-        ErrorDisplay.Text = "Configuration saved. Route this hostname to the named tunnel in Cloudflare, then start the server and connector.";
-        return Task.CompletedTask;
     });
     private void OpenGuide(object sender, RoutedEventArgs e)
     {

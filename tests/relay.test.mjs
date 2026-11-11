@@ -83,12 +83,12 @@ test('relay access and conversation lifecycle', async () => {
     );
     const badOrigin = await relay.request(
       '/pair',
-      { code: '00000000', deviceName: 'Test' },
+      { code: '000000', deviceName: 'Test' },
       { headers: { Origin: 'https://attacker.example' } },
     );
     assert.equal(badOrigin.status, 403, 'Cross-origin pairing must be rejected.');
     assert.equal(
-      (await relay.request('/pair', { code: '00000000', deviceName: 'Test' })).status,
+      (await relay.request('/pair', { code: '000000', deviceName: 'Test' })).status,
       401,
     );
     const cookie = await relay.pair();
@@ -178,16 +178,63 @@ test('relay access and conversation lifecycle', async () => {
   }
 });
 
+test('six-digit native pairing is single-use and preserves saved devices', async () => {
+  let relay = await startRelay();
+  try {
+    assert.equal(
+      /^[1-9]\d{5}$/.test(relay.pairingCode),
+      true,
+      'The desktop must generate exactly six digits without a leading zero.',
+    );
+    assert.equal(
+      (
+        await relay.request(
+          '/devices/pair',
+          { code: `${relay.pairingCode}00`, deviceName: 'Invalid length' },
+          { authenticated: false, native: true },
+        )
+      ).status,
+      401,
+    );
+    const device = await relay.pairNative();
+    assert.equal(
+      (
+        await relay.request(
+          '/devices/pair',
+          { code: relay.pairingCode, deviceName: 'Reused code' },
+          { authenticated: false, native: true },
+        )
+      ).status,
+      401,
+      'A successful pairing must consume the code.',
+    );
+    const directory = relay.directory;
+    await relay.stop();
+    relay = await startRelay({ dataDirectory: directory });
+    assert.equal(
+      (
+        await relay.request('/conversations', undefined, {
+          headers: { Authorization: `Bearer ${device.token}` },
+        })
+      ).status,
+      200,
+      'Existing device credentials must remain valid after a server restart.',
+    );
+  } finally {
+    await relay.stop();
+  }
+});
+
 test('pairing attempt limits', async () => {
   const relay = await startRelay();
   try {
     for (let attempt = 0; attempt < 5; attempt++)
       assert.equal(
-        (await relay.request('/pair', { code: '00000000', deviceName: 'Test' })).status,
+        (await relay.request('/pair', { code: '000000', deviceName: 'Test' })).status,
         401,
       );
     assert.equal(
-      (await relay.request('/pair', { code: '00000000', deviceName: 'Test' })).status,
+      (await relay.request('/pair', { code: '000000', deviceName: 'Test' })).status,
       429,
     );
   } finally {

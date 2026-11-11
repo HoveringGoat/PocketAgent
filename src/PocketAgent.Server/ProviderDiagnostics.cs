@@ -24,6 +24,27 @@ public sealed class ProviderDiagnostics(CodexConnection codex, HostSettings sett
         var accountResult = await codex.Request("account/read", new { refreshToken = false });
         var configResult = await codex.Request("config/read", new { includeLayers = false, cwd = settings.RepositoryPath });
         var configuredModel = configResult.Field("config").Text("model") is { Length: > 0 } name ? name : null;
+        var models = await Models();
+
+        var account = accountResult.Field("account");
+        var requiresAuth = accountResult.Field("requiresOpenaiAuth");
+        // Project only safe fields; account IDs, emails, tokens, and raw configuration stay local.
+        return new(
+            codex.IsReady,
+            account.ValueKind == JsonValueKind.Object,
+            account.Text("type") is { Length: > 0 } type ? type : null,
+            requiresAuth.ValueKind is JsonValueKind.True or JsonValueKind.False ? requiresAuth.GetBoolean() : null,
+            configuredModel,
+            models.FirstOrDefault(model => model.IsDefault)?.Model,
+            configuredModel is null ? null : models.Any(model => model.Model == configuredModel),
+            models,
+            false,
+            DateTimeOffset.UtcNow);
+    }
+
+    public async Task<ModelOption[]> Models()
+    {
+        await codex.EnsureStarted();
         var models = new List<ModelOption>();
         var cursors = new HashSet<string>(StringComparer.Ordinal);
         string? cursor = null;
@@ -41,20 +62,7 @@ public sealed class ProviderDiagnostics(CodexConnection codex, HostSettings sett
                 throw new ApiException(502, "Codex returned a repeated model catalog cursor.");
         } while (cursor is not null);
 
-        var account = accountResult.Field("account");
-        var requiresAuth = accountResult.Field("requiresOpenaiAuth");
-        // Project only safe fields; account IDs, emails, tokens, and raw configuration stay local.
-        return new(
-            codex.IsReady,
-            account.ValueKind == JsonValueKind.Object,
-            account.Text("type") is { Length: > 0 } type ? type : null,
-            requiresAuth.ValueKind is JsonValueKind.True or JsonValueKind.False ? requiresAuth.GetBoolean() : null,
-            configuredModel,
-            models.FirstOrDefault(model => model.IsDefault)?.Model,
-            configuredModel is null ? null : models.Any(model => model.Model == configuredModel),
-            models.DistinctBy(model => model.Model).ToArray(),
-            false,
-            DateTimeOffset.UtcNow);
+        return models.DistinctBy(model => model.Model).ToArray();
     }
 }
 

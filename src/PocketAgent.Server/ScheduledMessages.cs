@@ -9,6 +9,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32000) throw new ApiException(400, "Messages must contain 1–32,000 characters.");
         var state = await conversations.Get(id);
+        if (state.Archived) throw new ApiException(409, "Restore this conversation before sending messages.");
         if (state.Status is "starting" or "uncertain" or "disconnected") throw new ApiException(409, "Wait until the conversation state is confirmed before submitting.");
         if (expectedTurnId is not null && state.ActiveTurnId != expectedTurnId || expectedTurnId is null && state.ActiveTurnId is not null)
             throw new ApiException(409, "Conversation activity changed. Refresh before submitting.");

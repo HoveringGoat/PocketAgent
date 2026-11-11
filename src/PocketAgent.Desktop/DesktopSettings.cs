@@ -6,8 +6,6 @@ namespace PocketAgent.Desktop;
 public sealed class DesktopSettings
 {
     public HostSettings Host { get; set; } = new();
-    public string TunnelExecutable { get; set; } = "";
-    public string TunnelConfiguration { get; set; } = "";
     public static string DirectoryPath => Environment.GetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA") is { Length: > 0 } configured ? Path.GetFullPath(configured) :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PocketAgent");
     public static string FilePath => Path.Combine(DirectoryPath, "desktop.json");

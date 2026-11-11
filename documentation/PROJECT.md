@@ -16,7 +16,7 @@ These product requirements are confirmed. The user asked to continue after revie
 
 ## Packaged app design requirements
 
-These requirements extend the historical 0.1.0/0.1.1 browser milestone. Version 0.1.3 implements native Windows and Android apps, steering, desktop permissions, Wi-Fi setup, supervised internet connectors, usage, scheduling, timing and multiple saved server connections. Focused checks distinguish implementation from verification; physical phone, real inference and external-network acceptance remain open in [setup](SETUP.md).
+These requirements extend the historical 0.1.0/0.1.1 browser milestone. Version 0.1.4 implements native Windows and Android apps, steering, desktop permissions, Wi-Fi setup, supervised internet connectors, usage, scheduling, timing and multiple saved server connections. Focused checks distinguish implementation from verification; physical phone, real inference and external-network acceptance remain open in [setup](SETUP.md).
 
 ### Distribution and local state
 
@@ -31,9 +31,9 @@ The intended client onboarding is: enter the desktop server address, establish a
 
 Networking setup belongs in the desktop experience. The app should present the usable connection address and explain configuration failures. A short-lived code authorizes a device after transport trust is established; it does not replace server authentication or encryption. Codes must be renewable from the desktop without restarting ongoing work, and paired devices must be individually revocable.
 
-**Internet access is required for the first distributable release.** The client must be able to connect from outside the desktop's local network, including over cellular or another Wi-Fi network. A LAN-only package does not satisfy the release requirements. The existing implementation remains LAN-only; internet access is required behavior, not implemented or verified behavior.
+**Internet access is required for the first distributable release.** The client must connect from outside the desktop network, including cellular. Version 0.1.4 adds direct IPv4 HTTPS setup with manually opened/forwarded TCP ports and diagnostics. The user reported that Android installation and the earlier temporary Cloudflare connection worked; physical direct-internet acceptance remains open. A local diagnostic is not proof of public reachability.
 
-Caddy is a candidate for a packaged reverse proxy and certificate lifecycle component, not a selected dependency. Its [automatic HTTPS documentation](https://caddyserver.com/docs/automatic-https) explains that local HTTPS requires clients to trust its generated CA. Its [reverse proxy documentation](https://caddyserver.com/docs/quick-starts/reverse-proxy) describes forwarding to a local backend. Bundling it alone does not establish phone certificate trust or provide connectivity through a home router. The remaining decision is the internet reachability and trust model: for example, an outbound tunnel/relay, a private network connection, or an explicitly configured public HTTPS endpoint. Any third-party account, domain, operating cost, or external service requirement must be part of that design rather than a hidden prerequisite.
+The selected regular connection is direct IP and port, with HTTPS and explicit router/firewall configuration. The user rejected requiring a personal domain, centralized PocketAgent hosting, or third-party traffic relays even when encrypted. Caddy, libp2p relays, Tor and a PocketAgent-operated tunnel service are not selected dependencies. Cloudflare paths remain optional earlier implementations, not the default onboarding. Each installation creates its certificate/private key at runtime; no IP, certificate private key, shared token or domain is required at build/distribution time. Current certificate trust uses transfer of the public CA to Android; QR-based certificate pinning is a possible future simplification, not an implemented enrollment flow.
 
 Before implementing a new transport or proxy, specify the public address, listener ownership, origin/Host validation, proxy trust, client credential storage, certificate trust or verified enrollment, and exposure boundary in [runtime architecture](ARCHITECTURE.md). The existing same-origin cookie API cannot simply be assumed to work unchanged for a separately packaged client. Firewall, router, trust-store, and public-exposure changes require explicit setup actions rather than silent installation side effects.
 
@@ -79,14 +79,21 @@ The user approved completing and extending the native apps while away. Android m
 
 Both apps show provider-reported five-hour and weekly usage remaining and reset times, with explicit unavailable states when the account/executable does not expose them. Submissions blocked by an identifiable exhausted usage window are persisted for dispatch after reset and reported as queued. A durable server scheduler also supports user-selected dates/times from either app, list/cancel operations, restart recovery, and clear submitted/failed/uncertain states. A message already sent with an unknown outcome must never be automatically replayed. Scheduled messages wait for idle conversations and preserve the configured permissions and approval boundaries. Device revocation cancels that device's pending scheduled work. A stopped/sleeping desktop cannot dispatch until it runs again.
 
-Wi-Fi setup and a documented stable internet route are both required. The default internet proposal is a user-owned named outbound tunnel, with a packaged connector and local runtime-only credentials. An external account/domain must not be silently provisioned, and public exposure remains an explicit setup action. Verification must distinguish emulator/local proxy checks from physical Android and external-network checks.
+Wi-Fi setup and a documented internet route are both required. The earlier named-tunnel implementation remains optional; the subsequent user decision selects direct IP and port with manual opening instead. No external account/domain is required for the direct path, and public exposure remains an explicit setup action. Verification distinguishes emulator/local checks from physical Android and external-network acceptance.
+
+### Approved conversation controls and direct internet
+
+Conversations on the same machine can use different existing local working folders, selected from either native app when creating a conversation. Folder-based automatic names remain; no name is required. A folder stays fixed for that conversation. The client selects an available model per conversation for future turns, with active/unconfirmed work preventing changes. Global model/reviewer/permission settings are not rewritten. Paired devices are owner devices across the host's accessible folders, not separately scoped repository users.
+
+Archive/restore provides reversible removal from the tab bar and preserves provider history. Archive waits for idle/confirmed state and cancels pending schedules; restore does not replay them. Six-digit single-use codes replace eight-digit codes. User messages use outgoing bubbles while assistant prose is plain. UTF-8 must be explicit at the native Codex process boundary. Incoming responses must leave the composer's focus, selection, draft and keyboard intact.
+
+Direct internet setup accepts a public IPv4 and external TCP port, generates an installation-specific matching certificate, and explains the internal forwarding target. Router/firewall opening is manual. Desktop diagnostics verify local TLS/API behavior and report the CA fingerprint and configuration limitations; Android Test connection over cellular verifies the external route. No shared hosting or peer traffic forwarding is used. Public IPs and private keys are runtime data, never prerequisites for packaging. A new build is staged before switching the user's active installation.
 
 ### Remaining design decisions
 
-1. Store distribution, installer/update automation and public release signing beyond the current sideload/ZIP artifacts.
-2. User provisioning of a stable named internet tunnel/domain versus a temporary Quick Tunnel trial; both paths are implemented but external-network acceptance is outstanding.
-3. One configured repository or multiple desktop-approved repositories, including selection when creating a conversation.
-4. Exact default naming, tab closing/restoration, desktop close/background behavior, and release/update formats.
+1. Versioned GitHub Releases and built-in checks for new versions in both apps, with release notes and explicit installation timing that preserves active work. No update service is implemented yet.
+2. Simplifying local certificate trust with verified enrollment/pinning, public-IP changes and certificate renewal, without requiring a domain or traffic intermediary.
+3. Desktop close/background behavior, installers and public release signing beyond the current signed APK/self-contained ZIP.
 
 ## Component responsibilities
 
@@ -104,7 +111,7 @@ The availability of existing desktop-app chats, live session attachment, histori
 
 ## Selected implementation and future decisions
 
-These selections describe the implemented relay. The [packaged app design requirements](#packaged-app-design-requirements) describe the next direction without claiming that packaging, desktop navigation, or the simplified client have landed.
+These selections describe the implemented native apps. The [packaged app design requirements](#packaged-app-design-requirements) distinguish current behavior, verification and future distribution work.
 
 - **Desktop environment:** Native Windows WPF app embedding the relay, with an optional headless command.
 - **Mobile client:** Native Android platform UI distributed as a signed APK; no WebView/browser client.
@@ -166,7 +173,7 @@ Use focused automated checks and a project-level build during implementation. Re
 
 ## Hosting and environment boundaries
 
-The default host is the user's Windows desktop. A local build produces the ASP.NET Core relay and compiled browser assets, which are distributed together and served by the relay. The phone receives browser assets and authorized conversation data; repository access and provider execution stay on the host. Development can use loopback locally; phone access uses authenticated LAN HTTPS. The desktop must remain awake and the relay running for ongoing work and connectivity.
+The default host is the user's Windows desktop. A local build produces the self-contained native Windows server ZIP and signed native Android APK. Private runtime state stays outside the packages. Phone traffic can use direct IPv4 HTTPS with explicit router/firewall opening; a public IP and certificate are installation-time configuration, never build-time inputs. Development can use loopback locally. The desktop must remain awake and the relay running for work and connectivity. The phone is a native app; browser hosting belongs only to the historical 0.1.0/0.1.1 records.
 
 Version 0.1.0 is the first implementation milestone. The build script produces a versioned local publish directory. Native installation, updates, CI authentication, and cloud deployment workflows are not implemented. Any future deployment must use versioned artifacts and document changes to these environment boundaries.
 
@@ -174,7 +181,15 @@ Provider credentials and repository access belong on the desktop host. Mobile ac
 
 ## Implementation and verification status
 
-Current 0.1.3: native desktop and Android apps, code pairing/revocation, VS Code binary discovery, owner-selected permissions, top conversation tabs, rename/default names, active steering, grouped timestamps, work timing, provider usage windows, persistent scheduling/usage deferral, per-server encrypted credentials and drafts, Wi-Fi setup and packaged internet connector flows. Builds, focused protocol/access/scheduler checks and a native emulator check pass; see [the current verification record](SETUP.md#verification-commands-and-limits). A read-only real-provider check confirms the selected model catalog entry and both usage windows. Physical Wi-Fi/Android, external internet and successful real inference still need acceptance checks. Historical milestone records follow.
+Version 0.1.9 fixes light native scrollbar surfaces, requests dark window chrome, and replaces white confirmation MessageBoxes with styled dialogs. The focused native scrollbar regression failed before the fix and passed afterward; rendered-screen and confirmation checks pass. Existing Caddy port sharing is documented as a challenge-path-only route; the user's actual Caddy configuration and live certificate issuance are not yet verified.
+
+Version 0.1.8 adds automatic Let's Encrypt short-lived IP certificates with staging-first setup, isolated HTTP-01 validation, protected desktop keys, renewal/hot reload, diagnostics and failure status. No certificate installation on Android is needed for this mode. Router TCP 80 forwarding remains required. Focused local ACME and native UI checks pass; live issuance and physical-cellular acceptance require router setup and remain unverified. Legacy desktop tunnel controls/helpers and cloudflared packaging were removed. Readability now covers static labels, dialogs, dropdowns, selected tabs/list items and buttons. No user runtime data was deleted.
+
+Version 0.1.6 fixes desktop message readability by applying light green to the transcript rather than inheriting black from the native tab theme. A focused native regression was observed failing before the fix and passing afterward for user, assistant, tool and approval text, while preserving timestamp/error/button colors. The desktop now also bounds the rendered transcript view to protect the WPF UI from very large or tool-heavy histories; history is not deleted. The current model picker selects the model only; a separate Codex reasoning-effort selector is not implemented yet. No network behavior or client update is required for this fix.
+
+Version 0.1.5 adds public IPv4 detection in direct setup so the user does not have to retrieve the address separately. The explicit action makes a credential-free, bounded HTTPS lookup, preserves manual edits and has a manual fallback. It is an optional setup convenience, not conversation hosting or relaying. Router/firewall opening remains manual and public reachability is tested separately. Fake-HTTP and native setup checks distinguish implementation verification from a real service/router test.
+
+Current 0.1.4 adds six-digit pairing, per-conversation folders/models, archive/restore, direct IP-and-port HTTPS setup and diagnostics, distinct outgoing bubbles, explicit UTF-8 provider streams, and preserved composer focus during incoming output. Earlier native features include VS Code discovery, desktop permissions, steering, timing, usage, durable scheduling and multiple saved servers. Builds, focused protocol/access/scheduler checks and native Windows/Android checks pass; see [the verification record](SETUP.md#verification-commands-and-limits). Earlier read-only provider checks confirm the desired model catalog entry and usage windows. The user confirmed phone installation and the temporary tunnel connection; physical direct TLS/router/cellular and real-provider acceptance for the new controls remain open. Historical milestone records follow.
 
 Implemented: provider adapter, ASP.NET Core host, mobile browser UI, SQLite session registry, device pairing/authentication/revocation, SignalR updates, history, messages, supported approvals and questions, interruption, reconnect reconciliation, certificate setup, and local build/publish scripts.
 

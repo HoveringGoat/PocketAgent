@@ -24,6 +24,8 @@ function checkPermissions(params, turn = false) {
   ) {
     throw new Error('Desktop permission selection did not reach the provider.');
   }
+  if (turn && permissionMode === 'ask' && params.sandboxPolicy.writableRoots[0] !== params.cwd)
+    throw new Error('Workspace-write roots must match this conversation, not the host default.');
 }
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const save = () => {
@@ -125,11 +127,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       break;
     case 'thread/start': {
       checkPermissions(params);
-      if (Object.keys(params).some((key) => !['cwd', 'sandbox', 'approvalPolicy'].includes(key)))
+      if (
+        Object.keys(params).some(
+          (key) => !['cwd', 'model', 'sandbox', 'approvalPolicy'].includes(key),
+        )
+      )
         throw new Error('Unexpected thread override.');
       const thread = {
         id: randomUUID(),
         cwd: params.cwd,
+        model: params.model,
         historyMode: 'legacy',
         turns: [],
         status: { type: 'idle' },
@@ -160,12 +167,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       break;
     case 'thread/resume':
       checkPermissions(params);
+      if (params.cwd !== threads[params.threadId].cwd)
+        throw new Error('Resumed in the wrong folder.');
+      threads[params.threadId].model = params.model;
       reply({ thread: threads[params.threadId], ...permissions });
       break;
     case 'turn/start': {
       checkPermissions(params, true);
       const threadId = params.threadId;
       const thread = threads[threadId];
+      if (params.cwd !== thread.cwd) throw new Error('Turn started in the wrong folder.');
+      thread.model = params.model;
       const text = params.input[0].text;
       const turn = {
         id: randomUUID(),
@@ -207,6 +219,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         break;
       }
       if (text === 'hold') break;
+      if (text.startsWith('unicode:')) {
+        const item = {
+          id: randomUUID(),
+          type: 'agentMessage',
+          text: 'It\u2019s ready \u2014 caf\u00e9 \u6f22\u5b57 \ud83d\ude00.',
+        };
+        const deliver = () => {
+          turn.items.push(item);
+          notify('item/agentMessage/delta', {
+            threadId,
+            turnId: turn.id,
+            itemId: item.id,
+            delta: item.text,
+          });
+          complete(threadId);
+        };
+        if (text === 'unicode:focus') setTimeout(deliver, 1200);
+        else deliver();
+        break;
+      }
       const itemId = randomUUID();
       const method =
         text === 'questions'

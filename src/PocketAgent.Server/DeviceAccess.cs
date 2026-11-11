@@ -17,7 +17,7 @@ public sealed class PairingCode
     private bool consumed;
     private readonly Queue<DateTimeOffset> attempts = new();
 
-    private static string NewCode() => RandomNumberGenerator.GetInt32(10_000_000, 100_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string NewCode() => RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture);
     public (string Code, DateTimeOffset ExpiresAt, bool Consumed) Current { get { lock (gate) return (code, expires, consumed); } }
     public void Renew()
     {

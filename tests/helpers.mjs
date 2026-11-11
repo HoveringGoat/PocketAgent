@@ -97,7 +97,7 @@ export async function startRelay({
   let code;
   child.stdout.on('data', (data) => {
     output += data.toString();
-    code = output.match(/Pairing code: (\d{8})/)?.[1];
+    code = output.match(/Pairing code: (\d+) /)?.[1];
   });
   // Keep diagnostic output in memory; never echo pairing credentials to test output.
   child.stderr.on('data', (data) => {

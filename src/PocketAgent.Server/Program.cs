@@ -4,13 +4,15 @@ using PocketAgent;
 
 var setup = args.Contains("--setup", StringComparer.Ordinal);
 var revoke = args.Contains("--revoke-devices", StringComparer.Ordinal);
-var hostArgs = args.Where(argument => argument is not "--setup" and not "--revoke-devices").ToArray();
-if (setup || revoke)
+var diagnose = args.Contains("--diagnose", StringComparer.Ordinal);
+var hostArgs = args.Where(argument => argument is not "--setup" and not "--revoke-devices" and not "--diagnose").ToArray();
+if (setup || revoke || diagnose)
 {
     var configuration = new ConfigurationBuilder().AddEnvironmentVariables().AddCommandLine(hostArgs).Build();
     var settings = configuration.GetSection("PocketAgent").Get<HostSettings>() ?? new();
     settings.Validate(requireRepository: false, creatingCertificate: setup);
-    if (setup) CertificateSetup.Create(settings.DataDirectory, settings.ListenAddress);
+    if (diagnose) Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await new ConnectivityDiagnostics(settings).Check()));
+    else if (setup) CertificateSetup.Create(settings.DataDirectory, settings.ListenAddress, settings.DirectOrigin.Length > 0 ? new Uri(settings.DirectOrigin).Host : null);
     else { new LocalStore(settings).RevokeAll(); Console.WriteLine("All device sessions revoked."); }
     return;
 }

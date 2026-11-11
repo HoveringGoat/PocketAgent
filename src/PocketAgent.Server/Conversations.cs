@@ -4,11 +4,11 @@ namespace PocketAgent;
 
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
-public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs);
+public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
-public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage) : BackgroundService
+public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics) : BackgroundService
 {
     private sealed class State(ConversationReference reference)
     {
@@ -34,27 +34,29 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     private readonly Dictionary<string, State> states = [];
     private long lastPublished;
 
-    public async Task<ConversationSummary[]> List()
+    public async Task<ConversationSummary[]> List(bool archived = false)
     {
         await gate.WaitAsync();
         try
         {
-            return store.Conversations().Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
-                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(Repository), Repository, Environment.MachineName)).ToArray();
+            return store.Conversations(true).Where(reference => reference.Archived == archived).Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
+                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived)).ToArray();
         }
         finally { gate.Release(); }
     }
 
-    public async Task<ConversationSnapshot> Create(string title)
+    public async Task<ConversationSnapshot> Create(string title, string? workingDirectory = null, string? model = null)
     {
         if (title.Length > 100)
             throw new ApiException(400, "Conversation names can contain at most 100 characters.");
+        var directory = directories.Resolve(workingDirectory);
+        if (model is not null) await ValidateModel(model);
         await gate.WaitAsync();
         try
         {
             if (string.IsNullOrWhiteSpace(title))
             {
-                var baseName = Path.GetFileName(Path.TrimEndingDirectorySeparator(Repository));
+                var baseName = Path.GetFileName(Path.TrimEndingDirectorySeparator(directory));
                 if (baseName.Length == 0) baseName = "New conversation";
                 baseName = baseName[..Math.Min(baseName.Length, 85)];
                 var existing = store.Conversations().Select(row => row.Title).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -62,23 +64,22 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 for (var suffix = 2; existing.Contains(title); suffix++) title = $"{baseName} · {suffix}";
             }
             await codex.EnsureStarted();
-            // Preserve the model and reviewer. Policy changes require the desktop's explicit selection.
-            var result = await codex.Request("thread/start", CodexPermissions.Apply(settings, new { cwd = Repository }));
+            // Model selection belongs to this conversation; reviewer and permission selection remain desktop-owned.
+            var parameters = CodexPermissions.Apply(settings, new { cwd = directory });
+            if (model is not null) parameters["model"] = model;
+            var result = await codex.Request("thread/start", parameters);
             var thread = result.GetProperty("thread");
             var id = thread.Text("id");
             if (id.Length == 0)
                 throw new ApiException(502, "Codex returned a thread without an ID.");
-            store.SaveConversation(id, title.Trim());
-            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow)) { Resumed = true };
+            store.SaveConversation(id, title.Trim(), directory, model);
+            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model)) { Resumed = true };
             CapturePermissions(state, result);
             states[id] = state;
             return Snapshot(state);
         }
         finally { gate.Release(); await publisher.Changed(); }
     }
-
-    // Set once from the desktop configuration, never from browser input.
-    public required string Repository { private get; init; }
 
     public async Task<ConversationSnapshot> Get(string id)
     {
@@ -95,8 +96,53 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         try
         {
             var state = await Load(id);
+            RequireUnarchived(state);
             store.RenameConversation(id, title.Trim());
             state.Reference = state.Reference with { Title = title.Trim() };
+            return Snapshot(state);
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    private async Task ValidateModel(string model)
+    {
+        if (model.Length is 0 or > 200 || !(await diagnostics.Models()).Any(option => option.Model == model))
+            throw new ApiException(400, "Choose a model from this server's available models.");
+    }
+
+    private static void RequireUnarchived(State state)
+    {
+        if (state.Reference.Archived) throw new ApiException(409, "Restore this conversation before changing it or sending messages.");
+    }
+
+    private static void RequireIdle(State state)
+    {
+        if (state.ActiveTurnId is not null || state.Status is "starting" or "uncertain" or "disconnected" || state.Requests.Count > 0)
+            throw new ApiException(409, "Finish or stop active work and confirm its outcome before changing this conversation.");
+    }
+
+    public async Task<ConversationSnapshot> SetModel(string id, string model)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id); RequireUnarchived(state); RequireIdle(state);
+            await ValidateModel(model);
+            store.SetModel(id, model);
+            state.Reference = state.Reference with { Model = model };
+            return Snapshot(state);
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task<ConversationSnapshot> Archive(string id, bool archived)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id); RequireIdle(state);
+            store.SetArchived(id, archived);
+            state.Reference = state.Reference with { Archived = archived };
             return Snapshot(state);
         }
         finally { gate.Release(); await publisher.Changed(id); }
@@ -110,6 +156,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         try
         {
             var state = await Load(id);
+            RequireUnarchived(state);
             if (expectedTurnId is not null)
             {
                 if (expectedTurnId.Length == 0 || state.ActiveTurnId != expectedTurnId || state.Status is "starting" or "uncertain" or "disconnected")
@@ -137,7 +184,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 throw new ApiException(409, "This conversation has active or unconfirmed work. Wait for it to finish or interrupt it.");
             if (!state.Resumed)
             {
-                var resumed = await codex.Request("thread/resume", CodexPermissions.Apply(settings, new { threadId = id, cwd = Repository }));
+                var resumeParameters = CodexPermissions.Apply(settings, new { threadId = id, cwd = directories.Resolve(state.Reference.WorkingDirectory) });
+                if (state.Reference.Model is not null) resumeParameters["model"] = state.Reference.Model;
+                var resumed = await codex.Request("thread/resume", resumeParameters);
                 CapturePermissions(state, resumed);
                 await Hydrate(state, resumed.GetProperty("thread"));
                 state.Resumed = true;
@@ -148,11 +197,14 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             state.HasWork = false; state.ActiveTurnStartedAt = DateTimeOffset.UtcNow;
             try
             {
-                var result = await codex.Request("turn/start", CodexPermissions.Apply(settings, new
+                var parameters = CodexPermissions.Apply(settings, new
                 {
                     threadId = id,
+                    cwd = directories.Resolve(state.Reference.WorkingDirectory),
                     input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
-                }, turn: true));
+                }, turn: true, workingDirectory: state.Reference.WorkingDirectory);
+                if (state.Reference.Model is not null) parameters["model"] = state.Reference.Model;
+                var result = await codex.Request("turn/start", parameters);
                 var turn = result.GetProperty("turn");
                 if (turn.Text("id").Length == 0) throw new ApiException(504, "Codex did not confirm a turn ID. Delivery is unknown; do not resend automatically.");
                 state.ActiveTurnId = turn.Text("id");
@@ -217,7 +269,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     {
         if (states.TryGetValue(id, out var state))
             return state;
-        var reference = store.Conversations().FirstOrDefault(row => row.Id == id) ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
+        var reference = store.Conversations(true).FirstOrDefault(row => row.Id == id) ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
         await codex.EnsureStarted();
         state = new(reference);
         var result = await codex.Request("thread/read", new { threadId = id, includeTurns = false });
@@ -307,8 +359,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     }
 
     private ConversationSnapshot Snapshot(State state) => new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
-        [.. state.Items], state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(Repository), Repository, Environment.MachineName,
-        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs);
+        [.. state.Items], state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
+        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived);
 
     private static DateTimeOffset? Timestamp(JsonElement value) => value.TryGetInt64Safe(out var seconds) && seconds > 0 && seconds < 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
 
@@ -432,8 +484,12 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             {
                 var limits = await usage.Check(true);
                 var due = limits.NextResetAt ?? DateTimeOffset.UtcNow.AddMinutes(5);
-                store.Schedule(pending.Conversation, pending.Text, due, "usage-reset", pending.Device, pending.Id);
-                store.UpdateSchedule(pending.Id, "pending", "Waiting for usage reset.", due);
+                try
+                {
+                    store.Schedule(pending.Conversation, pending.Text, due, "usage-reset", pending.Device, pending.Id);
+                    store.UpdateSchedule(pending.Id, "pending", "Waiting for usage reset.", due);
+                }
+                catch (ApiException exception) when (exception.Status == 409) { /* Archiving won the race; do not recreate its canceled work. */ }
             }
             var now = Environment.TickCount64;
             if (urgent || now - lastPublished >= 100)

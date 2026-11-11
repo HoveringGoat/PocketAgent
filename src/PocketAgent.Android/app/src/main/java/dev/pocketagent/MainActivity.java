@@ -220,18 +220,61 @@ public final class MainActivity extends Activity {
     EditText code = input("Desktop pairing code");
     code.setContentDescription("Desktop pairing code");
     code.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-    code.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(8)});
+    code.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(6)});
     root.addView(address, match());
     root.addView(name, match());
     root.addView(code, match());
     error = errorLabel();
     root.addView(error);
+    Button testConnection = button("Test connection", null);
+    testConnection.setOnClickListener(
+        v -> {
+          final ApiClient probe;
+          try {
+            probe = new ApiClient(ApiClient.normalizeOrigin(address.getText().toString()), "");
+          } catch (Exception exception) {
+            problem(safeError(exception));
+            return;
+          }
+          int epoch = generation;
+          testConnection.setEnabled(false);
+          notice("Testing HTTPS connection…");
+          network.execute(
+              () -> {
+                try {
+                  JSONObject session = (JSONObject) probe.request("/session", null);
+                  if (!session.has("authenticated") || !session.has("version"))
+                    throw new IllegalArgumentException(
+                        "This address did not return PocketAgent server metadata.");
+                  ui.post(
+                      () -> {
+                        if (epoch == generation) {
+                          testConnection.setEnabled(true);
+                          notice(
+                              "Reached PocketAgent "
+                                  + session.optString("version")
+                                  + ". For an internet test, turn Wi-Fi off and repeat over"
+                                  + " cellular. Pairing is still required.");
+                        }
+                      });
+                } catch (Exception exception) {
+                  ui.post(
+                      () -> {
+                        if (epoch == generation) {
+                          testConnection.setEnabled(true);
+                          problem(safeError(exception));
+                        }
+                      });
+                }
+              });
+        });
+    root.addView(testConnection, match());
     Button pair = button("Connect", null);
     root.addView(pair, match());
     pair.setOnClickListener(
         v -> {
-          if (name.getText().toString().trim().isEmpty() || code.length() != 8) {
-            problem("Enter a device name and the eight-digit desktop code.");
+          if (name.getText().toString().trim().isEmpty() || code.length() != 6) {
+            problem("Enter a device name and the six-digit desktop code.");
             return;
           }
           final String origin;
@@ -332,6 +375,7 @@ public final class MainActivity extends Activity {
     metadata.setContentDescription("Conversation status and context");
     metadata.setBackgroundColor(CARD);
     context = label("Select a conversation", 12);
+    context.setOnClickListener(v -> showModels());
     metadata.addView(context, new LinearLayout.LayoutParams(0, -2, 1));
     context.setOnLongClickListener(
         v -> {
@@ -482,6 +526,10 @@ public final class MainActivity extends Activity {
   }
 
   private void renderTabs(JSONArray sessions) {
+    boolean found = selected.isEmpty();
+    for (int i = 0; i < sessions.length(); i++)
+      if (selected.equals(sessions.optJSONObject(i).optString("id"))) found = true;
+    if (!found) select("");
     String signature = sessions.toString() + selected;
     if (signature.equals(tabSignature)) return;
     tabSignature = signature;
@@ -495,7 +543,15 @@ public final class MainActivity extends Activity {
       tab.setTypeface(null, id.equals(selected) ? Typeface.BOLD : Typeface.NORMAL);
       tab.setOnLongClickListener(
           v -> {
-            rename(id, entry.optString("title"));
+            new AlertDialog.Builder(this)
+                .setTitle(entry.optString("title"))
+                .setItems(
+                    new String[] {"Rename", "Archive"},
+                    (dialog, which) -> {
+                      if (which == 0) rename(id, entry.optString("title"));
+                      else archive(id);
+                    })
+                .show();
             return true;
           });
       tabs.addView(tab);
@@ -526,7 +582,7 @@ public final class MainActivity extends Activity {
     context.setText(
         getString(
             R.string.session_context,
-            status,
+            status + " · " + (state.isNull("model") ? "Codex settings" : state.optString("model")),
             state.optString("hostName"),
             state.optString("workingDirectory")));
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
@@ -574,11 +630,18 @@ public final class MainActivity extends Activity {
                           ? summary + "\n" + item.optString("detail")
                           : summary));
         }
-        GradientDrawable background = new GradientDrawable();
-        background.setColor("userMessage".equals(type) ? Color.rgb(41, 59, 44) : CARD);
-        background.setCornerRadius(dp(8));
-        text.setBackground(background);
-        LinearLayout.LayoutParams margin = match();
+        boolean user = "userMessage".equals(type);
+        if (!"agentMessage".equals(type)) {
+          GradientDrawable background = new GradientDrawable();
+          background.setColor(user ? Color.rgb(41, 59, 44) : CARD);
+          background.setCornerRadius(dp(8));
+          text.setBackground(background);
+        }
+        LinearLayout.LayoutParams margin = user ? new LinearLayout.LayoutParams(-2, -2) : match();
+        if (user) {
+          margin.gravity = Gravity.END;
+          text.setMaxWidth(getResources().getDisplayMetrics().widthPixels - dp(48));
+        }
         margin.setMargins(0, dp(6), 0, dp(6));
         transcript.addView(text, margin);
       }
@@ -587,7 +650,9 @@ public final class MainActivity extends Activity {
       if (items.length() == 0) transcript.addView(label("Send a message to start working.", 18));
       scroll.post(
           () -> {
-            if (bottom) scroll.fullScroll(View.FOCUS_DOWN);
+            // fullScroll also chooses a focusable transcript child, stealing the composer's
+            // cursor/IME.
+            if (bottom) scroll.scrollTo(0, transcript.getHeight());
             else scroll.scrollTo(0, previous);
           });
     }
@@ -612,6 +677,7 @@ public final class MainActivity extends Activity {
     send.setEnabled(
         connected
             && conversation != null
+            && !conversation.optBoolean("archived")
             && !submitting
             && !composer.getText().toString().trim().isEmpty()
             && !"starting".equals(status)
@@ -724,8 +790,210 @@ public final class MainActivity extends Activity {
     }
     ApiClient client = api;
     action(
-        () -> client.request("/conversations", new JSONObject()),
-        result -> select(((JSONObject) result).optString("id")),
+        () ->
+            new JSONObject()
+                .put("folders", client.request("/directories", null))
+                .put("models", client.request("/models", null)),
+        result -> newConversationDialog((JSONObject) result),
+        false);
+  }
+
+  private void newConversationDialog(JSONObject options) {
+    ApiClient client = api;
+    LinearLayout panel = column();
+    panel.setPadding(dp(16), 0, dp(16), 0);
+    panel.addView(label("Working folder on the desktop", 15));
+    EditText folder = input("Absolute desktop folder path");
+    folder.setContentDescription("Conversation working folder");
+    folder.setText(
+        conversation == null
+            ? options.optJSONObject("folders").optString("path")
+            : conversation.optString("workingDirectory"));
+    panel.addView(folder, match());
+    panel.addView(
+        button("Browse folders", v -> browseFolders(folder.getText().toString(), folder::setText)),
+        match());
+    String[] chosen = {""};
+    JSONArray models = options.optJSONArray("models");
+    Button model = button("Model: Use Codex settings", null);
+    model.setContentDescription("New conversation model");
+    model.setOnClickListener(
+        v ->
+            modelChoices(
+                models,
+                (slug, name) -> {
+                  chosen[0] = slug;
+                  model.setText(name);
+                }));
+    panel.addView(model, match());
+    new AlertDialog.Builder(this)
+        .setTitle("New conversation")
+        .setView(panel)
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton(
+            "Create conversation",
+            (dialog, which) ->
+                action(
+                    () -> {
+                      JSONObject body =
+                          new JSONObject().put("workingDirectory", folder.getText().toString());
+                      if (!chosen[0].isEmpty()) body.put("model", chosen[0]);
+                      return client.request("/conversations", body);
+                    },
+                    result -> select(((JSONObject) result).optString("id")),
+                    false))
+        .show();
+  }
+
+  private void browseFolders(String path, java.util.function.Consumer<String> chosen) {
+    ApiClient client = api;
+    action(
+        () -> client.request("/directories?path=" + ApiClient.segment(path), null),
+        result -> {
+          JSONObject listing = (JSONObject) result;
+          JSONArray roots = listing.optJSONArray("roots"),
+              directories = listing.optJSONArray("directories");
+          java.util.ArrayList<String> labels = new java.util.ArrayList<>(),
+              paths = new java.util.ArrayList<>();
+          if (!listing.isNull("parent")) {
+            labels.add(".. (parent folder)");
+            paths.add(listing.optString("parent"));
+          }
+          for (int i = 0; i < roots.length(); i++) {
+            labels.add("Drive " + roots.optJSONObject(i).optString("name"));
+            paths.add(roots.optJSONObject(i).optString("path"));
+          }
+          for (int i = 0; i < directories.length(); i++) {
+            labels.add(directories.optJSONObject(i).optString("name"));
+            paths.add(directories.optJSONObject(i).optString("path"));
+          }
+          new AlertDialog.Builder(this)
+              .setTitle(listing.optString("path"))
+              .setItems(
+                  labels.toArray(new String[0]),
+                  (dialog, which) -> browseFolders(paths.get(which), chosen))
+              .setPositiveButton(
+                  "Use this folder", (dialog, which) -> chosen.accept(listing.optString("path")))
+              .setNegativeButton("Cancel", null)
+              .show();
+          if (listing.optBoolean("hasMore"))
+            notice("Showing the first 500 folders. Enter a full path to open another folder.");
+        },
+        false);
+  }
+
+  private interface ModelSelection {
+    void accept(String slug, String name);
+  }
+
+  private void modelChoices(JSONArray models, ModelSelection selectedModel) {
+    String[] names = new String[models.length()];
+    for (int i = 0; i < models.length(); i++)
+      names[i] = models.optJSONObject(i).optString("displayName");
+    new AlertDialog.Builder(this)
+        .setTitle("Choose model")
+        .setItems(
+            names,
+            (dialog, which) -> {
+              JSONObject choice = models.optJSONObject(which);
+              selectedModel.accept(choice.optString("model"), names[which]);
+            })
+        .setNegativeButton("Cancel", null)
+        .show();
+  }
+
+  private void showModels() {
+    if (api == null || conversation == null) return;
+    ApiClient client = api;
+    String id = selected;
+    if (!conversation.isNull("activeTurnId")) {
+      problem("Finish or stop work before changing the model.");
+      return;
+    }
+    action(
+        () -> client.request("/models", null),
+        result ->
+            modelChoices(
+                (JSONArray) result,
+                (slug, name) ->
+                    action(
+                        () ->
+                            client.request(
+                                "/conversations/" + ApiClient.segment(id) + "/model",
+                                new JSONObject().put("model", slug)),
+                        state -> {
+                          if (selected.equals(id)) renderConversation((JSONObject) state);
+                          notice(
+                              "Model selected for future messages, including scheduled messages.");
+                        },
+                        false)),
+        false);
+  }
+
+  private void archive(String id) {
+    if (api == null || id.isEmpty()) return;
+    ApiClient client = api;
+    new AlertDialog.Builder(this)
+        .setTitle("Archive conversation?")
+        .setMessage(
+            "Pending scheduled messages will be canceled. You can restore the conversation later.")
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton(
+            "Archive",
+            (dialog, which) ->
+                action(
+                    () ->
+                        client.request(
+                            "/conversations/" + ApiClient.segment(id) + "/archive",
+                            new JSONObject()),
+                    ignored -> {
+                      if (selected.equals(id)) select("");
+                    },
+                    false))
+        .show();
+  }
+
+  private void showArchived() {
+    if (api == null) return;
+    ApiClient client = api;
+    action(
+        () -> client.request("/conversations?archived=true", null),
+        result -> {
+          JSONArray archived = (JSONArray) result;
+          String[] names = new String[archived.length()];
+          for (int i = 0; i < archived.length(); i++)
+            names[i] =
+                archived.optJSONObject(i).optString("title")
+                    + "\n"
+                    + archived.optJSONObject(i).optString("workingDirectory");
+          AlertDialog.Builder dialog =
+              new AlertDialog.Builder(this)
+                  .setTitle("Archived conversations")
+                  .setNegativeButton("Close", null);
+          if (names.length == 0) dialog.setMessage("No archived conversations.");
+          else
+            dialog.setItems(
+                names,
+                (d, which) -> {
+                  String id = archived.optJSONObject(which).optString("id");
+                  new AlertDialog.Builder(this)
+                      .setTitle("Restore conversation?")
+                      .setMessage("Canceled scheduled messages stay canceled.")
+                      .setNegativeButton("Cancel", null)
+                      .setPositiveButton(
+                          "Restore",
+                          (confirm, choice) ->
+                              action(
+                                  () ->
+                                      client.request(
+                                          "/conversations/" + ApiClient.segment(id) + "/restore",
+                                          new JSONObject()),
+                                  ignored -> select(id),
+                                  false))
+                      .show();
+                });
+          dialog.show();
+        },
         false);
   }
 
@@ -856,6 +1124,9 @@ public final class MainActivity extends Activity {
               "Scheduled messages",
               "Usage and resets",
               "Refresh",
+              "Choose model",
+              "Archive conversation",
+              "Archived conversations",
               "Unpair this server"
             },
             (d, which) -> {
@@ -864,6 +1135,9 @@ public final class MainActivity extends Activity {
               else if (which == 2) showScheduled();
               else if (which == 3) showUsage();
               else if (which == 4) refresh();
+              else if (which == 5) showModels();
+              else if (which == 6) archive(selected);
+              else if (which == 7) showArchived();
               else {
                 ApiClient client = api;
                 action(
@@ -1113,9 +1387,11 @@ public final class MainActivity extends Activity {
     if (exception instanceof ApiClient.ApiError || exception instanceof IllegalArgumentException)
       return exception.getMessage();
     if (exception instanceof javax.net.ssl.SSLException)
-      return "The server's HTTPS certificate could not be verified. Check its address and"
-          + " certificate setup.";
-    return "Could not reach the desktop. Check its address, internet connector, and that the server"
-        + " is running.";
+      return "HTTPS verification failed. Check the IP address, phone clock, and desktop"
+          + " certificate. For direct access, install only your desktop's public CA"
+          + " certificate on this phone.";
+    return "Could not reach the desktop. Check the IP and port, that the server is running, router"
+        + " TCP forwarding, and Windows Firewall. Test over cellular; some routers cannot"
+        + " access their own public IP from Wi-Fi.";
   }
 }

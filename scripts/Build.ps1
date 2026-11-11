@@ -1,4 +1,4 @@
-param([switch]$Publish, [switch]$SkipAndroid, [switch]$SkipConnector)
+param([switch]$Publish, [switch]$SkipAndroid)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 $dotnetCommand = if (Test-Path '.tools/dotnet/dotnet.exe') { (Resolve-Path '.tools/dotnet/dotnet.exe').Path } else { 'dotnet' }
@@ -22,13 +22,6 @@ if ($Publish) {
     Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md,documentation/PROJECT.md -Destination (Join-Path $publishDirectory 'documentation')
     $androidArtifact = "artifacts/PocketAgent-$version-android.apk"
     if (Test-Path -LiteralPath $androidArtifact) { Copy-Item -LiteralPath $androidArtifact -Destination $publishDirectory }
-    if (!$SkipConnector) {
-        $connector = & (Join-Path $PSScriptRoot 'Get-Connector.ps1')
-        $toolsDirectory = Join-Path $publishDirectory 'tools'
-        New-Item -ItemType Directory -Force -Path $toolsDirectory | Out-Null
-        Copy-Item -LiteralPath $connector -Destination $toolsDirectory
-        Copy-Item -Path (Join-Path (Split-Path $connector -Parent) 'cloudflared-*') -Destination $toolsDirectory
-    }
     Compress-Archive -LiteralPath $publishDirectory -DestinationPath ($publishDirectory + '.zip') -Force
     (Get-FileHash -LiteralPath ($publishDirectory + '.zip') -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path ($publishDirectory + '.zip') -Leaf) | Set-Content -LiteralPath ($publishDirectory + '.zip.sha256')
 }

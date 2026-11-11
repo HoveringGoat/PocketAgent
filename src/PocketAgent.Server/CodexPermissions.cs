@@ -11,7 +11,7 @@ public static class CodexPermissions
         _ => "Use Codex settings"
     };
 
-    public static Dictionary<string, object?> Apply(HostSettings settings, object parameters, bool turn = false)
+    public static Dictionary<string, object?> Apply(HostSettings settings, object parameters, bool turn = false, string? workingDirectory = null)
     {
         var result = JsonSerializer.SerializeToElement(parameters).EnumerateObject()
             .ToDictionary(property => property.Name, property => (object?)property.Value.Clone());
@@ -22,7 +22,7 @@ public static class CodexPermissions
         if (!turn) result["sandbox"] = fullAccess ? "danger-full-access" : "workspace-write";
         else result["sandboxPolicy"] = fullAccess
             ? (object)new { type = "dangerFullAccess" }
-            : new { type = "workspaceWrite", writableRoots = new[] { settings.RepositoryPath }, networkAccess = false };
+            : new { type = "workspaceWrite", writableRoots = new[] { workingDirectory ?? settings.RepositoryPath }, networkAccess = false };
         return result;
     }
 }

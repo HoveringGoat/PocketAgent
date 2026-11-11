@@ -4,6 +4,7 @@
     <RootNamespace>PocketAgent</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Certes" Version="4.1.0" />
     <Content Remove="wwwroot/**" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
   </ItemGroup>

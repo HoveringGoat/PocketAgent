@@ -27,7 +27,8 @@ final class ApiClient {
   }
 
   static String normalizeOrigin(String input) throws Exception {
-    URI uri = new URI(input.trim());
+    String address = input.trim();
+    URI uri = new URI(address.contains("://") ? address : "https://" + address);
     boolean development =
         BuildConfig.DEBUG
             && "http".equals(uri.getScheme())
@@ -66,7 +67,7 @@ final class ApiClient {
       if (body != null) {
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         connection.setRequestProperty("X-PocketAgent", "1");
         byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
         connection.setFixedLengthStreamingMode(data.length);
