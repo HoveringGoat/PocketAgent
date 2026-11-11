@@ -1,0 +1,22 @@
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+.local/
+secrets/
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Local agent sessions and runtime data
+.runtime/
+*.log
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build and dependency ignores should be added when the stack is selected.
