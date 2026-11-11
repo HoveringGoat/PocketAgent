@@ -15,7 +15,7 @@ public static class RelayHost
         var settings = configured ?? builder.Configuration.GetSection("PocketAgent").Get<HostSettings>() ?? new();
         settings.Validate();
         builder.Logging.ClearProviders();
-        var certificates = new AutomaticCertificates(settings);
+        var certificates = new PeerCertificates(settings);
 
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -24,7 +24,7 @@ public static class RelayHost
             {
                 if (settings.UseHttps)
                 {
-                    if (settings.AutomaticCertificate)
+                    if (settings.PinnedCertificate)
                         listener.UseHttps(certificates.ConfigureHttps);
                     else
                     // Windows Schannel requires a user-backed private key for TLS handshakes.
@@ -37,7 +37,7 @@ public static class RelayHost
         builder.Services.AddSingleton(certificates);
         builder.Services.AddSingleton<HostLease>();
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<HostLease>());
-        builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<AutomaticCertificates>());
+        builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<PeerCertificates>());
         builder.Services.AddSingleton(serviceProvider =>
         {
             // Service construction can precede hosted-service startup. Acquire ownership before schema migration.

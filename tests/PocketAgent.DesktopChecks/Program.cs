@@ -20,6 +20,11 @@ internal static class Program
         try
         {
             var window = new MainWindow();
+            var fixtureDirectory = Path.Combine(root, ".local", "qr-fixture"); Directory.CreateDirectory(fixtureDirectory);
+            var fixturePayload = "pocketagent://pair?v=1&origin=https%3A%2F%2F127.0.0.1%3A5147&spki=" + new string('A', 64) + "&ticket=" + new string('B', 64);
+            using (var data = QRCoder.QRCodeGenerator.GenerateQrCode(fixturePayload, QRCoder.QRCodeGenerator.ECCLevel.M))
+            using (var qr = new QRCoder.PngByteQRCode(data)) File.WriteAllBytes(Path.Combine(fixtureDirectory, "desktop-qr.png"), qr.GetGraphic(6));
+            File.WriteAllText(Path.Combine(fixtureDirectory, "desktop-qr.txt"), fixturePayload);
             ((TabControl)window.FindName("Navigation")).SelectedIndex = 0;
             ((Grid)window.FindName("ConversationPanel")).IsEnabled = true;
             var transcript = (StackPanel)window.FindName("Transcript");
@@ -56,6 +61,7 @@ internal static class Program
             foreach (var scrollbar in scrollbars) ColorIs(scrollbar.Background, "#18271F", "Scrollbar track");
             CheckConfirmation(window, dismiss: false);
             CheckConfirmation(window, dismiss: true);
+            CheckLanDefault(window);
             if (window.FindName("TunnelExecutableSetting") is not null || window.FindName("PublicOriginSetting") is not null)
                 throw new InvalidOperationException("Obsolete tunnel settings remain in the UI.");
 
@@ -129,5 +135,28 @@ internal static class Program
                 throw new InvalidOperationException("Themed confirmation changed explicit Yes/dismiss behavior.");
         }
         finally { timer.Stop(); }
+    }
+
+    private static void CheckLanDefault(MainWindow owner)
+    {
+        var preferred = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(network => network.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up && network.GetIPProperties().GatewayAddresses.Any(gateway => gateway.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !gateway.Address.Equals(System.Net.IPAddress.Any)))
+            .SelectMany(network => network.GetIPProperties().UnicastAddresses).Select(address => address.Address.ToString()).ToHashSet();
+        if (preferred.Count == 0) return;
+        string? failure = null;
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            var dialog = Application.Current.Windows.OfType<Window>().SingleOrDefault(window => window.Title == "Direct internet setup");
+            if (dialog is null) return;
+            timer.Stop(); dialog.UpdateLayout();
+            var selection = Descendants(dialog).OfType<ComboBox>().First().SelectedItem.ToString()!.Split(' ')[0];
+            if (!preferred.Contains(selection)) failure = "Direct setup defaulted to an adapter without an IPv4 gateway instead of the available LAN adapter.";
+            dialog.Close();
+        };
+        timer.Start();
+        typeof(MainWindow).GetMethod("SetupDirectInternet", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(owner, [owner, new RoutedEventArgs()]);
+        timer.Stop();
+        if (failure is not null) throw new InvalidOperationException(failure);
     }
 }

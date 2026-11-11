@@ -11,6 +11,7 @@ import org.json.JSONTokener;
 final class ApiClient {
   final String origin;
   final String token;
+  final String pin;
 
   static final class ApiError extends Exception {
     final int status;
@@ -22,8 +23,13 @@ final class ApiClient {
   }
 
   ApiClient(String origin, String token) {
+    this(origin, token, "");
+  }
+
+  ApiClient(String origin, String token, String pin) {
     this.origin = origin;
     this.token = token;
+    this.pin = pin;
   }
 
   static String normalizeOrigin(String input) throws Exception {
@@ -57,6 +63,14 @@ final class ApiClient {
   Object request(String path, JSONObject body) throws Exception {
     HttpURLConnection connection =
         (HttpURLConnection) new URI(origin + "/api" + path).toURL().openConnection();
+    if (!pin.isEmpty()) {
+      if (!(connection instanceof javax.net.ssl.HttpsURLConnection))
+        throw new IllegalArgumentException("Pinned connections require HTTPS.");
+      ((javax.net.ssl.HttpsURLConnection) connection)
+          .setSSLSocketFactory(new PinnedTrust(pin).socketFactory());
+      // Keep Android's hostname/SAN verification enabled. Only chain trust is replaced by the
+      // scanned key pin.
+    }
     connection.setInstanceFollowRedirects(false);
     connection.setConnectTimeout(10000);
     connection.setReadTimeout(75000);

@@ -2,19 +2,6 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
-      "BouncyCastle.Cryptography": {
-        "type": "Transitive",
-        "resolved": "2.7.0",
-        "contentHash": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw=="
-      },
-      "Certes": {
-        "type": "Transitive",
-        "resolved": "4.1.0",
-        "contentHash": "xlkcd2hCg397+bCUOvFWqXbPqsHW+WMYZTVutFfQT+04y5asJysCZbIOGnaa8E6PptBBzR+E+e8UZSFj9XlnDw==",
-        "dependencies": {
-          "BouncyCastle.Cryptography": "2.7.0"
-        }
-      },
       "Microsoft.Data.Sqlite": {
         "type": "Transitive",
         "resolved": "10.0.15",
@@ -32,6 +19,11 @@
         "dependencies": {
           "SQLitePCLRaw.core": "2.1.13"
         }
+      },
+      "QRCoder": {
+        "type": "Transitive",
+        "resolved": "1.8.0",
+        "contentHash": "RuvX3PEXU6pbY/I5ItAk800jm62r+YnoPLgyS2WTgwxkOnGkOfU9ORiipHUF0LkLyqM8rlroUCA319JjRYfRFQ=="
       },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "Transitive",
@@ -63,13 +55,13 @@
       "pocketagent.desktop": {
         "type": "Project",
         "dependencies": {
-          "PocketAgent.Server": "[0.1.8, )"
+          "PocketAgent.Server": "[0.1.9, )",
+          "QRCoder": "[1.8.0, )"
         }
       },
       "pocketagent.server": {
         "type": "Project",
         "dependencies": {
-          "Certes": "[4.1.0, )",
           "Microsoft.Data.Sqlite": "[10.0.15, )"
         }
       }

@@ -54,19 +54,29 @@ public final class SmokeInstrumentation extends Instrumentation {
                 android.util.Base64.decode(
                     arguments.getString("workspaceBase64"), android.util.Base64.DEFAULT),
                 java.nio.charset.StandardCharsets.UTF_8);
-        await(() -> main(() -> description("Server address") != null));
-        check(
-            ApiClient.normalizeOrigin("203.0.113.10:5147").equals("https://203.0.113.10:5147"),
-            "Bare IP and port must default to HTTPS.");
+        // Pairing transport/UI is covered separately by PairingInstrumentation with real pinned
+        // TLS.
+        // Seed this chat regression through the debug-only loopback fixture so it can focus on
+        // steering, drafts, folders/models and restoration without using a physical camera.
+        JSONObject paired =
+            (JSONObject)
+                new ApiClient(arguments.getString("origin"), "")
+                    .request(
+                        "/devices/pair",
+                        new JSONObject()
+                            .put("deviceName", "Chat fixture")
+                            .put("code", arguments.getString("code")));
+        new SessionStore(getTargetContext())
+            .save(arguments.getString("origin"), paired.getString("token"), "Personal");
         main(
             () -> {
-              ((EditText) description("Server address")).setText(arguments.getString("origin"));
-              ((EditText) description("Desktop pairing code")).setText(arguments.getString("code"));
+              activity.finish();
               return true;
             });
-        main(() -> text("Test connection").performClick());
-        await(() -> containsPart("Reached PocketAgent"));
-        main(() -> text("Connect").performClick());
+        activity =
+            startActivitySync(
+                new Intent(getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         await(this::connected);
         main(() -> description("New conversation").performClick());
         dialogClick("Create conversation");

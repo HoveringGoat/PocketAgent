@@ -2,7 +2,7 @@ param([string]$Repository = (Split-Path $PSScriptRoot -Parent))
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $version = ([xml](Get-Content (Join-Path $projectRoot 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version
-$desktopDirectory = Join-Path $projectRoot "artifacts/PocketAgent-$version-desktop"
+$desktopDirectory = Join-Path $projectRoot "artifacts/releases/$version/desktop"
 $desktopDll = Join-Path $desktopDirectory 'PocketAgent.Desktop.dll'
 if (Test-Path -LiteralPath (Join-Path $desktopDirectory 'hostfxr.dll')) {
     & (Join-Path $desktopDirectory 'PocketAgent.Desktop.exe') --repository $Repository

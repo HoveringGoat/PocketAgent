@@ -15,8 +15,7 @@ public sealed class HostSettings
     public string CodexExtensionsDirectory { get; set; } = "";
     public string PublicOrigin { get; set; } = "";
     public string DirectOrigin { get; set; } = "";
-    public bool AutomaticCertificate { get; set; }
-    public int AcmePort { get; set; } = 5080;
+    public bool PinnedCertificate { get; set; }
     public string PermissionMode { get; set; } = "inherit";
     public string[] CodexArguments { get; set; } = [];
     public bool UseHttps => CertificatePath.Length > 0;
@@ -37,8 +36,7 @@ public sealed class HostSettings
             throw new InvalidOperationException("LAN access requires a private IPv4 address and CertificatePath. Run certificate setup first.");
         if (Port is < 1024 or > 65535)
             throw new InvalidOperationException("Port must be between 1024 and 65535.");
-        if (AutomaticCertificate && (DirectOrigin.Length == 0 || !UseHttps || AcmePort is < 1024 or > 65535 || AcmePort == Port))
-            throw new InvalidOperationException("Automatic HTTPS requires a direct internet address, certificate path and a separate challenge listener port between 1024 and 65535.");
+        if (PinnedCertificate && !UseHttps) throw new InvalidOperationException("QR trust requires HTTPS.");
         if (DirectOrigin.Length > 0)
         {
             if (!Uri.TryCreate(DirectOrigin, UriKind.Absolute, out var direct) || direct.Scheme != "https" ||
@@ -48,8 +46,6 @@ public sealed class HostSettings
             if (PublicOrigin.Length > 0 || !UseHttps && !creatingCertificate)
                 throw new InvalidOperationException("Direct internet requires a server certificate and cannot be combined with proxy/tunnel mode.");
             DirectOrigin = direct.GetLeftPart(UriPartial.Authority);
-            if (AutomaticCertificate && direct.Port == 80)
-                throw new InvalidOperationException("Use a chat port other than public TCP 80; TCP 80 is reserved for certificate validation.");
         }
         if (PublicOrigin.Length > 0)
         {

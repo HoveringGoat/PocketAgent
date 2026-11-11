@@ -2,24 +2,25 @@
 
 A native Android companion and Windows desktop/server app for following and directing Codex work.
 
-The desktop keeps provider credentials and repository execution local. Pair the Android app with a server address and one-use code, then switch between conversation tabs on saved work/personal machines. Both native apps support chat, mid-work steering, supported approvals, interruption, usage windows and scheduled messages. The browser client has been replaced.
+The desktop keeps provider credentials and repository execution local. Scan its pairing QR or paste the same full pairing string, then switch between conversation tabs on saved work/personal machines. Both native apps support chat, mid-work steering, approvals, interruption, usage windows and scheduled messages.
 
 ## Run the packaged apps
 
-Version 0.1.9 removes remaining white scrollbar/confirmation surfaces and requests dark window title bars. Direct HTTPS can share public port 80 with an existing Caddy server through a challenge-only route. Version 0.1.8 added automatic trusted IP certificates; no phone certificate installation is required for this mode.
+Version 0.1.10 uses pinned desktop identity with single-step scan/paste enrollment. No additional six-digit entry, CA installation, Let's Encrypt, ports 80/443 or Caddy edits. Certificates renew locally without changing identity. The desktop has a pocket/terminal icon and displays the running version and executable path.
 
-Version 0.1.5 adds **Detect public IP** to the direct internet setup wizard. Detection is optional and only queries the address service when clicked; chat traffic stays direct. Existing 0.1.4 phone clients remain compatible.
+Install both apps for new enrollment. Existing saved devices/conversations are retained; re-pair to adopt pinned trust on an old connection.
 
-Build outputs are `artifacts/PocketAgent-0.1.9-desktop.zip` (self-contained Windows x64 server) and `artifacts/PocketAgent-0.1.9-android.apk` (signed sideloadable Android client). Existing phone clients are compatible. Extract the ZIP and run `PocketAgent.Desktop.exe`; use Settings > Set up direct internet for trusted HTTPS. The installed VS Code Codex binary is discovered automatically; it is not redistributed.
+Outputs are `artifacts/releases/0.1.10/desktop/PocketAgent.Desktop.exe`, `artifacts/releases/0.1.10/PocketAgent-0.1.10-desktop.zip`, and `artifacts/releases/0.1.10/android/PocketAgent-0.1.10-android.apk`. Older releases are preserved under the same versioned layout. A running 0.1.9 folder is left in place until closed. The installed VS Code Codex binary is discovered automatically and is not redistributed.
 
-Follow [direct internet setup](documentation/SETUP.md#direct-internet-ip-and-port) for IP-and-port HTTPS with manually configured router forwarding/firewall rules. No domain, centralized PocketAgent host or traffic relay is required. The desktop provides certificate setup and local diagnostics; Android's Test connection over cellular checks the external route. Wi-Fi HTTPS and optional third-party tunnels remain documented alternatives. Loopback `127.0.0.1` is desktop-only. The server URL returns metadata rather than a browser chat page. No public release or internet endpoint has been published automatically.
+Follow [direct internet setup](documentation/SETUP.md#direct-internet-ip-and-port) to forward one chosen TCP port to the desktop and allow it through Windows Firewall. Start the server, then open Devices to scan/copy pairing. Pair over cellular to test the outside route. No domain, central hosting or traffic relay is required. No public release or internet endpoint has been published automatically.
 
-Each conversation can select its own existing desktop folder and available model. Archive/restore hides old tabs without deleting history; archiving cancels pending scheduled messages. New pairings use six-digit codes. User messages appear in bubbles and assistant prose uses the plain transcript background. Updates preserve saved device tokens and conversation references.
+Each conversation selects its existing desktop folder and available model. Archive/restore hides old tabs without deleting history; archiving cancels pending schedules. User messages use bubbles; assistant prose uses the plain transcript background.
 
 ## Build and verify
 
 ```powershell
-.\scripts\Build.ps1 -Publish
+.\scripts\Build.ps1 -Target Desktop -Publish
+.\scripts\Build.ps1 -Target Android
 .\scripts\Start-Desktop.ps1 -Repository C:\GitHub\YourProject
 ```
 

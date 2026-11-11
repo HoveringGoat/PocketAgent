@@ -27,18 +27,21 @@
       </TabItem>
       <TabItem Header="Devices">
         <ScrollViewer><StackPanel Margin="20" MaxWidth="730" HorizontalAlignment="Left">
-          <TextBlock Text="Connect your phone" FontSize="24"/><TextBlock Text="Enter this server address and the code in the Android app. Direct internet requires router forwarding; trusted HTTPS setup handles certificates automatically." Margin="0,10"/>
+          <TextBlock Text="Connect your phone" FontSize="24"/><TextBlock Text="Scan this QR or copy its full pairing string into the phone app. Either method verifies this desktop and pairs the phone in one step. Treat an unused QR or pairing string like a temporary password." Margin="0,10"/>
           <TextBlock x:Name="CertificateStatus" TextWrapping="Wrap" Foreground="#C1DAA6"/>
           <TextBox x:Name="ConnectionAddress" IsReadOnly="True"/><Button Content="Copy address" Click="CopyAddress" HorizontalAlignment="Left"/>
           <Button Content="Connection diagnostics" Click="CheckConnectivity" HorizontalAlignment="Left"/>
           <Button Content="Locate Android installer APK" Click="LocateAndroid" HorizontalAlignment="Left"/>
-          <TextBlock x:Name="PairingDisplay" FontSize="32" FontWeight="Bold" Margin="0,18,0,4"/><TextBlock x:Name="PairingExpiry"/><Button Content="Generate new pairing code" Click="RenewPairing" HorizontalAlignment="Left"/>
+          <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
+          <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
+          <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
           <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><StackPanel x:Name="DeviceList"/>
         </StackPanel></ScrollViewer>
       </TabItem>
       <TabItem Header="Settings">
         <ScrollViewer><StackPanel Margin="20" MaxWidth="760" HorizontalAlignment="Left" MinWidth="580">
           <TextBlock Text="Desktop setup" FontSize="24"/><TextBlock Text="Save settings while the server is stopped. Credentials stay on this computer." Margin="0,8,0,18"/>
+          <TextBlock x:Name="BuildDisplay" Foreground="#A7BAA7" Margin="0,0,0,14" TextWrapping="Wrap"/>
           <TextBlock Text="Default working folder (new conversations can choose another)"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>
           <TextBlock Text="Codex executable override (leave blank to prefer VS Code)"/><TextBox x:Name="CodexSetting"/><TextBlock x:Name="CodexResolved" Foreground="#A7BAA7" Margin="0,0,0,14"/>
           <TextBlock Text="Codex permissions"/>
@@ -51,12 +54,12 @@
           <TextBlock Text="Listener IPv4 address / port"/><DockPanel><TextBox x:Name="PortSetting" DockPanel.Dock="Right" Width="90" Margin="10,5,0,12"/><TextBox x:Name="AddressSetting"/></DockPanel>
           <Button Content="Set up direct internet (IP + port)…" Click="SetupDirectInternet" HorizontalAlignment="Left"/>
           <TextBlock Text="Direct internet HTTPS address (public IPv4 + external port)"/><TextBox x:Name="DirectOriginSetting"/>
-          <TextBlock Text="Forward the chat TCP port to the desktop listener and router TCP 80 to the validation port shown during setup. Trusted HTTPS renews automatically while the server runs; no phone certificate installation is needed. Router/firewall rules are configured manually." TextWrapping="Wrap" Margin="0,0,0,12"/>
+          <TextBlock Text="Forward only your chosen chat TCP port to the desktop listener. Scan the pairing QR or paste its string on the phone. No certificate installation, ports 80/443 or changes to Caddy are needed." TextWrapping="Wrap" Margin="0,0,0,12"/>
           <Expander Header="Advanced certificate settings" Margin="0,10">
             <StackPanel>
               <TextBlock Text="Server certificate PFX path (managed by trusted HTTPS setup)"/><TextBox x:Name="CertificateSetting"/>
-              <Button Content="Manual Wi-Fi certificate setup…" Click="SetupWifi" HorizontalAlignment="Left"/>
-              <TextBlock Text="Local-only fallback: generates a private CA that must be installed manually on the phone. Trusted internet HTTPS does not require this." Foreground="#A7BAA7"/>
+              <Button Content="Set up Wi-Fi connection…" Click="SetupWifi" HorizontalAlignment="Left"/>
+              <TextBlock Text="Use a private LAN address and pair by QR or pairing string. The phone trusts only this desktop's key; no CA installation is needed." Foreground="#A7BAA7"/>
             </StackPanel>
           </Expander>
           <WrapPanel><Button x:Name="SaveButton" Content="Save settings" Click="SaveSettings"/><Button Content="Check Codex sign-in" Click="CheckProvider"/><Button Content="Open setup guide" Click="OpenGuide"/></WrapPanel>

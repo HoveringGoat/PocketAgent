@@ -40,7 +40,7 @@ if (!(Test-Path -LiteralPath $keystore)) {
     $env:POCKETAGENT_SIGNING_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
 }
 try {
-    $outputDirectory = Join-Path $projectRoot 'artifacts'
+    $outputDirectory = Join-Path $projectRoot "artifacts/releases/$version/android"
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
     $unsigned = Join-Path $androidProject 'app/build/outputs/apk/release/app-release-unsigned.apk'
     $aligned = Join-Path $projectRoot '.local/android-signing/aligned.apk'

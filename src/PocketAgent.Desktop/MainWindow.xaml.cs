@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private string? selected;
     private string rendered = "";
     private string sessionSignature = "";
+    private string qrRendered = "";
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
 
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Title = $"PocketAgent Server {BuildInfo.Version}";
+        BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
         RepositorySetting.Text = settings.Host.RepositoryPath;
@@ -89,8 +91,7 @@ public partial class MainWindow : Window
                 CertificatePath = CertificateSetting.Text.Trim(),
                 PublicOrigin = "",
                 DirectOrigin = DirectOriginSetting.Text.Trim(),
-                AutomaticCertificate = settings.Host.AutomaticCertificate && DirectOriginSetting.Text.Trim() == settings.Host.DirectOrigin && CertificateSetting.Text.Trim() == settings.Host.CertificatePath,
-                AcmePort = settings.Host.AcmePort,
+                PinnedCertificate = settings.Host.PinnedCertificate && CertificateSetting.Text.Trim() == settings.Host.CertificatePath,
                 PermissionMode = PermissionModeSetting.SelectedValue as string ?? "inherit",
                 DataDirectory = DesktopSettings.DirectoryPath
             }
@@ -108,11 +109,7 @@ public partial class MainWindow : Window
     private async void SetupWifi(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is not null) throw new InvalidOperationException("Stop the server before applying Wi-Fi setup. Active work will end when the server stops.");
-        var addresses = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(network => network.OperationalStatus == OperationalStatus.Up && network.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-            .SelectMany(network => network.GetIPProperties().UnicastAddresses
-                .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivateAddress(address.Address))
-                .Select(address => $"{address.Address} ({network.Name})")).Distinct().ToArray();
+        var addresses = PrivateInterfaceLabels();
         if (addresses.Length == 0) throw new InvalidOperationException("No private IPv4 address was found. Connect the desktop to Wi-Fi or Ethernet first.");
         var choices = new ComboBox { ItemsSource = addresses, SelectedIndex = 0, Margin = new Thickness(16) };
         var apply = new Button { Content = "Create certificate and use this address", Margin = new Thickness(16) };
@@ -121,25 +118,31 @@ public partial class MainWindow : Window
         apply.Click += (_, _) => dialog.DialogResult = true;
         if (dialog.ShowDialog() != true) return;
         var address = ((string)choices.SelectedItem).Split(' ')[0];
-        var certificateDirectory = Path.Combine(DesktopSettings.DirectoryPath, "certificates", address);
-        var certificate = Path.Combine(certificateDirectory, "server.pfx");
-        if (!File.Exists(certificate)) await Task.Run(() => CertificateSetup.Create(certificateDirectory, address));
+        var certificate = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "device", "server.pfx");
+        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = address, Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture), CertificatePath = certificate, PinnedCertificate = true };
+        candidate.Validate(); using var setupLease = new HostLease(candidate); setupLease.Acquire();
+        await Task.Run(() => PeerCertificates.Provision(candidate));
         AddressSetting.Text = address; CertificateSetting.Text = certificate; DirectOriginSetting.Text = "";
+        settings.Host.PinnedCertificate = true; settings.Host.CertificatePath = certificate;
         SaveConfiguration();
-        AppDialogs.Show(this, $"Wi-Fi settings saved. Start the server, then enter https://{address}:{settings.Host.Port} in the Android app.\n\nTransfer ONLY pocketagent-root.cer from the certificate folder to your phone and install it as a CA certificate. Keep server.pfx private.\n\nAllow PocketAgent's port on the Windows private-network firewall if needed. No firewall or router changes were made.", "Wi-Fi setup");
-        Process.Start(new ProcessStartInfo(certificateDirectory) { UseShellExecute = true });
+        AppDialogs.Show(this, "Wi-Fi HTTPS saved. Start the server and scan the pairing QR under Devices, or copy its full pairing string. No certificate installation is needed. Allow the chat port through Windows Firewall.", "Wi-Fi setup");
     });
     private static bool IsPrivateAddress(IPAddress address)
     {
         var bytes = address.GetAddressBytes();
         return bytes[0] == 10 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31 || bytes[0] == 192 && bytes[1] == 168;
     }
+    private static string[] PrivateInterfaceLabels() => NetworkInterface.GetAllNetworkInterfaces()
+        .Where(network => network.OperationalStatus == OperationalStatus.Up && network.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+        .OrderBy(network => network.GetIPProperties().GatewayAddresses.Any(gateway => gateway.Address.AddressFamily == AddressFamily.InterNetwork && !gateway.Address.Equals(IPAddress.Any)) ? 0 : 1)
+        .ThenBy(network => network.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? 0 : network.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? 1 : 2)
+        .SelectMany(network => network.GetIPProperties().UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivateAddress(item.Address)).Select(item => $"{item.Address} ({network.Name})"))
+        .Distinct().ToArray();
     private async void SetupDirectInternet(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (transitioning) return;
         if (relay is not null) throw new InvalidOperationException("Stop the server before configuring direct internet. Active work ends when the server stops.");
-        var addresses = NetworkInterface.GetAllNetworkInterfaces().Where(network => network.OperationalStatus == OperationalStatus.Up)
-            .SelectMany(network => network.GetIPProperties().UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivateAddress(item.Address)).Select(item => item.Address.ToString())).Distinct().ToArray();
+        var addresses = PrivateInterfaceLabels();
         if (addresses.Length == 0) throw new InvalidOperationException("No private desktop IPv4 address was found. Connect to your home network first.");
         var interfaces = new ComboBox { ItemsSource = addresses, SelectedIndex = 0, Margin = new Thickness(16, 4, 16, 10) };
         var publicIp = new TextBox { Text = settings.Host.DirectOrigin.Length > 0 ? new Uri(settings.Host.DirectOrigin).Host : "", Margin = new Thickness(16, 4, 16, 10) };
@@ -147,17 +150,14 @@ public partial class MainWindow : Window
         var detectionStatus = new TextBlock { Text = "Queries api.ipify.org for your IPv4 address. No chat, credentials or pairing code is sent. You can also enter the address manually.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 10) };
         using var lookupCancellation = new CancellationTokenSource();
         var externalPort = new TextBox { Text = settings.Host.DirectOrigin.Length > 0 ? new Uri(settings.Host.DirectOrigin).Port.ToString(System.Globalization.CultureInfo.InvariantCulture) : PortSetting.Text, Margin = new Thickness(16, 4, 16, 10) };
-        var apply = new Button { Content = "Set up trusted HTTPS", Margin = new Thickness(16) };
-        var challengePort = new TextBox { Text = settings.Host.AcmePort.ToString(System.Globalization.CultureInfo.InvariantCulture), Margin = new Thickness(16, 4, 16, 10) };
-        var consent = new CheckBox { Content = "I accept the Let's Encrypt Subscriber Agreement and public certificate logging.", Margin = new Thickness(16), Foreground = Brushes.DarkSeaGreen };
-        var terms = new Button { Content = "Read Let's Encrypt agreement", Margin = new Thickness(16, 0, 16, 0) };
-        terms.Click += (_, _) => Process.Start(new ProcessStartInfo("https://letsencrypt.org/repository/") { UseShellExecute = true });
+        var apply = new Button { Content = "Save direct connection", Margin = new Thickness(16) };
         var panel = new StackPanel();
         panel.Children.Add(new TextBlock { Text = "Use your router's public/WAN IPv4 address. No domain, tunnel, relay, or PocketAgent hosting is used. You must configure port forwarding and the firewall yourself.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) });
         panel.Children.Add(new TextBlock { Text = "Desktop LAN address (forward traffic here)", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(interfaces);
+        panel.Children.Add(new TextBlock { Text = "Choose your physical Wi-Fi/Ethernet adapter, not a VPN or virtual adapter. For the first connection test, disconnect the VPN and use your router's WAN address; a VPN can change both detected IP and reply routing.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 10) });
         panel.Children.Add(new TextBlock { Text = "Router public IPv4 address", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(publicIp); panel.Children.Add(detect); panel.Children.Add(detectionStatus);
         panel.Children.Add(new TextBlock { Text = "External chat TCP port", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(externalPort);
-        panel.Children.Add(new TextBlock { Text = "Certificate validation LAN port: public TCP 80 must reach this port. Forward it in your router, or route only /.well-known/acme-challenge/ through an existing Caddy/web server (see setup guide). Allow this port through Windows Firewall. It serves only temporary validation requests.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(challengePort); panel.Children.Add(terms); panel.Children.Add(consent); panel.Children.Add(apply);
+        panel.Children.Add(new TextBlock { Text = "Forward only the chat port to this desktop and allow it through Windows Firewall. After starting, scan the QR under Devices or copy its pairing string. Ports 80/443 and Caddy changes are not needed.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) }); panel.Children.Add(apply);
         var dialog = new Window { Title = "Direct internet setup", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 620, MaxHeight = SystemParameters.WorkArea.Height - 60, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         dialog.Closed += (_, _) => lookupCancellation.Cancel();
         detect.Click += async (_, _) =>
@@ -174,25 +174,18 @@ public partial class MainWindow : Window
             catch (ApiException exception) { detectionStatus.Text = exception.Message; }
             finally { detect.IsEnabled = true; apply.IsEnabled = true; }
         };
-        apply.Click += (_, _) => { if (consent.IsChecked == true) dialog.DialogResult = true; };
+        apply.Click += (_, _) => dialog.DialogResult = true;
         if (dialog.ShowDialog() != true) return;
-        var localIp = (string)interfaces.SelectedItem;
+        var localIp = ((string)interfaces.SelectedItem).Split(' ')[0];
         var origin = $"https://{publicIp.Text.Trim()}:{int.Parse(externalPort.Text, System.Globalization.CultureInfo.InvariantCulture)}";
-        var certificateDirectory = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "trusted-" + publicIp.Text.Trim());
-        // Validate before using any user-entered text to construct filesystem paths or create keys.
-        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = localIp, Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture), DirectOrigin = origin, CertificatePath = Path.Combine(certificateDirectory, "server.pfx"), AutomaticCertificate = true, AcmePort = int.Parse(challengePort.Text, System.Globalization.CultureInfo.InvariantCulture) };
+        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = localIp, Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture), DirectOrigin = origin, CertificatePath = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "device", "server.pfx"), PinnedCertificate = true };
         candidate.Validate();
-        using var setupLease = new HostLease(candidate);
-        setupLease.Acquire();
-        ErrorDisplay.Text = $"Testing certificate validation: public TCP 80 must reach {localIp}:{candidate.AcmePort} directly or through your existing web server's challenge route. This may take a few minutes…";
-        transitioning = true; StartButton.IsEnabled = false;
-        try { await Task.Run(async () => { await AutomaticCertificates.Issue(candidate, staging: true); await AutomaticCertificates.Issue(candidate, staging: false); }); }
-        catch (Exception) { throw new InvalidOperationException("Trusted HTTPS setup failed. Check router TCP 80 forwarding to the selected validation port, Windows Firewall, public IPv4/CGNAT and internet access. If TCP 80 is blocked by your ISP, this setup cannot validate. Existing configuration was preserved. Retry after fixing connectivity."); }
-        finally { transitioning = false; StartButton.IsEnabled = true; }
+        using var setupLease = new HostLease(candidate); setupLease.Acquire();
+        await Task.Run(() => PeerCertificates.Provision(candidate));
         AddressSetting.Text = localIp; CertificateSetting.Text = candidate.CertificatePath; DirectOriginSetting.Text = candidate.DirectOrigin;
-        settings.Host.AutomaticCertificate = true; settings.Host.AcmePort = candidate.AcmePort; settings.Host.DirectOrigin = candidate.DirectOrigin; settings.Host.CertificatePath = candidate.CertificatePath;
+        settings.Host.PinnedCertificate = true; settings.Host.CertificatePath = candidate.CertificatePath;
         SaveConfiguration();
-        AppDialogs.Show(this, $"Trusted HTTPS ready: {candidate.ClientOrigin}\n\nForward external TCP {new Uri(candidate.DirectOrigin).Port} to {localIp} TCP {candidate.Port}. Certificate validation needs public TCP 80 to reach {localIp}:{candidate.AcmePort}, either by router forwarding or a challenge-only route through your existing web server. Reserve the LAN address.\n\nStart the server and enter the address plus pairing code on the phone. No certificate installation is needed. Test with Wi-Fi off. Renewal requires the server to be running; certificates last about six days.", "Direct internet setup");
+        AppDialogs.Show(this, $"Direct connection saved: {candidate.ClientOrigin}\n\nForward external TCP {new Uri(candidate.DirectOrigin).Port} to {localIp} TCP {candidate.Port}, and allow the listener through Windows Firewall. Start the server, then use Devices to scan the pairing QR or copy its pairing string. No certificate installation or ports 80/443 are needed.", "Direct internet setup");
     });
     private async void CheckConnectivity(object sender, RoutedEventArgs e) => await Act(async () =>
     {
@@ -239,6 +232,7 @@ public partial class MainWindow : Window
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
         ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); Composer.Text = "";
+        PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         ServerStatus.Text = "Server stopped"; StartButton.IsEnabled = true; StopButton.IsEnabled = false; SaveButton.IsEnabled = true;
         PermissionModeSetting.IsEnabled = true;
@@ -271,7 +265,7 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             var running = relay;
-            CertificateStatus.Text = running.Services.GetRequiredService<AutomaticCertificates>().Status;
+            CertificateStatus.Text = running.Services.GetRequiredService<PeerCertificates>().Status;
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
@@ -292,8 +286,22 @@ public partial class MainWindow : Window
                 changingList = false; sessionSignature = signature;
             }
             var code = running.Services.GetRequiredService<PairingCode>().Current;
-            PairingDisplay.Text = code.Consumed ? "Code used" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Code expired" : code.Code;
+            PairingDisplay.Text = code.Consumed ? "Pairing used — generate a new QR" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Pairing expired — generate a new QR" : settings.Host.UseHttps ? "Scan or copy to pair" : "Set up HTTPS to pair a phone";
             PairingExpiry.Text = $"Single use · expires {code.ExpiresAt.LocalDateTime:t}";
+            var pairing = running.Services.GetRequiredService<PairingCode>();
+            if (code.Consumed || code.ExpiresAt <= DateTimeOffset.UtcNow) { PairingQr.Source = null; qrRendered = ""; }
+            else if (settings.Host.UseHttps)
+            {
+                var payload = PeerCertificates.PairingPayload(settings.Host, pairing.Ticket);
+                if (payload != qrRendered)
+                {
+                    using var data = QRCoder.QRCodeGenerator.GenerateQrCode(payload, QRCoder.QRCodeGenerator.ECCLevel.M);
+                    using var qr = new QRCoder.PngByteQRCode(data);
+                    using var stream = new MemoryStream(qr.GetGraphic(6));
+                    var bitmap = new System.Windows.Media.Imaging.BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
+                    PairingQr.Source = bitmap; qrRendered = payload;
+                }
+            }
             if (Navigation.SelectedIndex == 1) RenderDevices();
             if (selected is null) return;
             var expected = selected;
@@ -497,10 +505,18 @@ public partial class MainWindow : Window
     }
 
     private void RenewPairing(object sender, RoutedEventArgs e) { relay?.Services.GetRequiredService<PairingCode>().Renew(); _ = Refresh(); }
+    private void CopyPairing(object sender, RoutedEventArgs e)
+    {
+        if (relay is null || qrRendered.Length == 0) { ErrorDisplay.Text = "Start HTTPS and generate a fresh pairing QR first."; return; }
+        var code = relay.Services.GetRequiredService<PairingCode>().Current;
+        if (code.Consumed || code.ExpiresAt <= DateTimeOffset.UtcNow) { ErrorDisplay.Text = "Generate a new pairing QR."; return; }
+        Clipboard.SetText(qrRendered);
+        ErrorDisplay.Text = "Pairing string copied. Treat it like a temporary password; paste it only into your phone app.";
+    }
     private void CopyAddress(object sender, RoutedEventArgs e) { if (ConnectionAddress.Text.Length > 0) Clipboard.SetText(ConnectionAddress.Text); }
     private void LocateAndroid(object sender, RoutedEventArgs e)
     {
-        var apk = Path.Combine(AppContext.BaseDirectory, $"PocketAgent-{BuildInfo.Version}-android.apk");
+        var apk = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "android", $"PocketAgent-{BuildInfo.Version}-android.apk"));
         if (File.Exists(apk)) Process.Start(new ProcessStartInfo("explorer.exe") { Arguments = $"/select,\"{apk}\"", UseShellExecute = true });
         else ErrorDisplay.Text = "The signed Android APK is in the artifacts folder after scripts/Build-Android.ps1 runs.";
     }

@@ -5,8 +5,11 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>PocketAgent.Desktop</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/PocketAgent.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets/PocketAgent.ico" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
     <ProjectReference Include="../PocketAgent.Server/PocketAgent.Server.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

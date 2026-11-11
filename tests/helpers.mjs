@@ -59,7 +59,7 @@ export async function startRelay({
   const hostDirectory = published
     ? resolve(
         root,
-        `artifacts/PocketAgent-${JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version}-desktop`,
+        `artifacts/releases/${JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version}/desktop`,
       )
     : resolve(root, 'src/PocketAgent.Server');
   const child = spawn(

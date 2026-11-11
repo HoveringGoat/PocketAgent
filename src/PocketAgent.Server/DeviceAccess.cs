@@ -13,15 +13,17 @@ public sealed class PairingCode
 {
     private readonly object gate = new();
     private string code = NewCode();
+    private string ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private DateTimeOffset expires = DateTimeOffset.UtcNow.AddMinutes(10);
     private bool consumed;
     private readonly Queue<DateTimeOffset> attempts = new();
 
     private static string NewCode() => RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture);
     public (string Code, DateTimeOffset ExpiresAt, bool Consumed) Current { get { lock (gate) return (code, expires, consumed); } }
+    public string Ticket { get { lock (gate) return ticket; } }
     public void Renew()
     {
-        lock (gate) { code = NewCode(); expires = DateTimeOffset.UtcNow.AddMinutes(10); consumed = false; }
+        lock (gate) { code = NewCode(); ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); expires = DateTimeOffset.UtcNow.AddMinutes(10); consumed = false; }
     }
     public void Display() => Console.WriteLine($"Pairing code: {Current.Code} (single use; expires {Current.ExpiresAt.LocalDateTime:t}).");
 
@@ -35,8 +37,9 @@ public sealed class PairingCode
             if (attempts.Count >= 10)
                 return false;
             attempts.Enqueue(now);
-            if (consumed || DateTimeOffset.UtcNow >= expires || candidate.Length != code.Length ||
-                !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(code), Encoding.UTF8.GetBytes(candidate)))
+            var expected = candidate.Length == ticket.Length ? ticket : code;
+            if (consumed || DateTimeOffset.UtcNow >= expires || candidate.Length != expected.Length ||
+                !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(candidate)))
                 return false;
             consumed = true;
             return true;

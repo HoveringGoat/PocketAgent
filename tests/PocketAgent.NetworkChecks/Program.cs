@@ -47,7 +47,7 @@ using (var client = new HttpClient(new ReplyHandler(_ => new(HttpStatusCode.OK))
     catch (OperationCanceledException) { }
 }
 Console.WriteLine("PASS closing/canceling detection cancels the request; no external service was contacted");
-await AcmeChecks.Run();
+await PeerChecks.Run();
 
 sealed class ReplyHandler(Func<HttpRequestMessage, HttpResponseMessage> reply) : HttpMessageHandler
 {

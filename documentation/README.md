@@ -12,11 +12,11 @@
 
 [Runtime architecture](ARCHITECTURE.md) describes authentication, session ownership, networking, recovery, and artifact boundaries. [Local setup](SETUP.md) contains build and phone connection instructions.
 
-[Use the native apps](SETUP.md#use-the-packaged-native-apps), [desktop permissions](SETUP.md#desktop-setup-and-permissions), [Wi-Fi](SETUP.md#connect-over-wi-fi), [temporary internet](SETUP.md#temporary-internet-trial), and [stable internet](SETUP.md#stable-internet-connection) are the setup paths. The server does not serve the former browser client.
+[Use the native apps](SETUP.md#use-the-packaged-native-apps), [desktop permissions](SETUP.md#desktop-setup-and-permissions), [direct internet](SETUP.md#direct-internet-ip-and-port), [Wi-Fi](SETUP.md#connect-over-wi-fi) and [scan/paste pairing](SETUP.md#pair-by-qr-or-pairing-string) are the current setup paths.
 
 ## Documentation status
 
-The current package is 0.1.9: dark scrollbar/window surfaces and application confirmation dialogs, plus instructions for sharing port 80 with an existing Caddy server. Version 0.1.8 added automatic Let's Encrypt IP certificates and renewal. Existing phone clients remain compatible. See [direct setup](SETUP.md#direct-internet-ip-and-port) for router rules, renewal requirements and verification limits.
+Current release: 0.1.10. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Upgrade both apps for the new enrollment UI. Releases are grouped under artifacts/releases/<version> with separate desktop and Android outputs. The desktop has a pocket/terminal icon and shows its running version/path. See setup for focused verification and remaining real-device acceptance.
 
 Version 0.1.4 adds six-digit pairing, a folder and model per conversation, archive/restore, direct IP-and-port HTTPS setup/diagnostics, distinct outgoing bubbles, and fixes for Unicode decoding and incoming-output focus loss. Earlier native features include usage, scheduling, saved hosts, steering/timing and desktop permissions. See [direct internet setup](SETUP.md#direct-internet-ip-and-port). The setup guide distinguishes focused/emulator/read-only-provider checks from remaining physical-device, external-network and real-inference acceptance. Historical 0.1.0/0.1.1 scope remains in the project brief.
 

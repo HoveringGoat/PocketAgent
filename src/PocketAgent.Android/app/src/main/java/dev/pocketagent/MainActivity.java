@@ -69,7 +69,9 @@ public final class MainActivity extends Activity {
       if (session != null) {
         api =
             new ApiClient(
-                ApiClient.normalizeOrigin(session.getString("origin")), session.getString("token"));
+                ApiClient.normalizeOrigin(session.getString("origin")),
+                session.getString("token"),
+                session.optString("pin"));
         serverName = session.optString("name", api.origin);
         selected = store.selected(api.origin);
       }
@@ -198,136 +200,111 @@ public final class MainActivity extends Activity {
         });
   }
 
+  private EditText pairingInput;
+
   private void showPairing() {
     generation++;
     base();
-    root.addView(label("PocketAgent", 30));
-    root.addView(label("Connect to your desktop", 20));
+    root.addView(label("Connect to your desktop", 26));
+    root.addView(
+        label(
+            "Scan its pairing QR or paste the full pairing string. It expires after ten minutes and"
+                + " works once.",
+            15));
     root.addView(button("Saved servers", v -> showServers()), match());
+    pairingInput = input("Paste pairing string");
+    pairingInput.setContentDescription("Pairing string");
+    pairingInput.setInputType(
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+    pairingInput.setMaxLines(4);
+    root.addView(
+        button(
+            "Scan pairing QR",
+            v ->
+                startActivityForResult(new android.content.Intent(this, QrScanActivity.class), 41)),
+        match());
+    root.addView(pairingInput, match());
     EditText serverLabel = input("Server name (e.g. Work or Personal)");
     serverLabel.setContentDescription("Server name");
-    serverLabel.setSingleLine(true);
     root.addView(serverLabel, match());
-    EditText address = input("https://pocket.example.com");
-    address.setContentDescription("Server address");
-    address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-    address.setSingleLine(true);
-    address.setText(store.lastOrigin());
     EditText name = input("Device name");
     name.setContentDescription("Device name");
-    name.setSingleLine(true);
     name.setText(android.os.Build.MODEL);
-    EditText code = input("Desktop pairing code");
-    code.setContentDescription("Desktop pairing code");
-    code.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-    code.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(6)});
-    root.addView(address, match());
     root.addView(name, match());
-    root.addView(code, match());
     error = errorLabel();
     root.addView(error);
-    Button testConnection = button("Test connection", null);
-    testConnection.setOnClickListener(
+    Button pair = button("Connect", null);
+    root.addView(pair, match());
+    pair.setOnClickListener(
         v -> {
-          final ApiClient probe;
+          final PairingTicket ticket;
           try {
-            probe = new ApiClient(ApiClient.normalizeOrigin(address.getText().toString()), "");
+            ticket = PairingTicket.parse(pairingInput.getText().toString());
+            if (name.getText().toString().trim().isEmpty())
+              throw new IllegalArgumentException("Enter a device name.");
           } catch (Exception exception) {
             problem(safeError(exception));
             return;
           }
+          String device = name.getText().toString().trim();
+          String label =
+              serverLabel.getText().toString().trim().isEmpty()
+                  ? ticket.origin
+                  : serverLabel.getText().toString().trim();
           int epoch = generation;
-          testConnection.setEnabled(false);
-          notice("Testing HTTPS connection…");
+          pair.setEnabled(false);
+          notice("Verifying desktop identity and pairing…");
           network.execute(
               () -> {
                 try {
-                  JSONObject session = (JSONObject) probe.request("/session", null);
-                  if (!session.has("authenticated") || !session.has("version"))
-                    throw new IllegalArgumentException(
-                        "This address did not return PocketAgent server metadata.");
+                  ApiClient candidate = new ApiClient(ticket.origin, "", ticket.pin);
+                  JSONObject result =
+                      (JSONObject)
+                          candidate.request(
+                              "/devices/pair",
+                              new JSONObject()
+                                  .put("deviceName", device)
+                                  .put("code", ticket.ticket));
+                  String token = result.getString("token");
+                  store.save(ticket.origin, token, label, ticket.pin);
                   ui.post(
                       () -> {
-                        if (epoch == generation) {
-                          testConnection.setEnabled(true);
-                          notice(
-                              "Reached PocketAgent "
-                                  + session.optString("version")
-                                  + ". For an internet test, turn Wi-Fi off and repeat over"
-                                  + " cellular. Pairing is still required.");
-                        }
+                        if (epoch != generation) return;
+                        pairingInput.setText("");
+                        api = new ApiClient(ticket.origin, token, ticket.pin);
+                        serverName = label;
+                        selected = store.selected(api.origin);
+                        conversation = null;
+                        showChat();
+                        ui.removeCallbacks(poll);
+                        ui.post(poll);
                       });
                 } catch (Exception exception) {
                   ui.post(
                       () -> {
                         if (epoch == generation) {
-                          testConnection.setEnabled(true);
+                          pair.setEnabled(true);
                           problem(safeError(exception));
                         }
                       });
                 }
               });
         });
-    root.addView(testConnection, match());
-    Button pair = button("Connect", null);
-    root.addView(pair, match());
-    pair.setOnClickListener(
-        v -> {
-          if (name.getText().toString().trim().isEmpty() || code.length() != 6) {
-            problem("Enter a device name and the six-digit desktop code.");
-            return;
-          }
-          final String origin;
-          try {
-            origin = ApiClient.normalizeOrigin(address.getText().toString());
-          } catch (Exception ex) {
-            problem(ex.getMessage());
-            return;
-          }
-          pair.setEnabled(false);
-          problem("Connecting…");
-          int epoch = generation;
-          String deviceName = name.getText().toString().trim(),
-              pairingCode = code.getText().toString();
-          String connectionName =
-              serverLabel.getText().toString().trim().isEmpty()
-                  ? origin
-                  : serverLabel.getText().toString().trim();
-          network.execute(
-              () -> {
-                try {
-                  ApiClient candidate = new ApiClient(origin, "");
-                  JSONObject result =
-                      (JSONObject)
-                          candidate.request(
-                              "/devices/pair",
-                              new JSONObject()
-                                  .put("deviceName", deviceName)
-                                  .put("code", pairingCode));
-                  String token = result.getString("token");
-                  store.save(origin, token, connectionName);
-                  ui.post(
-                      () -> {
-                        if (epoch != generation) return;
-                        api = new ApiClient(origin, token);
-                        serverName = connectionName;
-                        selected = store.selected(origin);
-                        conversation = null;
-                        showChat();
-                        ui.removeCallbacks(poll);
-                        ui.post(poll);
-                      });
-                } catch (Exception ex) {
-                  ui.post(
-                      () -> {
-                        if (epoch == generation) {
-                          pair.setEnabled(true);
-                          problem(safeError(ex));
-                        }
-                      });
-                }
-              });
-        });
+  }
+
+  @Override
+  protected void onActivityResult(int request, int result, android.content.Intent data) {
+    super.onActivityResult(request, result, data);
+    if (request == 41 && result == RESULT_OK && data != null && pairingInput != null) {
+      String payload = data.getStringExtra("pairing");
+      try {
+        PairingTicket.parse(payload == null ? "" : payload);
+        pairingInput.setText(payload);
+        notice("Desktop QR read. Tap Connect to pair.");
+      } catch (Exception exception) {
+        problem(safeError(exception));
+      }
+    }
   }
 
   private void showChat() {
@@ -1188,7 +1165,11 @@ public final class MainActivity extends Activity {
                 try {
                   JSONObject saved =
                       store.activate(servers.getJSONObject(index).getString("origin"));
-                  api = new ApiClient(saved.getString("origin"), saved.getString("token"));
+                  api =
+                      new ApiClient(
+                          saved.getString("origin"),
+                          saved.getString("token"),
+                          saved.optString("pin"));
                   serverName = saved.optString("name", api.origin);
                   selected = store.selected(api.origin);
                   conversation = null;
@@ -1387,9 +1368,9 @@ public final class MainActivity extends Activity {
     if (exception instanceof ApiClient.ApiError || exception instanceof IllegalArgumentException)
       return exception.getMessage();
     if (exception instanceof javax.net.ssl.SSLException)
-      return "HTTPS verification failed. Check the IP address, phone clock, and desktop"
-          + " certificate. For direct access, install only your desktop's public CA"
-          + " certificate on this phone.";
+      return "Desktop identity or HTTPS verification failed. Check the phone clock and server"
+                 + " address. If the desktop key changed, scan a fresh QR on that desktop. No"
+                 + " connection was trusted automatically.";
     return "Could not reach the desktop. Check the IP and port, that the server is running, router"
         + " TCP forwarding, and Windows Firewall. Test over cellular; some routers cannot"
         + " access their own public IP from Wi-Fi.";
