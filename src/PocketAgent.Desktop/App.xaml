@@ -1,0 +1,11 @@
+<Application x:Class="PocketAgent.Desktop.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" StartupUri="MainWindow.xaml">
+  <Application.Resources>
+    <Style TargetType="Window"><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="FontSize" Value="14"/><Setter Property="Background" Value="#111B17"/><Setter Property="Foreground" Value="#EBF1EA"/></Style>
+    <Style TargetType="Button"><Setter Property="Padding" Value="14,9"/><Setter Property="Margin" Value="4"/><Setter Property="Background" Value="#C1DAA6"/><Setter Property="Foreground" Value="#142118"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style TargetType="TextBox"><Setter Property="Padding" Value="10"/><Setter Property="Margin" Value="0,5,0,12"/><Setter Property="Background" Value="#213128"/><Setter Property="Foreground" Value="#EBF1EA"/><Setter Property="CaretBrush" Value="White"/><Setter Property="BorderBrush" Value="#47604B"/></Style>
+    <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+    <Style TargetType="TabControl"><Setter Property="Background" Value="#111B17"/><Setter Property="BorderThickness" Value="0"/></Style>
+    <Style TargetType="TabItem"><Setter Property="Padding" Value="20,10"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+    <Style TargetType="ScrollViewer"><Setter Property="VerticalScrollBarVisibility" Value="Auto"/></Style>
+  </Application.Resources>
+</Application>

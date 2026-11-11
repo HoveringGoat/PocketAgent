@@ -19,4 +19,20 @@ secrets/
 Thumbs.db
 Desktop.ini
 
-# Build and dependency ignores should be added when the stack is selected.
+# Build tools, dependencies, and output
+.tools/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+src/PocketAgent.Server/wwwroot/
+artifacts/
+TestResults/
+*.tsbuildinfo
+.vs/
+.idea/
+**/.gradle/
+src/PocketAgent.Android/**/build/
+src/PocketAgent.Android/local.properties
+*.jks
+*.keystore

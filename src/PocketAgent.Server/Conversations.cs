@@ -1,0 +1,446 @@
+using System.Text.Json;
+
+namespace PocketAgent;
+
+public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null);
+public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
+public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs);
+public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
+
+public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage) : BackgroundService
+{
+    private sealed class State(ConversationReference reference)
+    {
+        public ConversationReference Reference { get; set; } = reference;
+        public string Status { get; set; } = "idle";
+        public string? ActiveTurnId { get; set; }
+        public string? Error { get; set; }
+        public bool Resumed { get; set; }
+        public string? SandboxMode { get; set; }
+        public string? ApprovalPolicy { get; set; }
+        public DateTimeOffset? ActiveTurnStartedAt { get; set; }
+        public long? LastWorkDurationMs { get; set; }
+        public bool Hydrating { get; set; }
+        public bool HasWork { get; set; }
+        public string? ActivePrompt { get; set; }
+        public string? SourceDeviceId { get; set; }
+        public string? ScheduledMessageId { get; set; }
+        public List<DisplayItem> Items { get; } = [];
+        public Dictionary<string, (JsonElement RpcId, PendingRequest Request)> Requests { get; } = [];
+    }
+
+    private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly Dictionary<string, State> states = [];
+    private long lastPublished;
+
+    public async Task<ConversationSummary[]> List()
+    {
+        await gate.WaitAsync();
+        try
+        {
+            return store.Conversations().Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
+                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(Repository), Repository, Environment.MachineName)).ToArray();
+        }
+        finally { gate.Release(); }
+    }
+
+    public async Task<ConversationSnapshot> Create(string title)
+    {
+        if (title.Length > 100)
+            throw new ApiException(400, "Conversation names can contain at most 100 characters.");
+        await gate.WaitAsync();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                var baseName = Path.GetFileName(Path.TrimEndingDirectorySeparator(Repository));
+                if (baseName.Length == 0) baseName = "New conversation";
+                baseName = baseName[..Math.Min(baseName.Length, 85)];
+                var existing = store.Conversations().Select(row => row.Title).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                title = baseName;
+                for (var suffix = 2; existing.Contains(title); suffix++) title = $"{baseName} · {suffix}";
+            }
+            await codex.EnsureStarted();
+            // Preserve the model and reviewer. Policy changes require the desktop's explicit selection.
+            var result = await codex.Request("thread/start", CodexPermissions.Apply(settings, new { cwd = Repository }));
+            var thread = result.GetProperty("thread");
+            var id = thread.Text("id");
+            if (id.Length == 0)
+                throw new ApiException(502, "Codex returned a thread without an ID.");
+            store.SaveConversation(id, title.Trim());
+            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow)) { Resumed = true };
+            CapturePermissions(state, result);
+            states[id] = state;
+            return Snapshot(state);
+        }
+        finally { gate.Release(); await publisher.Changed(); }
+    }
+
+    // Set once from the desktop configuration, never from browser input.
+    public required string Repository { private get; init; }
+
+    public async Task<ConversationSnapshot> Get(string id)
+    {
+        await gate.WaitAsync();
+        try { return Snapshot(await Load(id)); }
+        finally { gate.Release(); }
+    }
+
+    public async Task<ConversationSnapshot> Rename(string id, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
+            throw new ApiException(400, "Use a name of 1–100 characters.");
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id);
+            store.RenameConversation(id, title.Trim());
+            state.Reference = state.Reference with { Title = title.Trim() };
+            return Snapshot(state);
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
+            throw new ApiException(400, "Messages must contain 1–32,000 characters.");
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id);
+            if (expectedTurnId is not null)
+            {
+                if (expectedTurnId.Length == 0 || state.ActiveTurnId != expectedTurnId || state.Status is "starting" or "uncertain" or "disconnected")
+                    throw new ApiException(409, "The expected turn is no longer available. Your steering prompt was not sent. Refresh and submit explicitly.");
+                try
+                {
+                    var result = await codex.Request("turn/steer", new
+                    {
+                        threadId = id,
+                        expectedTurnId,
+                        input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
+                    });
+                    if (result.Text("turnId") != expectedTurnId)
+                        throw new ApiException(504, "Codex did not confirm the expected turn. Steering delivery is unknown; do not resend automatically.");
+                }
+                catch (ApiException exception) when (exception.Status is 503 or 504)
+                {
+                    state.Status = "uncertain";
+                    state.Error = exception.Message;
+                    throw;
+                }
+                return;
+            }
+            if (state.ActiveTurnId is not null || state.Status is "starting" or "uncertain" or "disconnected" || state.Requests.Count > 0)
+                throw new ApiException(409, "This conversation has active or unconfirmed work. Wait for it to finish or interrupt it.");
+            if (!state.Resumed)
+            {
+                var resumed = await codex.Request("thread/resume", CodexPermissions.Apply(settings, new { threadId = id, cwd = Repository }));
+                CapturePermissions(state, resumed);
+                await Hydrate(state, resumed.GetProperty("thread"));
+                state.Resumed = true;
+            }
+            state.Status = "starting";
+            state.Error = null;
+            state.ActivePrompt = text; state.SourceDeviceId = sourceDeviceId; state.ScheduledMessageId = scheduledMessageId;
+            state.HasWork = false; state.ActiveTurnStartedAt = DateTimeOffset.UtcNow;
+            try
+            {
+                var result = await codex.Request("turn/start", CodexPermissions.Apply(settings, new
+                {
+                    threadId = id,
+                    input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
+                }, turn: true));
+                var turn = result.GetProperty("turn");
+                if (turn.Text("id").Length == 0) throw new ApiException(504, "Codex did not confirm a turn ID. Delivery is unknown; do not resend automatically.");
+                state.ActiveTurnId = turn.Text("id");
+                state.Status = "running";
+                AddTurn(state, turn);
+            }
+            catch (ApiException exception)
+            {
+                state.Status = exception.Status is 504 or 503 ? "uncertain" : "failed";
+                state.Error = exception.Message;
+                throw;
+            }
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task Interrupt(string id)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id);
+            if (state.ActiveTurnId is null)
+                throw new ApiException(409, "There is no confirmed active turn to interrupt.");
+            await codex.Request("turn/interrupt", new { threadId = id, turnId = state.ActiveTurnId });
+            // Keep the turn and requests until Codex confirms completion/resolution.
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task Answer(string id, string requestId, AnswerRequest answer)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id);
+            if (!state.Requests.TryGetValue(requestId, out var entry) || !entry.Request.Supported)
+                throw new ApiException(409, "This request was resolved, is stale, or is unsupported.");
+            object response;
+            if (entry.Request.Method == "item/tool/requestUserInput")
+            {
+                var questions = entry.Request.Parameters.GetProperty("questions").EnumerateArray().ToArray();
+                if (answer.Answers is null || answer.Answers.Count != questions.Length || questions.Any(question =>
+                    !answer.Answers.TryGetValue(question.Text("id"), out var values) || values.Length != 1 || string.IsNullOrWhiteSpace(values[0]) || values[0].Length > 8000))
+                    throw new ApiException(400, "Provide one nonempty answer for each question.");
+                response = new { answers = answer.Answers.ToDictionary(pair => pair.Key, pair => new { answers = pair.Value }) };
+            }
+            else
+            {
+                if (answer.Decision is null || !entry.Request.Decisions.Contains(answer.Decision, StringComparer.Ordinal))
+                    throw new ApiException(400, "That decision is not available for this request.");
+                response = new { decision = answer.Decision };
+            }
+            await codex.Respond(entry.RpcId, response);
+            state.Requests.Remove(requestId);
+            state.Status = state.Requests.Count > 0 ? "awaiting-input" : "running";
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    private async Task<State> Load(string id)
+    {
+        if (states.TryGetValue(id, out var state))
+            return state;
+        var reference = store.Conversations().FirstOrDefault(row => row.Id == id) ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
+        await codex.EnsureStarted();
+        state = new(reference);
+        var result = await codex.Request("thread/read", new { threadId = id, includeTurns = false });
+        await Hydrate(state, result.GetProperty("thread"));
+        states[id] = state;
+        return state;
+    }
+
+    private async Task Hydrate(State state, JsonElement thread)
+    {
+        state.Hydrating = true;
+        state.Items.Clear();
+        if (thread.Text("historyMode") == "paginated")
+        {
+            string? cursor = null;
+            do
+            {
+                var page = await codex.Request("thread/turns/list", new { threadId = state.Reference.Id, cursor, limit = 100, sortDirection = "asc", itemsView = "full" });
+                foreach (var turn in page.GetProperty("data").EnumerateArray())
+                    AddTurn(state, turn);
+                cursor = page.Text("nextCursor") is { Length: > 0 } value ? value : null;
+            } while (cursor is not null);
+        }
+        else
+        {
+            var result = await codex.Request("thread/read", new { threadId = state.Reference.Id, includeTurns = true });
+            var turns = result.GetProperty("thread").Field("turns");
+            if (turns.ValueKind == JsonValueKind.Array)
+                foreach (var turn in turns.EnumerateArray())
+                    AddTurn(state, turn);
+        }
+        // A restored process cannot claim a previous execution is still running.
+        if (!state.Resumed)
+        {
+            state.ActiveTurnId = null;
+            state.Status = "idle";
+        }
+        state.Hydrating = false;
+    }
+
+    private void AddTurn(State state, JsonElement turn)
+    {
+        var start = Timestamp(turn.Field("startedAt")) ?? (state.Hydrating ? null : state.ActiveTurnStartedAt);
+        var end = Timestamp(turn.Field("completedAt"));
+        var completed = turn.Text("status") is "completed" or "failed" or "interrupted";
+        end ??= completed && !state.Hydrating ? DateTimeOffset.UtcNow : null;
+        long? duration = turn.Field("durationMs").TryGetInt64Safe(out var milliseconds) ? Math.Max(0, milliseconds) :
+            start is not null && end is not null ? Math.Max(0, (long)(end - start).Value.TotalMilliseconds) : null;
+        var times = store.RememberTurn(state.Reference.Id, turn.Text("id"), start, end, duration);
+        if (completed) state.LastWorkDurationMs = times.Duration;
+        else state.ActiveTurnStartedAt = times.Start;
+        var items = turn.Field("items");
+        if (items.ValueKind == JsonValueKind.Array)
+            foreach (var item in items.EnumerateArray())
+                Upsert(state, Render(item) with { Timestamp = state.Hydrating ? null : item.Text("type") == "userMessage" ? times.Start : times.End ?? times.Start });
+    }
+
+    private void Upsert(State state, DisplayItem item)
+    {
+        if (item.Id.Length == 0 || item.Type == "reasoning")
+            return;
+        var index = state.Items.FindIndex(existing => existing.Id == item.Id);
+        var existingTime = index >= 0 ? state.Items[index].Timestamp : null;
+        item = item with { Timestamp = existingTime ?? store.RememberTimestamp(state.Reference.Id, item.Id, item.Timestamp ?? (state.Hydrating ? null : DateTimeOffset.UtcNow)) };
+        if (!state.Hydrating && item.Type != "userMessage" && (item.Type != "agentMessage" || item.Text.Length > 0)) state.HasWork = true;
+        if (index < 0)
+            state.Items.Add(item);
+        else
+            state.Items[index] = item;
+    }
+
+    private static DisplayItem Render(JsonElement item)
+    {
+        var type = item.Text("type");
+        var text = item.Text("text");
+        if (type == "userMessage" && item.Field("content") is { ValueKind: JsonValueKind.Array } content)
+            text = string.Join("\n", content.EnumerateArray().Where(part => part.Text("type") == "text").Select(part => part.Text("text")));
+        var detail = type switch
+        {
+            "commandExecution" => item.Text("command") + "\n" + item.Text("aggregatedOutput"),
+            "fileChange" => item.Field("changes").ValueKind == JsonValueKind.Array ? JsonSerializer.Serialize(item.GetProperty("changes"), new JsonSerializerOptions { WriteIndented = true }) : "",
+            "mcpToolCall" => item.Text("server") + "/" + item.Text("tool"),
+            "webSearch" => item.Text("query"),
+            _ => ""
+        };
+        return new(item.Text("id"), type, text, detail, item.Text("status"));
+    }
+
+    private ConversationSnapshot Snapshot(State state) => new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
+        [.. state.Items], state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(Repository), Repository, Environment.MachineName,
+        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs);
+
+    private static DateTimeOffset? Timestamp(JsonElement value) => value.TryGetInt64Safe(out var seconds) && seconds > 0 && seconds < 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+
+    private static void CapturePermissions(State state, JsonElement response)
+    {
+        state.SandboxMode = response.Field("sandbox").Text("type") is { Length: > 0 } sandbox ? sandbox : null;
+        state.ApprovalPolicy = response.Field("approvalPolicy") is { ValueKind: JsonValueKind.String } approval ? approval.GetString() : null;
+    }
+
+    private static JsonElement PublicRequestParameters(JsonElement parameters)
+    {
+        // New protocol fields are private by default, particularly host authentication metadata.
+        string[] fields = ["command", "reason", "cwd", "grantRoot", "itemId", "networkApprovalContext", "additionalPermissions", "questions"];
+        return JsonSerializer.SerializeToElement(fields.Where(name => parameters.TryGetProperty(name, out _))
+            .ToDictionary(name => name, name => parameters.GetProperty(name).Clone()));
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var message in codex.Events.ReadAllAsync(stoppingToken))
+        {
+            var method = message.Text("method");
+            if (!message.TryGetProperty("id", out _) && method is not (
+                "pocketagent/disconnected" or "turn/started" or "turn/completed" or "item/started" or "item/completed" or "account/rateLimits/updated" or
+                "item/agentMessage/delta" or "item/commandExecution/outputDelta" or "serverRequest/resolved" or "error"))
+                continue;
+            await gate.WaitAsync(stoppingToken);
+            string? id = null;
+            var urgent = true;
+            (string Conversation, string Text, string? Device, string Id)? deferred = null;
+            try
+            {
+                var parameters = message.Field("params");
+                id = parameters.Text("threadId");
+                if (method == "account/rateLimits/updated") { usage.Update(parameters); continue; }
+                if (method == "pocketagent/disconnected")
+                {
+                    foreach (var state in states.Values)
+                    {
+                        state.Status = "disconnected";
+                        state.Error = "The desktop lost its connection to Codex. Restart the relay; unfinished work will not be automatically resubmitted.";
+                        state.ActiveTurnId = null;
+                        state.Requests.Clear();
+                    }
+                    id = null;
+                }
+                else if (states.TryGetValue(id, out var state))
+                {
+                    if (message.TryGetProperty("id", out var requestId))
+                    {
+                        var key = requestId.GetRawText();
+                        var supported = method is "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" or "item/tool/requestUserInput";
+                        // A grantRoot can broaden access beyond this file action; defer that host interaction.
+                        if (method == "item/fileChange/requestApproval" && parameters.Text("grantRoot").Length > 0)
+                            supported = false;
+                        string[] decisions = method == "item/tool/requestUserInput" ? [] : ["accept", "decline", "cancel"];
+                        if (parameters.Field("availableDecisions") is { ValueKind: JsonValueKind.Array } choices)
+                            decisions = decisions.Where(decision => choices.EnumerateArray().Any(choice => choice.ValueKind == JsonValueKind.String && choice.GetString() == decision)).ToArray();
+                        var request = new PendingRequest(key, method, PublicRequestParameters(parameters), decisions, supported);
+                        state.Requests[key] = (requestId.Clone(), request);
+                        state.Status = "awaiting-input";
+                    }
+                    else
+                    {
+                        switch (method)
+                        {
+                            case "turn/started":
+                                state.ActiveTurnId = parameters.Field("turn").Text("id");
+                                state.Status = state.Requests.Count > 0 ? "awaiting-input" : "running";
+                                break;
+                            case "turn/completed":
+                                var turn = parameters.GetProperty("turn");
+                                var completedItems = turn.Field("items");
+                                var finalHasWork = completedItems.ValueKind == JsonValueKind.Array && completedItems.EnumerateArray().Any(item =>
+                                    item.Text("type") != "userMessage" && (item.Text("type") != "agentMessage" || item.Text("text").Length > 0));
+                                if (turn.Field("error").Text("codexErrorInfo") == "usageLimitExceeded" && !state.HasWork && !finalHasWork && state.ActivePrompt is not null)
+                                    deferred = (state.Reference.Id, state.ActivePrompt, state.SourceDeviceId, state.ScheduledMessageId ?? $"usage-{state.Reference.Id}-{turn.Text("id")}");
+                                AddTurn(state, turn);
+                                state.Status = turn.Text("status", "failed");
+                                state.Error = turn.Field("error").Text("message") is { Length: > 0 } error ? error : null;
+                                state.ActiveTurnId = null;
+                                state.Requests.Clear();
+                                break;
+                            case "item/started":
+                            case "item/completed":
+                                Upsert(state, Render(parameters.GetProperty("item")));
+                                break;
+                            case "item/agentMessage/delta":
+                                var itemId = parameters.Text("itemId");
+                                var existing = state.Items.FirstOrDefault(item => item.Id == itemId) ?? new(itemId, "agentMessage", "", "", "inProgress");
+                                Upsert(state, existing with { Text = existing.Text + parameters.Text("delta") });
+                                urgent = false;
+                                break;
+                            case "item/commandExecution/outputDelta":
+                                var commandId = parameters.Text("itemId");
+                                var command = state.Items.FirstOrDefault(item => item.Id == commandId) ?? new(commandId, "commandExecution", "", "", "inProgress");
+                                Upsert(state, command with { Detail = command.Detail + parameters.Text("delta") });
+                                urgent = false;
+                                break;
+                            case "serverRequest/resolved":
+                                if (parameters.TryGetProperty("requestId", out var resolved))
+                                    state.Requests.Remove(resolved.GetRawText());
+                                if (state.Requests.Count == 0 && state.ActiveTurnId is not null)
+                                    state.Status = "running";
+                                break;
+                            case "error":
+                                state.Error = parameters.Field("error").Text("message", "Codex reported an error.");
+                                break;
+                        }
+                    }
+                }
+                else if (message.TryGetProperty("id", out _))
+                {
+                    foreach (var active in states.Values.Where(state => state.ActiveTurnId is not null))
+                        active.Error = "Codex requested an unsupported host interaction. Interrupt this turn and complete the setup on the desktop.";
+                    id = null;
+                }
+            }
+            finally { gate.Release(); }
+            if (deferred is { } pending)
+            {
+                var limits = await usage.Check(true);
+                var due = limits.NextResetAt ?? DateTimeOffset.UtcNow.AddMinutes(5);
+                store.Schedule(pending.Conversation, pending.Text, due, "usage-reset", pending.Device, pending.Id);
+                store.UpdateSchedule(pending.Id, "pending", "Waiting for usage reset.", due);
+            }
+            var now = Environment.TickCount64;
+            if (urgent || now - lastPublished >= 100)
+            {
+                lastPublished = now;
+                await publisher.Changed(id);
+            }
+        }
+    }
+}

@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PocketAgent.Server/PocketAgent.Server.csproj" />
+    <Project Path="src/PocketAgent.Desktop/PocketAgent.Desktop.csproj" />
+  </Folder>
+</Solution>
