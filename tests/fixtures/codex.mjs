@@ -116,11 +116,35 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       reply(
         params.cursor
           ? {
-              data: [{ model: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', isDefault: false }],
+              data: [
+                {
+                  model: 'gpt-5.6-sol',
+                  displayName: 'GPT-5.6 Sol',
+                  isDefault: false,
+                  defaultReasoningEffort: 'medium',
+                  supportedReasoningEfforts: [
+                    { reasoningEffort: 'low', description: 'Faster responses' },
+                    { reasoningEffort: 'medium', description: 'Balanced reasoning' },
+                    { reasoningEffort: 'high', description: 'More deliberate reasoning' },
+                  ],
+                },
+              ],
               nextCursor: null,
             }
           : {
-              data: [{ model: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true }],
+              data: [
+                {
+                  model: 'gpt-6-astra',
+                  displayName: 'GPT-6 Astra',
+                  isDefault: true,
+                  defaultReasoningEffort: 'high',
+                  supportedReasoningEfforts: [
+                    { reasoningEffort: 'low', description: 'Faster responses' },
+                    { reasoningEffort: 'medium', description: 'Balanced reasoning' },
+                    { reasoningEffort: 'high', description: 'More deliberate reasoning' },
+                  ],
+                },
+              ],
               nextCursor: 'more',
             },
       );

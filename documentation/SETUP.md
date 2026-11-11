@@ -2,17 +2,17 @@
 
 ## Use the packaged native apps
 
-Current release: **0.1.10**. Install the new Android app and desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
+Current release: **0.1.12**. Install the 0.1.12 Android app and desktop app for QR/pairing-string enrollment. The 0.2.0 changes are development-only until a complete release build is approved. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
 
 Release files are grouped together:
 
 ```text
-artifacts/releases/0.1.10/
+artifacts/releases/0.1.12/
   desktop/PocketAgent.Desktop.exe
-  PocketAgent-0.1.10-desktop.zip
-  PocketAgent-0.1.10-desktop.zip.sha256
-  android/PocketAgent-0.1.10-android.apk
-  android/PocketAgent-0.1.10-android.apk.sha256
+PocketAgent-0.1.12-desktop.zip
+PocketAgent-0.1.12-desktop.zip.sha256
+android/PocketAgent-0.1.12-android.apk
+android/PocketAgent-0.1.12-android.apk.sha256
 ```
 
 Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. This release includes a pocket/terminal icon.
@@ -27,7 +27,7 @@ Choose Use Codex settings (inherit), Ask for approval (workspace writes and on-r
 
 ### Check Codex sign-in and model compatibility
 
-Start the server and click Check Codex sign-in. Diagnostics read account/config/model metadata through the same local process; they do not generate model responses. Catalog presence is not inference verification. The model picker changes the conversation model; reasoning-effort selection is not implemented.
+Start the server and click Check Codex sign-in. Diagnostics read account/config/model metadata through the same local process; they do not generate model responses. Catalog presence is not inference verification. The model picker changes the conversation model. When the installed Codex app-server advertises supported reasoning efforts, the conversation model dialog also offers a per-conversation reasoning setting; “Use model default” clears the override.
 
 ## Direct internet (IP and port)
 
@@ -38,6 +38,8 @@ Only one chosen chat port needs forwarding. **No public CA, port 80/443, Caddy e
 3. Choose the external chat port (for example 5147) and save. Setup generates a local server certificate with a persistent private identity key. It does not contact a certificate authority.
 4. Forward that external TCP port to the desktop LAN address and internal listener port. Allow that listener through Windows Firewall. Reserve the LAN address in the router. Do not move your existing 80/443 forwards.
 5. Start the server, open Devices, then pair the phone as below. To test internet reachability, turn phone Wi-Fi off before connecting.
+
+On the first start after choosing a non-loopback listener, PocketAgent offers to create one Windows Firewall rule for the configured chat port. Approve it once with the Windows elevation prompt. The rule is named `PocketAgent inbound TCP <port>` and is tied to the port rather than the release executable, so future desktop versions do not require another exception. Declining leaves the server available for local-only use, but Windows Firewall or the router may block phone connections. If you change the listener port, approve the new port rule once.
 
 A CGNAT/private WAN address needs ISP/router changes to permit direct inbound access. Double NAT needs both routers configured. Local diagnostics check the listener, certificate identity, exact Host and API; they cannot certify outside reachability. No silent relay fallback exists.
 
@@ -70,6 +72,14 @@ Use **⋮ > Archive conversation** to remove an idle conversation from the tab b
 Your messages use chat bubbles aligned to the trailing edge; assistant prose uses the plain transcript background. Messages use local timestamps, grouped by minute; older history without trustworthy timing remains untimestamped. Version 0.1.4 explicitly decodes Codex subprocess output as UTF-8, fixing corrupted punctuation, accented letters and emoji from Windows native launches. The bottom context row displays status, model, host/directory and elapsed/completed work time. A running conversation changes Send to Steer. New input augments that expected active turn; if the turn changed, the draft remains for explicit resubmission. Typing while a send is acknowledged is preserved. Closing the phone does not stop work. Returning to the app reconciles history and requests without replaying input.
 
 Approvals/questions remain explicit. Supported one-time approvals cannot broaden scope or answer stale requests. Unsupported host interactions are visible and can be interrupted; complete their setup on the desktop. Neither Full access nor steering changes these protocol checks.
+
+## Per-conversation reasoning
+
+The model picker is per conversation. When the installed Codex app-server advertises supported reasoning efforts, the desktop model dialog and Android connection menu expose those levels plus **Use model default**. The selected value is stored with that conversation and sent on future turns; changing models clears an unsupported override. If the provider does not advertise levels, PocketAgent reports that instead of guessing.
+
+## 0.2.0 development status
+
+The 0.2.0 development line adds desktop startup/update preferences and a separate updater process. Android also checks the latest published GitHub release once on app startup and offers to open its release page when a newer version exists. The APK installation remains user-confirmed. Current 0.1.12 users will not receive these source changes until a complete 0.2.0 release is built and published.
 
 ## Usage and scheduled messages
 

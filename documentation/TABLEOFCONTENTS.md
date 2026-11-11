@@ -26,6 +26,8 @@
     - [Prompts during active work](PROJECT.md#prompts-during-active-work)
     - [Required release verification](PROJECT.md#required-release-verification)
     - [Remaining design decisions](PROJECT.md#remaining-design-decisions)
+    - [Planned 0.2.0 milestone](PROJECT.md#planned-020-milestone)
+      - [Desktop update and startup design](PROJECT.md#desktop-update-and-startup-design-under-review)
     - [Approved overnight expansion](PROJECT.md#approved-overnight-expansion)
     - [Conversation controls and direct internet](PROJECT.md#approved-conversation-controls-and-direct-internet)
   - [Component responsibilities](PROJECT.md#component-responsibilities)

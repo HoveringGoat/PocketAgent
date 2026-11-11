@@ -1,8 +1,27 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PocketAgent;
 
-public sealed record ModelOption(string Model, string DisplayName, bool IsDefault);
+public sealed record ModelOption
+{
+    public ModelOption(string model, string displayName, bool isDefault, string? defaultReasoningEffort = null, string[]? supportedReasoningEfforts = null)
+    {
+        Model = model;
+        DisplayName = displayName;
+        IsDefault = isDefault;
+        DefaultReasoningEffort = defaultReasoningEffort;
+        SupportedReasoningEfforts = supportedReasoningEfforts ?? [];
+    }
+
+    public string Model { get; }
+    public string DisplayName { get; }
+    public bool IsDefault { get; }
+    public string? DefaultReasoningEffort { get; }
+
+    [JsonPropertyName("supportedReasoningEfforts")]
+    public string[] SupportedReasoningEfforts { get; }
+}
 public sealed record ProviderStatus(
     bool Connected,
     bool SignInAvailable,
@@ -55,7 +74,12 @@ public sealed class ProviderDiagnostics(CodexConnection codex, HostSettings sett
             {
                 var slug = model.Text("model");
                 if (slug.Length > 0)
-                    models.Add(new(slug, model.Text("displayName", slug), model.Field("isDefault").ValueKind == JsonValueKind.True));
+                {
+                    var supported = model.Field("supportedReasoningEfforts").ValueKind == JsonValueKind.Array
+                        ? model.GetProperty("supportedReasoningEfforts").EnumerateArray().Select(option => option.Text("reasoningEffort")).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                        : [];
+                    models.Add(new(slug, model.Text("displayName", slug), model.Field("isDefault").ValueKind == JsonValueKind.True, model.Text("defaultReasoningEffort"), supported));
+                }
             }
             cursor = page.Text("nextCursor") is { Length: > 0 } next ? next : null;
             if (cursor is not null && !cursors.Add(cursor))

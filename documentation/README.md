@@ -16,7 +16,7 @@
 
 ## Documentation status
 
-Current release: 0.1.10. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Upgrade both apps for the new enrollment UI. Releases are grouped under artifacts/releases/<version> with separate desktop and Android outputs. The desktop has a pocket/terminal icon and shows its running version/path. See setup for focused verification and remaining real-device acceptance.
+Current release: 0.1.12. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Upgrade both apps for the new enrollment UI. Releases are grouped under artifacts/releases/<version> with separate desktop and Android outputs. The 0.2.0 development line adds the stable port-based Windows Firewall rule and monochrome schedule control. See setup for focused verification and remaining real-device acceptance.
 
 Version 0.1.4 adds six-digit pairing, a folder and model per conversation, archive/restore, direct IP-and-port HTTPS setup/diagnostics, distinct outgoing bubbles, and fixes for Unicode decoding and incoming-output focus loss. Earlier native features include usage, scheduling, saved hosts, steering/timing and desktop permissions. See [direct internet setup](SETUP.md#direct-internet-ip-and-port). The setup guide distinguishes focused/emulator/read-only-provider checks from remaining physical-device, external-network and real-inference acceptance. Historical 0.1.0/0.1.1 scope remains in the project brief.
 

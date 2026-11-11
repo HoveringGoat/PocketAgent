@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace PocketAgent;
 
 public sealed record Device(string Id, string Name, DateTimeOffset ExpiresAt);
-public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false);
+public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null);
 public sealed record ScheduledMessage(string Id, string ConversationId, string Text, DateTimeOffset DueAt, DateTimeOffset NextAttemptAt,
     string Status, string Reason, string? Error, [property: System.Text.Json.Serialization.JsonIgnore] string? DeviceId);
 
@@ -34,7 +34,7 @@ public sealed class LocalStore
         command.CommandText = "PRAGMA table_info(conversations)";
         var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         using (var reader = command.ExecuteReader()) while (reader.Read()) columns.Add(reader.GetString(1));
-        foreach (var (name, definition) in new[] { ("model", "TEXT"), ("archived", "INTEGER NOT NULL DEFAULT 0") })
+        foreach (var (name, definition) in new[] { ("model", "TEXT"), ("archived", "INTEGER NOT NULL DEFAULT 0"), ("reasoning_effort", "TEXT") })
             if (!columns.Contains(name))
             {
                 command.CommandText = $"ALTER TABLE conversations ADD COLUMN {name} {definition}";
@@ -129,16 +129,17 @@ public sealed class LocalStore
         command.ExecuteNonQuery();
     }
 
-    public void SaveConversation(string id, string title, string workingDirectory, string? model)
+    public void SaveConversation(string id, string title, string workingDirectory, string? model, string? reasoningEffort)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO conversations (id,title,created_at,repository,model) VALUES ($id,$title,$created,$repository,$model)";
+        command.CommandText = "INSERT INTO conversations (id,title,created_at,repository,model,reasoning_effort) VALUES ($id,$title,$created,$repository,$model,$reasoning)";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$title", title);
         command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         command.Parameters.AddWithValue("$repository", workingDirectory);
         command.Parameters.AddWithValue("$model", (object?)model ?? DBNull.Value);
+        command.Parameters.AddWithValue("$reasoning", (object?)reasoningEffort ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -146,12 +147,12 @@ public sealed class LocalStore
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,title,created_at,repository,model,archived FROM conversations WHERE $include=1 OR archived=0 ORDER BY created_at DESC,id";
+        command.CommandText = "SELECT id,title,created_at,repository,model,archived,reasoning_effort FROM conversations WHERE $include=1 OR archived=0 ORDER BY created_at DESC,id";
         command.Parameters.AddWithValue("$include", includeArchived ? 1 : 0);
         using var reader = command.ExecuteReader();
         var rows = new List<ConversationReference>();
         while (reader.Read())
-            rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5) != 0));
+            rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5) != 0, reader.IsDBNull(6) ? null : reader.GetString(6)));
         return [.. rows];
     }
 
@@ -160,6 +161,14 @@ public sealed class LocalStore
         using var connection = Open(); using var command = connection.CreateCommand();
         command.CommandText = "UPDATE conversations SET model=$model WHERE id=$id AND archived=0";
         command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$model", model);
+        if (command.ExecuteNonQuery() != 1) throw new ApiException(404, "Conversation not found.");
+    }
+
+    public void SetReasoningEffort(string id, string? effort)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conversations SET reasoning_effort=$reasoning WHERE id=$id AND archived=0";
+        command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$reasoning", (object?)effort ?? DBNull.Value);
         if (command.ExecuteNonQuery() != 1) throw new ApiException(404, "Conversation not found.");
     }
 

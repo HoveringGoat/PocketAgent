@@ -2,6 +2,7 @@ package dev.pocketagent;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -19,6 +20,12 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.net.Uri;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -31,6 +38,7 @@ public final class MainActivity extends Activity {
       CARD = Color.rgb(31, 47, 37),
       TEXT = Color.rgb(235, 241, 234),
       ACCENT = Color.rgb(193, 218, 166);
+  private static final String LATEST_RELEASE_ENDPOINT = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases/latest";
   private final Handler ui = new Handler(Looper.getMainLooper());
   private final ExecutorService network = Executors.newCachedThreadPool();
   private SessionStore store;
@@ -38,15 +46,18 @@ public final class MainActivity extends Activity {
   private String selected = "", tabSignature = "", transcriptSignature = "";
   private JSONObject conversation;
   private LinearLayout root, tabs, transcript, metadata;
-  private TextView connection, error, context, usageView;
+  private TextView connection, sessionLocation, error, context, usageView;
   private JSONObject usageState;
   private JSONArray scheduledState = new JSONArray();
+  private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
+  private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> optimisticItems = new java.util.HashMap<>();
   private long usageReadAt;
   private String serverName = "PocketAgent";
   private EditText composer;
-  private Button send, stop;
+  private Button send, stop, schedule;
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem;
+  private boolean updateCheckStarted;
   private int generation;
   private final Map<String, String> answers = new HashMap<>();
   private final Runnable poll =
@@ -80,6 +91,7 @@ public final class MainActivity extends Activity {
     }
     if (api == null) showPairing();
     else showChat();
+    checkForUpdates();
   }
 
   @Override
@@ -107,6 +119,71 @@ public final class MainActivity extends Activity {
 
   private int dp(int value) {
     return Math.round(value * getResources().getDisplayMetrics().density);
+  }
+
+  private void checkForUpdates() {
+    if (updateCheckStarted) return;
+    updateCheckStarted = true;
+    network.execute(
+        () -> {
+          HttpURLConnection connection = null;
+          try {
+            connection = (HttpURLConnection) new URL(LATEST_RELEASE_ENDPOINT).openConnection();
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(8000);
+            connection.setRequestProperty("Accept", "application/vnd.github+json");
+            connection.setRequestProperty("User-Agent", "PocketAgent/" + BuildConfig.VERSION_NAME);
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) return;
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+              String line;
+              while ((line = reader.readLine()) != null && body.length() < 512_000) body.append(line);
+            }
+            JSONObject release = new JSONObject(body.toString());
+            String version = release.optString("tag_name").replaceFirst("^[vV]", "");
+            if (!isNewerVersion(version, BuildConfig.VERSION_NAME)) return;
+            String releasePage = release.optString("html_url", "https://github.com/HoveringGoat/PocketAgent/releases");
+            String notes = release.optString("body", "").trim();
+            if (notes.length() > 1200) notes = notes.substring(0, 1200) + "…";
+            String message = "PocketAgent " + version + " is available.\n\n" + (notes.isEmpty() ? "Open the GitHub release page to download the APK." : notes);
+            String finalReleasePage = releasePage;
+            ui.post(() -> showUpdatePrompt(version, message, finalReleasePage));
+          } catch (Exception ignored) {
+            // Update checks are best effort and must never affect pairing or chat.
+          } finally {
+            if (connection != null) connection.disconnect();
+          }
+        });
+  }
+
+  private void showUpdatePrompt(String version, String message, String releasePage) {
+    if (isFinishing() || isDestroyed()) return;
+    new AlertDialog.Builder(this)
+        .setTitle("Update available: " + version)
+        .setMessage(message)
+        .setNegativeButton("Later", null)
+        .setPositiveButton("Open release", (dialog, which) -> {
+          try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(releasePage)));
+          } catch (Exception ignored) {
+            notice("Could not open the release page.");
+          }
+        })
+        .show();
+  }
+
+  private static boolean isNewerVersion(String candidate, String current) {
+    try {
+      String[] next = candidate.split("\\.");
+      String[] installed = current.split("\\.");
+      for (int i = 0; i < Math.max(next.length, installed.length); i++) {
+        int a = i < next.length ? Integer.parseInt(next[i].replaceAll("[^0-9].*", "")) : 0;
+        int b = i < installed.length ? Integer.parseInt(installed[i].replaceAll("[^0-9].*", "")) : 0;
+        if (a != b) return a > b;
+      }
+    } catch (Exception ignored) {
+    }
+    return false;
   }
 
   private LinearLayout column() {
@@ -321,7 +398,12 @@ public final class MainActivity extends Activity {
     LinearLayout header = row();
     connection = label("Connecting…", 15);
     connection.setTypeface(null, Typeface.BOLD);
-    header.addView(connection, new LinearLayout.LayoutParams(0, -2, 1));
+    LinearLayout identity = column();
+    identity.addView(connection, match());
+    sessionLocation = label("", 11);
+    sessionLocation.setTextColor(Color.rgb(143, 188, 143));
+    identity.addView(sessionLocation, match());
+    header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
     Button menu = button("⋮", v -> showMenu());
     menu.setContentDescription("Connection options");
     header.addView(menu);
@@ -387,6 +469,9 @@ public final class MainActivity extends Activity {
     send = button("Send", v -> submit());
     send.setContentDescription("Send message");
     composeRow.addView(send);
+    schedule = button("\u23F1\uFE0E", v -> scheduleMessage());
+    schedule.setContentDescription("Schedule message");
+    composeRow.addView(schedule);
     root.addView(composeRow, match());
     watch(
         composer,
@@ -540,9 +625,15 @@ public final class MainActivity extends Activity {
   }
 
   private void renderConversation(JSONObject state) {
+    state = mergeOptimistic(state);
     conversation = state;
     String active = state.isNull("activeTurnId") ? "" : state.optString("activeTurnId");
     String status = state.optString("status");
+    GradientDrawable metadataBackground = new GradientDrawable();
+    metadataBackground.setColor(CARD);
+    metadataBackground.setCornerRadius(dp(6));
+    metadataBackground.setStroke(dp(1), active.isEmpty() ? Color.rgb(71, 96, 75) : Color.rgb(167, 186, 167));
+    metadata.setBackground(metadataBackground);
     if (!state.isNull("activeTurnStartedAt")) {
       try {
         status +=
@@ -562,6 +653,12 @@ public final class MainActivity extends Activity {
             status + " · " + (state.isNull("model") ? "Codex settings" : state.optString("model")),
             state.optString("hostName"),
             state.optString("workingDirectory")));
+    String model = state.isNull("model") ? "Codex settings" : state.optString("model");
+    String reasoning = state.isNull("reasoningEffort") ? "model default" : state.optString("reasoningEffort");
+    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
+    String hostName = state.optString("hostName", "Desktop");
+    String workingDirectory = state.optString("workingDirectory", "");
+    sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
@@ -599,13 +696,17 @@ public final class MainActivity extends Activity {
           text.setTextIsSelectable(true);
         } else {
           String summary = type + " · " + item.optString("status");
-          text = label(summary, 13);
+          boolean expanded = expandedItems.contains(item.optString("id"));
+          text = label(expanded ? summary + "\n" + item.optString("detail") : summary, 13);
           text.setOnClickListener(
-              v ->
-                  text.setText(
-                      text.getText().toString().equals(summary)
-                          ? summary + "\n" + item.optString("detail")
-                          : summary));
+              v -> {
+                String itemId = item.optString("id");
+                if (expandedItems.add(itemId)) text.setText(String.format(java.util.Locale.ROOT, "%s\n%s", summary, item.optString("detail")));
+                else {
+                  expandedItems.remove(itemId);
+                  text.setText(summary);
+                }
+              });
         }
         boolean user = "userMessage".equals(type);
         if (!"agentMessage".equals(type)) {
@@ -648,6 +749,36 @@ public final class MainActivity extends Activity {
     updateSend();
   }
 
+  private JSONObject mergeOptimistic(JSONObject state) {
+    String id = state.optString("id");
+    java.util.ArrayList<JSONObject> pending = optimisticItems.get(id);
+    if (pending == null || pending.isEmpty()) return state;
+    try {
+      JSONArray canonical = state.optJSONArray("items");
+      JSONArray merged = new JSONArray();
+      for (int i = 0; i < canonical.length(); i++) merged.put(canonical.optJSONObject(i));
+      java.util.Iterator<JSONObject> iterator = pending.iterator();
+      while (iterator.hasNext()) {
+        JSONObject item = iterator.next();
+        boolean found = false;
+        for (int i = 0; i < canonical.length(); i++) {
+          JSONObject existing = canonical.optJSONObject(i);
+          if (existing != null && "userMessage".equals(existing.optString("type"))
+              && item.optString("text").equals(existing.optString("text"))) {
+            found = true;
+            break;
+          }
+        }
+        if (found) iterator.remove();
+        else merged.put(item);
+      }
+      if (pending.isEmpty()) optimisticItems.remove(id);
+      return new JSONObject(state.toString()).put("items", merged);
+    } catch (Exception ignored) {
+      return state;
+    }
+  }
+
   private void updateSend() {
     if (send == null) return;
     String status = conversation == null ? "" : conversation.optString("status");
@@ -660,6 +791,8 @@ public final class MainActivity extends Activity {
             && !"starting".equals(status)
             && !"uncertain".equals(status)
             && !"disconnected".equals(status));
+    if (schedule != null)
+      schedule.setEnabled(connected && conversation != null && !submitting && !composer.getText().toString().trim().isEmpty() && !conversation.optBoolean("archived"));
     stop.setEnabled(connected && !submitting);
   }
 
@@ -729,6 +862,18 @@ public final class MainActivity extends Activity {
     String id = selected, text = composer.getText().toString();
     ApiClient client = api;
     JSONObject state = conversation;
+    try {
+      JSONObject optimistic =
+          new JSONObject()
+              .put("id", "local-" + java.util.UUID.randomUUID())
+              .put("type", "userMessage")
+              .put("text", text)
+              .put("status", "pending")
+              .put("timestamp", java.time.Instant.now().toString());
+      optimisticItems.computeIfAbsent(id, ignored -> new java.util.ArrayList<>()).add(optimistic);
+      renderConversation(state);
+    } catch (Exception ignored) {
+    }
     action(
         () -> {
           JSONObject body = new JSONObject().put("text", text);
@@ -902,8 +1047,65 @@ public final class MainActivity extends Activity {
                           if (selected.equals(id)) renderConversation((JSONObject) state);
                           notice(
                               "Model selected for future messages, including scheduled messages.");
+                          if (api == client && selected.equals(id)) showReasoning();
                         },
                         false)),
+        false);
+  }
+
+  private void showReasoning() {
+    if (api == null || conversation == null || conversation.isNull("model")) {
+      problem("Choose a model before selecting reasoning effort.");
+      return;
+    }
+    ApiClient client = api;
+    String id = selected;
+    String model = conversation.optString("model");
+    String currentEffort = conversation.optString("reasoningEffort");
+    action(
+        () -> client.request("/models", null),
+        result -> {
+          if (api != client || !selected.equals(id) || conversation == null
+              || !model.equals(conversation.optString("model"))) return;
+          JSONArray models = (JSONArray) result;
+          JSONObject selectedModel = null;
+          for (int i = 0; i < models.length(); i++) {
+            JSONObject candidate = models.optJSONObject(i);
+            if (candidate != null && model.equals(candidate.optString("model"))) {
+              selectedModel = candidate;
+              break;
+            }
+          }
+          JSONObject chosenModel = selectedModel;
+          JSONArray supported = chosenModel == null ? null : chosenModel.optJSONArray("supportedReasoningEfforts");
+          if (supported == null || supported.length() == 0) {
+            problem("This Codex version did not advertise reasoning levels for the selected model.");
+            return;
+          }
+          String[] labels = new String[supported.length() + 1];
+          labels[0] = "Use model default";
+          int checked = 0;
+          for (int i = 0; i < supported.length(); i++) {
+            Object value = supported.opt(i);
+            if (!(value instanceof String) || ((String) value).trim().isEmpty()) {
+              problem("The server returned an invalid reasoning level. Refresh and try again.");
+              return;
+            }
+            labels[i + 1] = (String) value;
+            if (labels[i + 1].equalsIgnoreCase(currentEffort)) checked = i + 1;
+          }
+          new AlertDialog.Builder(this)
+              .setTitle("Reasoning effort")
+              .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                String effort = which == 0 ? null : labels[which];
+                action(
+                    () -> client.request("/conversations/" + ApiClient.segment(id) + "/reasoning", new JSONObject().put("effort", effort == null ? JSONObject.NULL : effort)),
+                    state -> { if (selected.equals(id)) renderConversation((JSONObject) state); notice("Reasoning effort selected for future messages."); dialog.dismiss(); },
+                    false);
+              })
+              .setNegativeButton("Cancel", null)
+              .show();
+        },
         false);
   }
 
@@ -1102,6 +1304,7 @@ public final class MainActivity extends Activity {
               "Usage and resets",
               "Refresh",
               "Choose model",
+              "Choose reasoning",
               "Archive conversation",
               "Archived conversations",
               "Unpair this server"
@@ -1113,8 +1316,9 @@ public final class MainActivity extends Activity {
               else if (which == 3) showUsage();
               else if (which == 4) refresh();
               else if (which == 5) showModels();
-              else if (which == 6) archive(selected);
-              else if (which == 7) showArchived();
+              else if (which == 6) showReasoning();
+              else if (which == 7) archive(selected);
+              else if (which == 8) showArchived();
               else {
                 ApiClient client = api;
                 action(

@@ -95,6 +95,34 @@ Direct internet setup accepts a public IPv4 and external TCP port, generates an 
 2. Simplifying local certificate trust with verified enrollment/pinning, public-IP changes and certificate renewal, without requiring a domain or traffic intermediary.
 3. Desktop close/background behavior, installers and public release signing beyond the current signed APK/self-contained ZIP.
 
+### Planned 0.2.0 milestone
+
+0.2.0 should be the first feature milestone after the native mobile/network foundation is stable. The target scope is:
+
+- GitHub Releases as the canonical artifact channel, with separate desktop/Android assets, release notes, checksums and an in-app update check that never interrupts active work.
+- A first-run/update experience that clearly preserves runtime databases, device credentials, certificates and Codex sign-in while replacing only the packaged binaries.
+- A stable Windows Firewall setup that uses one explicit, port-based rule instead of a versioned executable-path exception, plus diagnostics and cleanup guidance when the listener port changes.
+- Production hardening for long-running desktop sessions: startup recovery, bounded polling/reconnect behavior, diagnostics for direct internet setup, and regression coverage for UI lockups and focus preservation.
+- Completion of the remaining real-device acceptance matrix: physical Android pairing over Wi-Fi and cellular/direct IPv4, usage-limit queuing, scheduled dispatch, steering during active work and per-conversation model/reasoning selection.
+
+This is a planned milestone, not current implementation status. No GitHub release or automatic updater is enabled by this repository yet.
+
+#### Desktop update and startup design under review
+
+The user intends ordinary installations from GitHub Releases, with a separate updater process and automatic checking/install options. The following specifies the proposed behavior; it is not implemented or a declaration that the remaining defaults have been approved.
+
+- Settings: check on startup (proposed default on), periodic checks while running (proposed every six hours), automatic installation (default still to be decided), start server with app (user-requested default on), start app with Windows (proposed default off), and optional start minimized. Disabling automatic checks still permits Check now. Automatic installation depends on an enabled check schedule.
+- Windows startup means launch after the current user signs in. Actual execution before sign-in requires a Windows service and is outside the proposed desktop scope. Installation uses a stable per-user directory, stable shortcuts, and separate version directories; runtime state remains outside replaceable binaries.
+- GitHub hosts immutable stable releases containing separate desktop and Android assets, notes, and signed metadata binding version/platform/hash/compatibility. Verification uses a public key shipped with the app; release signing keys stay outside packages. Manifest trust and key rotation must be established before enabling automatic installation. Checks/downloads contact GitHub; chat continues directly between phone and desktop.
+- Download, verify, and stage the complete update while the current app runs. A failed download leaves the running app available. The updater must reverify staged content and reject archive paths outside its staging directory.
+- At installation time, acquire an exclusive update/host handoff, pause new submissions and scheduler claims, and recheck all conversations for active work, approvals/questions, uncertain delivery, and dispatch in progress. Automatic installation waits for a safe window; it must never kill active work or replay a prompt. Preserve the prior server running/stopped state through an update restart.
+- Keep the previous version and a durable update transaction so power loss can be recovered. Launch the candidate in a probation mode that checks configuration, runtime ownership, database compatibility and listener startup while deferring provider work and scheduler dispatch. The updater receives a version-bound startup acknowledgement through a restricted local channel. Normal provider sign-in/network failures are reported separately from application startup failures.
+- Database rollback is a release compatibility contract: replacing binaries alone is insufficient after a schema migration. Automatic rollback is permitted only when the candidate's data changes remain readable by the previous version. If a release needs an incompatible migration, require an explicit maintenance update with an app-managed consistent backup/recovery plan. Never silently restore an older runtime database after new jobs or device enrollments have been accepted.
+- After healthy startup, commit the update and resume work; the updater then exits. On eligible startup failure, return to the previous version, surface the failure, and suppress repeated automatic attempts of that same version. A user-requested stopped server must remain stopped regardless of the normal start-server preference.
+- Android checks/downloads can be automatic, but ordinary sideloaded installations use Android's installation confirmation and the existing APK signing identity. Client/server protocol compatibility must let the two apps update independently, with a clear version mismatch message.
+
+Open product decisions: automatic-install default, treatment of imminent scheduled jobs, tray/close behavior, and whether the initial Windows download is an installer or a portable ZIP plus an explicit install step. Public release/signing configuration and release publication require separate authorization. No further release build is requested during this design discussion.
+
 ## Component responsibilities
 
 These responsibilities describe the implemented local architecture.
@@ -180,6 +208,12 @@ Version 0.1.0 is the first implementation milestone. The build script produces a
 Provider credentials and repository access belong on the desktop host. Mobile access must be authenticated and limited to authorized sessions. Logs must not expose credentials. Any relay of agent approvals must preserve the underlying permission model.
 
 ## Implementation and verification status
+
+The 0.2.0 development line includes the stable Windows Firewall rule and replaces the colored clock emoji with a monochrome text-presentation stopwatch control. The rule is explicit, port-based, elevation-gated, and independent of the versioned executable path. The desktop now has persisted startup/update preferences, GitHub latest-release discovery, and a separate updater handoff path; release publication, signed manifest enforcement, and packaged updater verification remain open. Mobile now renders machine/folder context in the header, model/reasoning in the status surface, and a best-effort startup prompt when a newer published GitHub release exists. The Android prompt opens the release page and leaves installation confirmation to the operating system. Focused desktop and Android checks cover the current source behavior; packaged smoke verification remains separate from a physical router/firewall test. No 0.1.13 release is planned.
+
+Version 0.1.12 completes the native transcript/composer pass. Desktop and Android render work items as independently collapsible cards and preserve expansion state while snapshots refresh. User prompts appear optimistically while waiting for acknowledgement, the clock action opens a guided schedule dialog, and desktop/Android expose per-conversation reasoning levels advertised by the Codex model catalog. Reasoning is sent as the app-server turn `effort` override and never rewrites global Codex settings. Focused desktop, server, and Android compile/lint checks pass; physical-device and real-inference acceptance remain separate.
+
+Version 0.1.11 makes the desktop theme explicit rather than relying on WPF/system defaults. The window/content root, tab content host, scroll viewers, dialogs, inputs, lists, popups, calendars and date pickers all receive dark surfaces and readable foregrounds. The focused native render check passes against the actual WPF hierarchy and rendered screens; this release does not change network, pairing or provider behavior.
 
 Version 0.1.10 replaces ACME enrollment with one-step QR or full pairing-string enrollment. The payload combines an HTTPS origin, desktop SPKI fingerprint and single-use 256-bit ticket; no extra six-digit entry is required. Android preserves hostname/validity checks and encrypted per-origin pins. Local certificate renewal preserves identity; Caddy and public ports 80/443 are no longer involved. The desktop embeds a pocket/terminal icon. Artifacts are grouped by release with independent desktop/Android targets and historical outputs preserved; the in-use 0.1.9 path remains until the user closes it. The previously claimed theme coverage was too broad; the current app displays version/path and verification limits explicitly distinguish native render checks from the user's OS display and physical camera/cellular route. Earlier version records below are historical, not current instructions.
 

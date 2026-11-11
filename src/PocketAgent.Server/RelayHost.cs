@@ -165,9 +165,10 @@ public static class RelayHost
             return Results.NoContent();
         });
         api.MapGet("/conversations", (bool? archived, Conversations conversations) => conversations.List(archived ?? false));
-        api.MapPost("/conversations", async (CreateInput input, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model)));
+        api.MapPost("/conversations", async (CreateInput input, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model, input.ReasoningEffort)));
         api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, Conversations conversations) => conversations.Rename(id, input.Title ?? ""));
         api.MapPost("/conversations/{id}/model", (string id, ModelInput input, Conversations conversations) => conversations.SetModel(id, input.Model ?? ""));
+        api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, Conversations conversations) => conversations.SetReasoning(id, input.Effort));
         api.MapPost("/conversations/{id}/archive", (string id, Conversations conversations) => conversations.Archive(id, true));
         api.MapPost("/conversations/{id}/restore", (string id, Conversations conversations) => conversations.Archive(id, false));
         api.MapGet("/conversations/{id}", (string id, Conversations conversations) => conversations.Get(id));
@@ -193,7 +194,8 @@ public static class RelayHost
 }
 
 public sealed record PairInput(string? Code, string? DeviceName);
-public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null);
+public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null, string? ReasoningEffort = null);
 public sealed record ModelInput(string? Model);
+public sealed record ReasoningInput(string? Effort);
 public sealed record MessageInput(string? Text, string? ExpectedTurnId = null);
 public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt);

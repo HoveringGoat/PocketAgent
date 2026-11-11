@@ -6,13 +6,13 @@ The desktop keeps provider credentials and repository execution local. Scan its 
 
 ## Run the packaged apps
 
-Version 0.1.10 uses pinned desktop identity with single-step scan/paste enrollment. No additional six-digit entry, CA installation, Let's Encrypt, ports 80/443 or Caddy edits. Certificates renew locally without changing identity. The desktop has a pocket/terminal icon and displays the running version and executable path.
+Version 0.1.12 is the latest stable release. The 0.2.0 development line adds the stable port-based Windows Firewall rule and monochrome schedule control, alongside the other planned feature work. No additional six-digit entry, CA installation, Let's Encrypt, ports 80/443 or Caddy edits are required.
 
 Install both apps for new enrollment. Existing saved devices/conversations are retained; re-pair to adopt pinned trust on an old connection.
 
-Outputs are `artifacts/releases/0.1.10/desktop/PocketAgent.Desktop.exe`, `artifacts/releases/0.1.10/PocketAgent-0.1.10-desktop.zip`, and `artifacts/releases/0.1.10/android/PocketAgent-0.1.10-android.apk`. Older releases are preserved under the same versioned layout. A running 0.1.9 folder is left in place until closed. The installed VS Code Codex binary is discovered automatically and is not redistributed.
+Outputs are `artifacts/releases/0.1.12/desktop/PocketAgent.Desktop.exe`, `artifacts/releases/0.1.12/PocketAgent-0.1.12-desktop.zip`, and `artifacts/releases/0.1.12/android/PocketAgent-0.1.12-android.apk`. Older releases are preserved under the same versioned layout. A running 0.1.9 folder is left in place until closed. The installed VS Code Codex binary is discovered automatically and is not redistributed.
 
-Follow [direct internet setup](documentation/SETUP.md#direct-internet-ip-and-port) to forward one chosen TCP port to the desktop and allow it through Windows Firewall. Start the server, then open Devices to scan/copy pairing. Pair over cellular to test the outside route. No domain, central hosting or traffic relay is required. No public release or internet endpoint has been published automatically.
+Follow [direct internet setup](documentation/SETUP.md#direct-internet-ip-and-port) to forward one chosen TCP port to the desktop. On first start, the desktop can create one elevated port-based Windows Firewall rule that survives versioned executable updates. Start the server, then open Devices to scan/copy pairing. Pair over cellular to test the outside route. No domain, central hosting or traffic relay is required. No public release or internet endpoint has been published automatically.
 
 Each conversation selects its existing desktop folder and available model. Archive/restore hides old tabs without deleting history; archiving cancels pending schedules. User messages use bubbles; assistant prose uses the plain transcript background.
 

@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -26,29 +28,52 @@ public partial class MainWindow : Window
     private DesktopSettings settings = new();
     private WebApplication? relay;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(6) };
     private readonly Dictionary<string, string> drafts = [];
+    private readonly Dictionary<string, List<DisplayItem>> optimisticItems = [];
+    private readonly HashSet<string> expandedWorkItems = [];
     private ConversationSnapshot? conversation;
     private string? selected;
     private string rendered = "";
     private string sessionSignature = "";
     private string qrRendered = "";
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning;
+    private Button? scheduleButton;
+    private DesktopUpdate? pendingUpdate;
+    private string? updateHealthFile;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
 
     public MainWindow()
     {
         InitializeComponent();
+        if (SendButton.Parent is StackPanel composerActions)
+        {
+            composerActions.Orientation = Orientation.Horizontal;
+            scheduleButton = new Button { Content = "\u23F1\uFE0E", ToolTip = "Schedule message", Margin = new Thickness(4), Foreground = Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Segoe UI Symbol") };
+            AutomationProperties.SetName(scheduleButton, "Schedule message");
+            scheduleButton.Click += ScheduleMessageImproved;
+            composerActions.Children.Insert(1, scheduleButton);
+            foreach (var button in composerActions.Children.OfType<Button>().Where(button => button != scheduleButton && button.Content?.ToString()?.StartsWith("Schedule", StringComparison.Ordinal) == true))
+                button.Visibility = Visibility.Collapsed;
+        }
         Title = $"PocketAgent Server {BuildInfo.Version}";
         BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
         RepositorySetting.Text = settings.Host.RepositoryPath;
         var arguments = Environment.GetCommandLineArgs();
+        var healthArgument = Array.IndexOf(arguments, "--health-file");
+        if (healthArgument >= 0 && healthArgument + 1 < arguments.Length) updateHealthFile = arguments[healthArgument + 1];
         var repositoryArgument = Array.IndexOf(arguments, "--repository");
         if (RepositorySetting.Text.Length == 0 && repositoryArgument >= 0 && repositoryArgument + 1 < arguments.Length)
             RepositorySetting.Text = arguments[repositoryArgument + 1];
         CodexSetting.Text = settings.Host.CodexExecutable;
         PermissionModeSetting.SelectedValue = settings.Host.PermissionMode;
+        StartServerOnLaunchSetting.IsChecked = settings.StartServerOnLaunch;
+        LaunchOnWindowsStartupSetting.IsChecked = settings.LaunchOnWindowsStartup;
+        CheckUpdatesOnStartupSetting.IsChecked = settings.CheckUpdatesOnStartup;
+        CheckUpdatesPeriodicallySetting.IsChecked = settings.CheckUpdatesPeriodically;
+        AutomaticUpdatesSetting.IsChecked = settings.AutomaticUpdates;
         AddressSetting.Text = settings.Host.ListenAddress;
         PortSetting.Text = settings.Host.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         CertificateSetting.Text = settings.Host.CertificatePath;
@@ -57,12 +82,33 @@ public partial class MainWindow : Window
         ResolveCodex();
         timer.Tick += async (_, _) => await Refresh();
         timer.Start();
+        updateTimer.Tick += async (_, _) => await CheckForUpdatesCore(false);
+        updateTimer.Start();
+        Loaded += async (_, _) => await WindowReady();
     }
 
     private void ResolveCodex()
     {
         try { var executable = CodexExecutableResolver.Resolve(settings.Host); CodexResolved.Text = $"{executable.Source}\n{executable.Path}"; }
         catch (Exception exception) { CodexResolved.Text = exception.Message; }
+    }
+
+    private async Task WindowReady()
+    {
+        if (Environment.GetCommandLineArgs().Contains("--background", StringComparer.OrdinalIgnoreCase)) WindowState = WindowState.Minimized;
+        try { StartupRegistration.SetEnabled(settings.LaunchOnWindowsStartup); }
+        catch (Exception exception) { UpdateStatus.Text = $"Windows startup registration unavailable: {exception.Message}"; }
+        if (settings.StartServerOnLaunch && settings.Host.RepositoryPath.Length > 0)
+            await StartServerCore();
+        if (settings.CheckUpdatesOnStartup)
+            await CheckForUpdatesCore(true);
+        if (!settings.StartServerOnLaunch || relay is not null) WriteUpdateHealth();
+    }
+
+    private void WriteUpdateHealth()
+    {
+        if (string.IsNullOrWhiteSpace(updateHealthFile)) return;
+        try { File.WriteAllText(updateHealthFile, BuildInfo.Version); } catch { }
     }
 
     private async Task Act(Func<Task> work, bool clearError = true)
@@ -80,6 +126,11 @@ public partial class MainWindow : Window
         if (relay is not null) throw new InvalidOperationException("Stop the server before changing settings.");
         var candidate = new DesktopSettings
         {
+            StartServerOnLaunch = StartServerOnLaunchSetting.IsChecked == true,
+            LaunchOnWindowsStartup = LaunchOnWindowsStartupSetting.IsChecked == true,
+            CheckUpdatesOnStartup = CheckUpdatesOnStartupSetting.IsChecked == true,
+            CheckUpdatesPeriodically = CheckUpdatesPeriodicallySetting.IsChecked == true,
+            AutomaticUpdates = AutomaticUpdatesSetting.IsChecked == true,
             Host = new HostSettings
             {
                 RepositoryPath = RepositorySetting.Text.Trim(),
@@ -97,7 +148,10 @@ public partial class MainWindow : Window
             }
         };
         candidate.Host.Validate();
-        candidate.Save(); settings = candidate; ResolveCodex();
+        candidate.Save(); settings = candidate;
+        StartupRegistration.SetEnabled(candidate.LaunchOnWindowsStartup);
+        updateTimer.IsEnabled = candidate.CheckUpdatesPeriodically;
+        ResolveCodex();
     }
 
     private async void SaveSettings(object sender, RoutedEventArgs e) => await Act(() => { SaveConfiguration(); ErrorDisplay.Text = "Settings saved."; return Task.CompletedTask; });
@@ -194,13 +248,20 @@ public partial class MainWindow : Window
         var text = new TextBox { Text = string.Join("\n\n", report.Checks), IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(16) };
         new Window { Title = report.LocalConnectionVerified ? "Connection diagnostics - local HTTPS verified" : "Connection diagnostics - setup needs attention", Owner = this, Content = text, Width = 760, Height = 580, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
     });
-    private async void StartServer(object sender, RoutedEventArgs e)
+    private async void StartServer(object sender, RoutedEventArgs e) => await StartServerCore();
+    private async Task StartServerCore()
     {
         if (relay is not null || transitioning) return;
         transitioning = true; StartButton.IsEnabled = false;
         await Act(async () =>
         {
             SaveConfiguration();
+            if (IPAddress.TryParse(settings.Host.ListenAddress, out var listenAddress) && !IPAddress.IsLoopback(listenAddress) && !WindowsFirewall.IsConfigured(settings.Host.Port))
+            {
+                var choice = AppDialogs.Show(this, $"Allow inbound TCP {settings.Host.Port} through Windows Firewall? PocketAgent will create one port-based rule named '{WindowsFirewall.RuleName(settings.Host.Port)}'. It is tied to the port, not this version's executable path, so future updates will not prompt again. The rule is needed for phone connections and can be removed from Windows Firewall later.", "Windows Firewall", MessageBoxButton.YesNo);
+                if (choice == MessageBoxResult.Yes && !await Task.Run(() => WindowsFirewall.TryConfigure(settings.Host.Port)))
+                    throw new InvalidOperationException("Windows Firewall rule was not created. The server was not started.");
+            }
             var candidate = RelayHost.Create([], settings.Host);
             try { await candidate.StartAsync(); }
             catch { await candidate.DisposeAsync(); throw; }
@@ -213,6 +274,62 @@ public partial class MainWindow : Window
             await Refresh();
         });
         transitioning = false; StartButton.IsEnabled = relay is null;
+    }
+
+    private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false);
+
+    private async Task CheckForUpdatesCore(bool startup)
+    {
+        if (startup && !settings.CheckUpdatesOnStartup) return;
+        if (!startup && !settings.CheckUpdatesPeriodically) return;
+        try
+        {
+            var update = await UpdateService.CheckAsync();
+            pendingUpdate = update;
+            UpdateStatus.Text = update is null ? $"You are running the latest available desktop version ({BuildInfo.Version})." : $"Desktop update {update.Version} is available.";
+            if (update is not null && settings.AutomaticUpdates)
+                await InstallUpdateCore(false);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            UpdateStatus.Text = $"Update check unavailable: {exception.Message}";
+        }
+    }
+
+    private async void InstallUpdate(object sender, RoutedEventArgs e) => await InstallUpdateCore(true);
+
+    private async Task InstallUpdateCore(bool userRequested)
+    {
+        if (pendingUpdate is null)
+        {
+            UpdateStatus.Text = "Check for updates before installing.";
+            return;
+        }
+        if (pendingUpdate.Sha256 is null)
+        {
+            UpdateStatus.Text = "This release does not publish a checksum, so PocketAgent will not install it automatically.";
+            return;
+        }
+        if (relay is not null)
+        {
+            var sessions = await Conversations.List();
+            if (sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain"))
+            {
+                UpdateStatus.Text = "Update waiting for all conversations to become idle.";
+                if (userRequested) AppDialogs.Show(this, UpdateStatus.Text, "Update waiting");
+                return;
+            }
+        }
+        var updater = UpdateService.Launch(pendingUpdate, Environment.ProcessId);
+        if (updater is null)
+        {
+            UpdateStatus.Text = "The updater is not included in this development build. Install the packaged desktop release to update automatically.";
+            return;
+        }
+        closing = true;
+        timer.Stop(); updateTimer.Stop();
+        await Shutdown();
+        Close();
     }
     private async Task<bool> ConfirmStop()
     {
@@ -307,23 +424,40 @@ public partial class MainWindow : Window
             var expected = selected;
             var snapshot = await Conversations.Get(expected);
             if (relay != running || selected != expected) return;
+            snapshot = MergeOptimistic(snapshot);
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
             ConversationTitle.Text = snapshot.Title;
-            ModelButton.Content = snapshot.Model ?? "Model: Codex settings";
+            ModelButton.Content = snapshot.Model is null ? "Model: Codex settings" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
             var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
                 snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
             ConversationMeta.Text = $"{snapshot.Status}{work} · {snapshot.HostName}\n{snapshot.WorkingDirectory}\n{policy}";
+            ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
             SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
+            if (scheduleButton is not null)
+                scheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
             var content = JsonSerializer.Serialize(new { snapshot.Items, snapshot.Requests, snapshot.Error });
             if (content != rendered) { RenderTranscript(snapshot); rendered = content; }
         }, clearError: false);
         refreshing = false;
+    }
+    private ConversationSnapshot MergeOptimistic(ConversationSnapshot snapshot)
+    {
+        if (!optimisticItems.TryGetValue(snapshot.Id, out var pending) || pending.Count == 0) return snapshot;
+        var canonical = snapshot.Items.ToList();
+        foreach (var item in pending.ToArray())
+        {
+            if (canonical.Any(existing => existing.Type == "userMessage" && existing.Text == item.Text && existing.Timestamp is { } existingTime && item.Timestamp is { } itemTime && Math.Abs((existingTime - itemTime).TotalMinutes) < 10))
+                pending.Remove(item);
+            else canonical.Add(item);
+        }
+        if (pending.Count == 0) optimisticItems.Remove(snapshot.Id);
+        return snapshot with { Items = canonical.ToArray() };
     }
     private void RenderDevices()
     {
@@ -372,12 +506,31 @@ public partial class MainWindow : Window
         var id = conversation.Id;
         var models = await relay.Services.GetRequiredService<ProviderDiagnostics>().Models();
         var choices = new ComboBox { Margin = new Thickness(16), DisplayMemberPath = "DisplayName", ItemsSource = models, SelectedIndex = Array.FindIndex(models, model => model.Model == conversation.Model) };
+        var effort = new ComboBox { Margin = new Thickness(16) };
+        void RefreshEffortChoices()
+        {
+            var selected = choices.SelectedItem as ModelOption;
+            var options = new[] { new EffortChoice(null, "Use model default") }.Concat((selected?.SupportedReasoningEfforts ?? []).Select(value => new EffortChoice(value, value))).ToArray();
+            effort.ItemsSource = options;
+            effort.DisplayMemberPath = "Label";
+            effort.SelectedIndex = Array.FindIndex(options, option => string.Equals(option.Value, conversation.ReasoningEffort, StringComparison.OrdinalIgnoreCase));
+            if (effort.SelectedIndex < 0) effort.SelectedIndex = 0;
+        }
+        choices.SelectionChanged += (_, _) => RefreshEffortChoices();
+        RefreshEffortChoices();
         var save = new Button { Content = "Use selected model", Margin = new Thickness(16) };
-        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Applies to future messages, including scheduled messages.", Margin = new Thickness(16) }); panel.Children.Add(choices); panel.Children.Add(save);
+        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Applies to future messages, including scheduled messages.", Margin = new Thickness(16) }); panel.Children.Add(new TextBlock { Text = "Model", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(choices); panel.Children.Add(new TextBlock { Text = "Reasoning effort", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(effort); panel.Children.Add(save);
         var dialog = new Window { Title = "Conversation model", Owner = this, Content = panel, Width = 500, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         save.Click += (_, _) => { if (choices.SelectedItem is not null) dialog.DialogResult = true; };
-        if (dialog.ShowDialog() == true) { await Conversations.SetModel(id, ((ModelOption)choices.SelectedItem).Model); await Refresh(); }
+        if (dialog.ShowDialog() == true)
+        {
+            var selected = (ModelOption)choices.SelectedItem;
+            await Conversations.SetModel(id, selected.Model);
+            await Conversations.SetReasoning(id, ((EffortChoice)effort.SelectedItem).Value);
+            await Refresh();
+        }
     });
+    private sealed record EffortChoice(string? Value, string Label);
     private async void ArchiveConversation(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is null || conversation is null) return;
@@ -409,14 +562,23 @@ public partial class MainWindow : Window
     {
         if (sending || relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) return;
         var id = conversation.Id; var expectedTurn = conversation.ActiveTurnId; var text = Composer.Text;
+        var optimistic = new DisplayItem($"local-{Guid.NewGuid():N}", "userMessage", text, "", "pending", DateTimeOffset.UtcNow);
+        if (!optimisticItems.TryGetValue(id, out var pending)) optimisticItems[id] = pending = [];
+        pending.Add(optimistic);
+        conversation = conversation with { Items = conversation.Items.Append(optimistic).ToArray() };
+        rendered = "";
+        RenderTranscript(conversation);
         sending = true; SendButton.IsEnabled = false;
+        var accepted = false;
         await Act(async () =>
         {
             var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null);
+            accepted = true;
             if (receipt.Queued) ErrorDisplay.Text = receipt.Message;
             if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
             if (selected == id && Composer.Text == text) Composer.Clear();
         });
+        if (!accepted && optimisticItems.TryGetValue(id, out var failed)) failed.Remove(optimistic);
         sending = false; await Refresh();
     }
     private async void InterruptWork(object sender, RoutedEventArgs e) => await Act(async () =>
@@ -461,12 +623,67 @@ public partial class MainWindow : Window
                 lastMinute = minute;
             }
             var content = new TextBlock { Text = item.Type is "userMessage" or "agentMessage" ? item.Text : $"{item.Type} · {item.Status}\n{item.Detail}", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
+            if (item.Type is not "userMessage" and not "agentMessage")
+            {
+                RenderWorkItem(item);
+                continue;
+            }
             if (item.Type == "agentMessage") { content.Margin = new Thickness(8, 8, 8, 18); Transcript.Children.Add(content); }
             else Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), HorizontalAlignment = item.Type == "userMessage" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch, MaxWidth = item.Type == "userMessage" ? 760 : double.PositiveInfinity, Margin = new Thickness(0, 0, 0, 10) });
         }
         if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Foreground = Brushes.Salmon, Margin = new Thickness(12) });
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
         if (atBottom) TranscriptScroll.ScrollToEnd();
+    }
+    private void RenderWorkItem(DisplayItem item)
+    {
+        var expanded = expandedWorkItems.Contains(item.Id);
+        var summary = item.Detail.Replace("\r", "").Split('\n').FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? "No details";
+        if (summary.Length > 180) summary = summary[..180] + "…";
+        var header = new Button
+        {
+            Content = $"{(expanded ? "[-]" : "[+]" )} {item.Type} · {item.Status} · {summary}",
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#213128")),
+            Foreground = Brushes.LightGreen,
+            BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#47604B")),
+            BorderThickness = new Thickness(1),
+            ToolTip = "Expand or collapse work details"
+        };
+        var details = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(item.Detail) ? "No additional details." : item.Detail,
+            Margin = new Thickness(12, 4, 12, 12),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.LightGreen,
+            Visibility = expanded ? Visibility.Visible : Visibility.Collapsed
+        };
+        var panel = new StackPanel(); panel.Children.Add(header); panel.Children.Add(details);
+        var card = new Border
+        {
+            Child = panel,
+            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#19271F")),
+            BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#47604B")),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        header.Click += (_, _) =>
+        {
+            if (expandedWorkItems.Add(item.Id))
+            {
+                details.Visibility = Visibility.Visible;
+                header.Content = $"[-] {item.Type} · {item.Status} · {summary}";
+            }
+            else
+            {
+                expandedWorkItems.Remove(item.Id);
+                details.Visibility = Visibility.Collapsed;
+                header.Content = $"[+] {item.Type} · {item.Status} · {summary}";
+            }
+        };
+        Transcript.Children.Add(card);
     }
     private void RenderRequest(string id, PendingRequest request)
     {
@@ -538,6 +755,62 @@ public partial class MainWindow : Window
     {
         var time = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));
         return time.TotalHours >= 1 ? $"{(int)time.TotalHours}h {time.Minutes}m" : time.TotalMinutes >= 1 ? $"{(int)time.TotalMinutes}m {time.Seconds}s" : $"{time.Seconds}s";
+    }
+    private async void ScheduleMessageImproved(object? sender, RoutedEventArgs e)
+    {
+        if (relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) { ErrorDisplay.Text = "Write a message before scheduling it."; return; }
+        var id = conversation.Id;
+        var text = Composer.Text;
+        var date = new DatePicker { SelectedDate = DateTime.Today, Margin = new Thickness(0, 4, 0, 10) };
+        var hours = new ComboBox { ItemsSource = Enumerable.Range(1, 12).ToArray(), SelectedItem = DateTime.Now.ToString("h") is string h && int.TryParse(h, out var hour) ? hour : 12, Width = 72 };
+        var minutes = new ComboBox { ItemsSource = Enumerable.Range(0, 60).Select(value => value.ToString("D2")).ToArray(), SelectedItem = DateTime.Now.ToString("mm"), Width = 72 };
+        var period = new ComboBox { ItemsSource = new[] { "AM", "PM" }, SelectedItem = DateTime.Now.ToString("tt", System.Globalization.CultureInfo.InvariantCulture), Width = 72 };
+        var quick = new ComboBox { ItemsSource = new[] { "Choose date and time", "In 15 minutes", "In 1 hour", "Tomorrow at 9:00 AM" }, SelectedIndex = 0, Margin = new Thickness(0, 4, 0, 10) };
+        var preview = new TextBox { Text = text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 100, Margin = new Thickness(0, 4, 0, 10) };
+        var validation = new TextBlock { Foreground = Brushes.Salmon, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 8) };
+        var schedule = new Button { Content = "Schedule message", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right };
+        var dialog = new Window { Title = "Schedule message", Owner = this, Width = 560, SizeToContent = SizeToContent.Height, Content = null, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new TextBlock { Text = "Message", FontWeight = FontWeights.SemiBold }); panel.Children.Add(preview);
+        panel.Children.Add(new TextBlock { Text = $"Time ({TimeZoneInfo.Local.DisplayName})", FontWeight = FontWeights.SemiBold }); panel.Children.Add(quick);
+        panel.Children.Add(date);
+        var timeRow = new StackPanel { Orientation = Orientation.Horizontal };
+        timeRow.Children.Add(hours); timeRow.Children.Add(new TextBlock { Text = ":", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) }); timeRow.Children.Add(minutes); timeRow.Children.Add(period);
+        panel.Children.Add(timeRow); panel.Children.Add(validation);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "Cancel", IsCancel = true }; buttons.Children.Add(cancel); buttons.Children.Add(schedule); panel.Children.Add(buttons);
+        dialog.Content = panel;
+        DateTime? SelectedLocal()
+        {
+            if (date.SelectedDate is null || hours.SelectedItem is not int selectedHour || minutes.SelectedItem is not string selectedMinute || period.SelectedItem is not string selectedPeriod) return null;
+            var hour24 = selectedHour % 12 + (selectedPeriod == "PM" ? 12 : 0);
+            return DateTime.SpecifyKind(date.SelectedDate.Value.Date.AddHours(hour24).AddMinutes(int.Parse(selectedMinute, System.Globalization.CultureInfo.InvariantCulture)), DateTimeKind.Local);
+        }
+        void Validate()
+        {
+            var local = SelectedLocal();
+            if (local is null) { validation.Text = "Choose a date and time."; schedule.IsEnabled = false; return; }
+            if (TimeZoneInfo.Local.IsInvalidTime(local.Value) || TimeZoneInfo.Local.IsAmbiguousTime(local.Value)) { validation.Text = "That local time is ambiguous or does not exist because of a daylight-saving transition."; schedule.IsEnabled = false; return; }
+            if (local.Value <= DateTime.Now) { validation.Text = "Choose a future time."; schedule.IsEnabled = false; return; }
+            validation.Text = $"Will send at {local.Value.ToString("f", System.Globalization.CultureInfo.CurrentCulture)}."; schedule.IsEnabled = true;
+        }
+        void SetQuick(DateTime local)
+        {
+            date.SelectedDate = local.Date; hours.SelectedItem = local.Hour % 12 == 0 ? 12 : local.Hour % 12; minutes.SelectedItem = local.Minute.ToString("D2"); period.SelectedItem = local.Hour >= 12 ? "PM" : "AM"; Validate();
+        }
+        quick.SelectionChanged += (_, _) => { if (quick.SelectedIndex == 1) SetQuick(DateTime.Now.AddMinutes(15)); else if (quick.SelectedIndex == 2) SetQuick(DateTime.Now.AddHours(1)); else if (quick.SelectedIndex == 3) SetQuick(DateTime.Today.AddDays(1).AddHours(9)); };
+        date.SelectedDateChanged += (_, _) => Validate(); hours.SelectionChanged += (_, _) => Validate(); minutes.SelectionChanged += (_, _) => Validate(); period.SelectionChanged += (_, _) => Validate();
+        schedule.Click += (_, _) => { Validate(); if (schedule.IsEnabled) dialog.DialogResult = true; };
+        SetQuick(DateTime.Now.AddMinutes(15));
+        if (dialog.ShowDialog() != true) return;
+        await Act(async () =>
+        {
+            var local = SelectedLocal() ?? throw new InvalidOperationException("Choose a date and time.");
+            await relay.Services.GetRequiredService<ScheduledMessages>().Schedule(id, text, new DateTimeOffset(local), null);
+            if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
+            if (selected == id && Composer.Text == text) Composer.Clear();
+            ErrorDisplay.Text = "Message scheduled. The desktop must be running at that time.";
+        });
     }
     private async void ScheduleMessage(object sender, RoutedEventArgs e)
     {

@@ -231,6 +231,13 @@ public final class SmokeInstrumentation extends Instrumentation {
         dialogClick("Choose model");
         dialogClick("GPT-5.6 Sol");
         await(() -> containsPart("gpt-5.6-sol"));
+        checkStage = "reasoning after model change";
+        dialogClick("high");
+        await(() -> contains("Reasoning effort selected for future messages."));
+        main(() -> description("Connection options").performClick());
+        dialogClick("Choose reasoning");
+        dialogClick("Use model default");
+        await(() -> contains("Reasoning effort selected for future messages."));
         checkStage = "archive";
         main(() -> description("Connection options").performClick());
         dialogClick("Archive conversation");

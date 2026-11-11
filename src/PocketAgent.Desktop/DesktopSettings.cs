@@ -6,6 +6,11 @@ namespace PocketAgent.Desktop;
 public sealed class DesktopSettings
 {
     public HostSettings Host { get; set; } = new();
+    public bool CheckUpdatesOnStartup { get; set; } = true;
+    public bool CheckUpdatesPeriodically { get; set; } = true;
+    public bool AutomaticUpdates { get; set; }
+    public bool StartServerOnLaunch { get; set; } = true;
+    public bool LaunchOnWindowsStartup { get; set; }
     public static string DirectoryPath => Environment.GetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA") is { Length: > 0 } configured ? Path.GetFullPath(configured) :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PocketAgent");
     public static string FilePath => Path.Combine(DirectoryPath, "desktop.json");

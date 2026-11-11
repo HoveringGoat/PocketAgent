@@ -4,8 +4,8 @@ namespace PocketAgent;
 
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
-public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived);
+public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
 public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics) : BackgroundService
@@ -40,17 +40,18 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         try
         {
             return store.Conversations(true).Where(reference => reference.Archived == archived).Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
-                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived)).ToArray();
+                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived, reference.ReasoningEffort)).ToArray();
         }
         finally { gate.Release(); }
     }
 
-    public async Task<ConversationSnapshot> Create(string title, string? workingDirectory = null, string? model = null)
+    public async Task<ConversationSnapshot> Create(string title, string? workingDirectory = null, string? model = null, string? reasoningEffort = null)
     {
         if (title.Length > 100)
             throw new ApiException(400, "Conversation names can contain at most 100 characters.");
         var directory = directories.Resolve(workingDirectory);
         if (model is not null) await ValidateModel(model);
+        if (reasoningEffort is not null) await ValidateReasoning(model, reasoningEffort);
         await gate.WaitAsync();
         try
         {
@@ -72,8 +73,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             var id = thread.Text("id");
             if (id.Length == 0)
                 throw new ApiException(502, "Codex returned a thread without an ID.");
-            store.SaveConversation(id, title.Trim(), directory, model);
-            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model)) { Resumed = true };
+            store.SaveConversation(id, title.Trim(), directory, model, reasoningEffort);
+            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model, false, reasoningEffort)) { Resumed = true };
             CapturePermissions(state, result);
             states[id] = state;
             return Snapshot(state);
@@ -104,10 +105,20 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { gate.Release(); await publisher.Changed(id); }
     }
 
-    private async Task ValidateModel(string model)
+    private async Task<ModelOption> ValidateModel(string model)
     {
-        if (model.Length is 0 or > 200 || !(await diagnostics.Models()).Any(option => option.Model == model))
+        var option = (await diagnostics.Models()).FirstOrDefault(option => option.Model == model);
+        if (model.Length is 0 or > 200 || option is null)
             throw new ApiException(400, "Choose a model from this server's available models.");
+        return option;
+    }
+
+    private async Task ValidateReasoning(string? model, string effort)
+    {
+        if (model is null) throw new ApiException(400, "Choose a model before selecting reasoning effort.");
+        var option = await ValidateModel(model);
+        if (!option.SupportedReasoningEfforts.Contains(effort, StringComparer.OrdinalIgnoreCase))
+            throw new ApiException(400, "Choose a reasoning effort supported by the selected model.");
     }
 
     private static void RequireUnarchived(State state)
@@ -129,7 +140,24 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             var state = await Load(id); RequireUnarchived(state); RequireIdle(state);
             await ValidateModel(model);
             store.SetModel(id, model);
-            state.Reference = state.Reference with { Model = model };
+            var supported = (await diagnostics.Models()).First(option => option.Model == model).SupportedReasoningEfforts;
+            var reasoning = state.Reference.ReasoningEffort is not null && supported.Contains(state.Reference.ReasoningEffort, StringComparer.OrdinalIgnoreCase) ? state.Reference.ReasoningEffort : null;
+            if (reasoning is null && state.Reference.ReasoningEffort is not null) store.SetReasoningEffort(id, null);
+            state.Reference = state.Reference with { Model = model, ReasoningEffort = reasoning };
+            return Snapshot(state);
+        }
+        finally { gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task<ConversationSnapshot> SetReasoning(string id, string? effort)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var state = await Load(id); RequireUnarchived(state); RequireIdle(state);
+            if (effort is not null) await ValidateReasoning(state.Reference.Model, effort);
+            store.SetReasoningEffort(id, effort);
+            state.Reference = state.Reference with { ReasoningEffort = effort };
             return Snapshot(state);
         }
         finally { gate.Release(); await publisher.Changed(id); }
@@ -204,6 +232,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                     input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
                 }, turn: true, workingDirectory: state.Reference.WorkingDirectory);
                 if (state.Reference.Model is not null) parameters["model"] = state.Reference.Model;
+                if (state.Reference.ReasoningEffort is not null) parameters["effort"] = state.Reference.ReasoningEffort;
                 var result = await codex.Request("turn/start", parameters);
                 var turn = result.GetProperty("turn");
                 if (turn.Text("id").Length == 0) throw new ApiException(504, "Codex did not confirm a turn ID. Delivery is unknown; do not resend automatically.");
@@ -360,7 +389,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     private ConversationSnapshot Snapshot(State state) => new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
         [.. state.Items], state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
-        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived);
+        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort);
 
     private static DateTimeOffset? Timestamp(JsonElement value) => value.TryGetInt64Safe(out var seconds) && seconds > 0 && seconds < 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
 

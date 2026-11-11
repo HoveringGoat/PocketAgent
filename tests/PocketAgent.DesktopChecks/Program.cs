@@ -20,6 +20,9 @@ internal static class Program
         try
         {
             var window = new MainWindow();
+            var firewallRule = WindowsFirewall.AddRuleArguments(5147);
+            if (WindowsFirewall.RuleName(5147) != "PocketAgent inbound TCP 5147" || !firewallRule.Contains("localport=5147") || firewallRule.Contains(Environment.ProcessPath ?? ""))
+                throw new InvalidOperationException("Firewall setup must use a stable port rule rather than the versioned executable path.");
             var fixtureDirectory = Path.Combine(root, ".local", "qr-fixture"); Directory.CreateDirectory(fixtureDirectory);
             var fixturePayload = "pocketagent://pair?v=1&origin=https%3A%2F%2F127.0.0.1%3A5147&spki=" + new string('A', 64) + "&ticket=" + new string('B', 64);
             using (var data = QRCoder.QRCodeGenerator.GenerateQrCode(fixturePayload, QRCoder.QRCodeGenerator.ECCLevel.M))
@@ -39,10 +42,17 @@ internal static class Program
             var texts = Descendants(transcript).OfType<TextBlock>().ToArray();
             foreach (var sample in new[] { "User sample", "Assistant sample", "Approval reason", "Your input is needed" })
                 ColorIs(texts.Single(text => text.Text == sample).Foreground, "#C1DAA6", sample);
-            ColorIs(texts.Single(text => text.Text.Contains("Tool sample", StringComparison.Ordinal)).Foreground, "#C1DAA6", "Tool output");
+            ColorIs(texts.First(text => text.Text.Contains("Tool sample", StringComparison.Ordinal)).Foreground, "#C1DAA6", "Tool output");
             ColorIs(texts.Single(text => text.Text == "Error sample").Foreground, "#FA8072", "Error text");
             ColorIs(texts.Single(text => text.FontSize == 11).Foreground, "#8FBC8F", "Timestamp");
             ColorIs(Descendants(transcript).OfType<Button>().Single(button => Equals(button.Content, "Deny")).Foreground, "#C1DAA6", "Button text");
+            var workCard = Descendants(transcript).OfType<Button>().First(button => button.Content?.ToString()?.Contains("commandExecution", StringComparison.Ordinal) == true);
+            if (!workCard.Content!.ToString()!.StartsWith("[+]", StringComparison.Ordinal)) throw new InvalidOperationException("Work items must start collapsed.");
+            workCard.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
+            window.UpdateLayout();
+            var expandedWorkCard = Descendants(transcript).OfType<Button>().First(button => button.Content?.ToString()?.Contains("commandExecution", StringComparison.Ordinal) == true);
+            if (!expandedWorkCard.Content!.ToString()!.StartsWith("[-]", StringComparison.Ordinal)) throw new InvalidOperationException("Work item expansion must survive a transcript refresh.");
             foreach (var screen in new[] { 0, 1, 2 })
             {
                 ((TabControl)window.FindName("Navigation")).SelectedIndex = screen;
