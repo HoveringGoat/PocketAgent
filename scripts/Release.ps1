@@ -5,6 +5,8 @@ param(
     [switch]$SkipAndroid,
     [switch]$SkipInstaller,
     [switch]$Clean,
+    [switch]$Check,
+    [switch]$InstallPrerequisites,
     [string]$Repository = 'HoveringGoat/PocketAgent',
     [string]$NotesFile
 )
@@ -26,10 +28,81 @@ function Resolve-InnoSetup {
     $knownPaths = @()
     if (${env:ProgramFiles(x86)}) { $knownPaths += (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe') }
     if ($env:ProgramFiles) { $knownPaths += (Join-Path $env:ProgramFiles 'Inno Setup 6/ISCC.exe') }
+    if (${env:LOCALAPPDATA}) { $knownPaths += (Join-Path ${env:LOCALAPPDATA} 'Programs/Inno Setup 6/ISCC.exe') }
     foreach ($path in $knownPaths) {
         if ($path -and (Test-Path -LiteralPath $path)) { return $path }
     }
     return $null
+}
+
+function Resolve-GitHubCli {
+    $command = Get-Command gh -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    $knownPaths = @()
+    if ($env:ProgramFiles) { $knownPaths += (Join-Path $env:ProgramFiles 'GitHub CLI/gh.exe') }
+    if (${env:LOCALAPPDATA}) { $knownPaths += (Join-Path ${env:LOCALAPPDATA} 'Microsoft/WinGet/Links/gh.exe') }
+    foreach ($path in $knownPaths) {
+        if ($path -and (Test-Path -LiteralPath $path)) { return $path }
+    }
+    return $null
+}
+
+function Assert-Tool([string]$name, [string]$path, [string]$remediation) {
+    if (!$path) { throw "$name is required before the release build. $remediation" }
+}
+
+function Test-AndroidPrerequisites {
+    $javaPath = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/java.exe' } else { 'C:/Program Files/Java/jdk-21/bin/java.exe' }
+    $androidSdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
+    $gradle = Join-Path $projectRoot 'src/PocketAgent.Android/gradlew.bat'
+    if (!(Test-Path -LiteralPath $javaPath)) {
+        throw "Java JDK 17 or 21 is required before the Android release build. Set JAVA_HOME or install JDK 21 at C:\Program Files\Java\jdk-21."
+    }
+    if (!(Test-Path -LiteralPath $androidSdk)) {
+        throw "Android SDK was not found at $androidSdk. Set ANDROID_HOME or install the Android SDK."
+    }
+    if (!(Test-Path -LiteralPath (Join-Path $androidSdk 'build-tools/35.0.0'))) {
+        throw "Android build-tools 35.0.0 were not found under $androidSdk. Install that SDK component before releasing."
+    }
+    if (!(Test-Path -LiteralPath $gradle)) {
+        throw "The Android Gradle wrapper was not found: $gradle"
+    }
+}
+
+function Test-ReleasePrerequisites {
+    $dotnet = Join-Path $projectRoot '.tools/dotnet/dotnet.exe'
+    if (!(Test-Path -LiteralPath $dotnet)) {
+        $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+        if (!$dotnetCommand) {
+            throw 'The .NET SDK is required before the release build. Restore .tools/dotnet or install the SDK listed in global.json.'
+        }
+    }
+    if (!$SkipAndroid) { Test-AndroidPrerequisites }
+
+    $missingInno = !$SkipInstaller -and !(Resolve-InnoSetup)
+    $missingGh = $Publish -and !(Resolve-GitHubCli)
+    if ($missingInno -or $missingGh) {
+        if (!$InstallPrerequisites) {
+            $missing = @()
+            if ($missingInno) { $missing += 'Inno Setup 6' }
+            if ($missingGh) { $missing += 'GitHub CLI' }
+            $names = $missing -join ' and '
+            $verb = if ($missing.Count -eq 1) { 'is' } else { 'are' }
+            throw "$names $verb missing. Run scripts/Release.ps1 -Check -InstallPrerequisites, or install them manually before retrying."
+        }
+        $installParameters = @{}
+        if ($missingInno) { $installParameters.InnoSetup = $true }
+        if ($missingGh) { $installParameters.GitHubCli = $true }
+        & (Join-Path $PSScriptRoot 'Install-ReleasePrerequisites.ps1') @installParameters
+        if ($LASTEXITCODE -ne 0) { throw 'Release prerequisite installation failed.' }
+    }
+
+    if (!$SkipInstaller) { Assert-Tool 'Inno Setup 6' (Resolve-InnoSetup) 'Run scripts/Release.ps1 -Check -InstallPrerequisites.' }
+    if ($Publish) { Assert-Tool 'GitHub CLI' (Resolve-GitHubCli) 'Run scripts/Release.ps1 -Check -InstallPrerequisites.' }
+}
+
+function Assert-GitHubAuthentication([string]$ghPath) {
+    Invoke-Checked $ghPath @('auth', 'status', '--hostname', 'github.com') 'GitHub CLI is not authenticated. Run gh auth login, then rerun.'
 }
 
 function Assert-SemanticVersion([string]$value) {
@@ -82,6 +155,13 @@ if (!$releaseDirectory.StartsWith($artifactPrefix, [StringComparison]::OrdinalIg
     throw 'Release output escaped the artifacts directory.'
 }
 
+Test-ReleasePrerequisites
+if ($Publish) { Assert-GitHubAuthentication (Resolve-GitHubCli) }
+if ($Check) {
+    Write-Output "Release prerequisites are ready for PocketAgent $Version."
+    exit 0
+}
+
 if ($Clean -and (Test-Path -LiteralPath $releaseDirectory)) {
     Remove-Item -LiteralPath $releaseDirectory -Recurse -Force
 }
@@ -89,9 +169,9 @@ if ((Test-Path -LiteralPath $releaseDirectory) -and !$Clean) {
     throw "Release directory already exists: $releaseDirectory. Use -Clean only after confirming no active app is running from it."
 }
 
-$buildArguments = @('-Publish')
-if ($SkipAndroid) { $buildArguments += '-SkipAndroid' }
-& (Join-Path $PSScriptRoot 'Build.ps1') @buildArguments
+$buildParameters = @{ Publish = $true }
+if ($SkipAndroid) { $buildParameters.SkipAndroid = $true }
+& (Join-Path $PSScriptRoot 'Build.ps1') @buildParameters
 if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
 
 $desktopDirectory = Join-Path $releaseDirectory 'desktop'
@@ -123,12 +203,10 @@ Write-Output "Release assets staged in $releaseDirectory"
 Get-ChildItem -LiteralPath $releaseDirectory -File | Sort-Object Name | ForEach-Object { Write-Output "  $($_.Name)" }
 
 if ($Publish) {
-    $gh = Get-Command gh -ErrorAction SilentlyContinue
-    if (!$gh) { throw 'GitHub CLI (gh) is required for -Publish. Authenticate with gh auth login, then rerun.' }
-    Invoke-Checked $gh.Source @('auth', 'status', '--hostname', 'github.com') 'GitHub CLI is not authenticated. Run gh auth login, then rerun.'
+    $ghPath = Resolve-GitHubCli
 
     $tag = "v$Version"
-    & $gh.Source 'release' 'view' $tag '--repo' $Repository *> $null
+    & $ghPath 'release' 'view' $tag '--repo' $Repository *> $null
     if ($LASTEXITCODE -eq 0) {
         throw "GitHub release $tag already exists. Refusing to overwrite a published release."
     }
@@ -143,7 +221,7 @@ if ($Publish) {
         $releaseArguments += '--generate-notes'
     }
     $releaseArguments += $assets
-    Invoke-Checked $gh.Source $releaseArguments "GitHub release $tag could not be created."
+    Invoke-Checked $ghPath $releaseArguments "GitHub release $tag could not be created."
     Write-Output "Published GitHub release $tag to $Repository"
 }
 

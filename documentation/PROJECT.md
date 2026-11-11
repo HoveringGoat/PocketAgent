@@ -99,13 +99,13 @@ Direct internet setup accepts a public IPv4 and external TCP port, generates an 
 
 0.2.0 should be the first feature milestone after the native mobile/network foundation is stable. The target scope is:
 
-- GitHub Releases as the canonical artifact channel, with separate desktop/Android assets, release notes, checksums and an in-app update check that never interrupts active work.
+- GitHub Releases as the canonical artifact channel, with separate desktop/Android assets, release notes, checksums and an in-app update check that never interrupts active work. `scripts/Release.ps1 -Check` validates prerequisites before a build, and `-InstallPrerequisites` provides an explicit Windows Package Manager bootstrap for release-only tools.
 - A first-run/update experience that clearly preserves runtime databases, device credentials, certificates and Codex sign-in while replacing only the packaged binaries.
 - A stable Windows Firewall setup that uses one explicit, port-based rule instead of a versioned executable-path exception, plus diagnostics and cleanup guidance when the listener port changes.
 - Production hardening for long-running desktop sessions: startup recovery, bounded polling/reconnect behavior, diagnostics for direct internet setup, and regression coverage for UI lockups and focus preservation.
 - Completion of the remaining real-device acceptance matrix: physical Android pairing over Wi-Fi and cellular/direct IPv4, usage-limit queuing, scheduled dispatch, steering during active work and per-conversation model/reasoning selection.
 
-This is a planned milestone, not current implementation status. No GitHub release or automatic updater is enabled by this repository yet.
+This is a planned milestone, not a published release. The local release workflow and source updater path exist; public publication and packaged end-to-end verification remain explicit release operations.
 
 #### Desktop update and startup design under review
 

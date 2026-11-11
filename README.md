@@ -24,7 +24,7 @@ Each conversation selects its existing desktop folder and available model. Archi
 .\scripts\Start-Desktop.ps1 -Repository C:\GitHub\YourProject
 ```
 
-To stage a complete 0.2.0 release locally, install Inno Setup 6 and run `scripts/Release.ps1 -Version 0.2.0`. Add `-SkipInstaller` when only the portable/Android assets are needed. The script validates the version, refuses to reuse an existing version directory unless `-Clean` is supplied, checks the desktop package for private files, and writes `SHA256SUMS.txt`. Add `-Publish` only after authenticating `gh` with `gh auth login`; it creates the versioned GitHub release and uploads the staged assets.
+To check release prerequisites without building, run `scripts/Release.ps1 -Version 0.2.0 -Check`. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. To stage a complete 0.2.0 release locally, run `scripts/Release.ps1 -Version 0.2.0`; the script performs the same preflight before compiling. Add `-SkipInstaller` when only the portable/Android assets are needed. The script validates the version, refuses to reuse an existing version directory unless `-Clean` is supplied, checks the desktop package for private files, and writes `SHA256SUMS.txt`. Add `-Publish` only after authenticating `gh` with `gh auth login`; it creates the versioned GitHub release and uploads the staged assets.
 
 See [build prerequisites and signing](documentation/SETUP.md#build-from-source), [focused verification](documentation/SETUP.md#verification-commands-and-limits), [architecture](documentation/ARCHITECTURE.md), [project requirements](documentation/PROJECT.md), and [complete contents](documentation/TABLEOFCONTENTS.md). Contributor instructions are in [AGENTS.md](AGENTS.md).
 
