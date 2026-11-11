@@ -23,7 +23,7 @@ These requirements extend the historical 0.1.0/0.1.1 browser milestone. Version 
 - Both the desktop/server app and the client must be packaged and distributable. End users should not need a source checkout or development build commands for normal use.
 - Distributed artifacts contain no provider credentials, pairing secrets, device tokens, private certificate keys, runtime databases, or developer-specific paths. Configuration and private state are created or supplied on the user's devices after installation and kept outside versioned artifacts.
 - Provider sign-in and repository access stay on the desktop. A paired client necessarily retains its own runtime authentication credential; this is generated during pairing, revocable, and never shared across installations or bundled in a release.
-- Distribution is a self-contained Windows x64 ZIP and signed sideloadable Android APK. The Codex binary is discovered from the installed VS Code extension or an explicit override, never redistributed. Native installation/update automation and public release signing remain future work.
+- Distribution is a per-user Windows installer plus a self-contained Windows x64 portable ZIP and signed sideloadable Android APK. The Codex binary is discovered from the installed VS Code extension or an explicit override, never redistributed. `scripts/Release.ps1` stages these versioned assets and checksums; public release signing and CI publication remain separate operational work.
 
 ### Connection and pairing
 
@@ -91,9 +91,9 @@ Direct internet setup accepts a public IPv4 and external TCP port, generates an 
 
 ### Remaining design decisions
 
-1. Versioned GitHub Releases and built-in checks for new versions in both apps, with release notes and explicit installation timing that preserves active work. No update service is implemented yet.
+1. Operationalize versioned GitHub Releases and built-in checks for new versions in both apps, with release notes and explicit installation timing that preserves active work. The desktop updater/mobile release-page check and local release staging script exist; signed manifests, CI publication and packaged end-to-end update verification remain open.
 2. Simplifying local certificate trust with verified enrollment/pinning, public-IP changes and certificate renewal, without requiring a domain or traffic intermediary.
-3. Desktop close/background behavior, installers and public release signing beyond the current signed APK/self-contained ZIP.
+3. Desktop close/background behavior, installer signing, and CI publication beyond the local release workflow.
 
 ### Planned 0.2.0 milestone
 
@@ -201,15 +201,15 @@ Use focused automated checks and a project-level build during implementation. Re
 
 ## Hosting and environment boundaries
 
-The default host is the user's Windows desktop. A local build produces the self-contained native Windows server ZIP and signed native Android APK. Private runtime state stays outside the packages. Phone traffic can use direct IPv4 HTTPS with explicit router/firewall opening; a public IP and certificate are installation-time configuration, never build-time inputs. Development can use loopback locally. The desktop must remain awake and the relay running for work and connectivity. The phone is a native app; browser hosting belongs only to the historical 0.1.0/0.1.1 records.
+The default host is the user's Windows desktop. A local release build produces the per-user Windows installer, self-contained native Windows server ZIP, signed native Android APK and SHA-256 manifests. Private runtime state stays outside the packages. Phone traffic can use direct IPv4 HTTPS with explicit router/firewall opening; a public IP and certificate are installation-time configuration, never build-time inputs. Development can use loopback locally. The desktop must remain awake and the relay running for work and connectivity. The phone is a native app; browser hosting belongs only to the historical 0.1.0/0.1.1 records.
 
-Version 0.1.0 is the first implementation milestone. The build script produces a versioned local publish directory. Native installation, updates, CI authentication, and cloud deployment workflows are not implemented. Any future deployment must use versioned artifacts and document changes to these environment boundaries.
+Version 0.1.0 is the first implementation milestone. The build and release scripts produce versioned local artifacts and can explicitly create a GitHub release through an authenticated local GitHub CLI session. Native update behavior exists in source, while installer signing, CI authentication and cloud deployment workflows remain operational work. Any future deployment must use versioned artifacts and document changes to these environment boundaries.
 
 Provider credentials and repository access belong on the desktop host. Mobile access must be authenticated and limited to authorized sessions. Logs must not expose credentials. Any relay of agent approvals must preserve the underlying permission model.
 
 ## Implementation and verification status
 
-The 0.2.0 development line includes the stable Windows Firewall rule and replaces the colored clock emoji with a monochrome text-presentation stopwatch control. The rule is explicit, port-based, elevation-gated, and independent of the versioned executable path. The desktop now has persisted startup/update preferences, GitHub latest-release discovery, and a separate updater handoff path; release publication, signed manifest enforcement, and packaged updater verification remain open. Mobile now renders machine/folder context in the header, model/reasoning in the status surface, and a best-effort startup prompt when a newer published GitHub release exists. The Android prompt opens the release page and leaves installation confirmation to the operating system. Focused desktop and Android checks cover the current source behavior; packaged smoke verification remains separate from a physical router/firewall test. No 0.1.13 release is planned.
+The 0.2.0 development line includes the stable Windows Firewall rule and replaces the colored clock emoji with a monochrome text-presentation stopwatch control. The rule is explicit, port-based, elevation-gated, and independent of the versioned executable path. The desktop now has persisted startup/update preferences, GitHub latest-release discovery, a separate updater handoff path, and a local release workflow that stages installer/portable/Android assets and checksums and can explicitly publish a versioned GitHub release. Signed manifest enforcement, installer/release signing, packaged updater verification and CI publication remain open. Mobile now renders machine/folder context in the header, model/reasoning in the status surface, and a best-effort startup prompt when a newer published GitHub release exists. The Android prompt opens the release page and leaves installation confirmation to the operating system. Focused desktop and Android checks cover the current source behavior; packaged smoke verification remains separate from a physical router/firewall test. No 0.1.13 release is planned.
 
 Version 0.1.12 completes the native transcript/composer pass. Desktop and Android render work items as independently collapsible cards and preserve expansion state while snapshots refresh. User prompts appear optimistically while waiting for acknowledgement, the clock action opens a guided schedule dialog, and desktop/Android expose per-conversation reasoning levels advertised by the Codex model catalog. Reasoning is sent as the app-server turn `effort` override and never rewrites global Codex settings. Focused desktop, server, and Android compile/lint checks pass; physical-device and real-inference acceptance remain separate.
 

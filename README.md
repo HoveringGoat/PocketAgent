@@ -10,7 +10,7 @@ Version 0.1.12 is the latest stable release. The 0.2.0 development line adds the
 
 Install both apps for new enrollment. Existing saved devices/conversations are retained; re-pair to adopt pinned trust on an old connection.
 
-Outputs are `artifacts/releases/0.1.12/desktop/PocketAgent.Desktop.exe`, `artifacts/releases/0.1.12/PocketAgent-0.1.12-desktop.zip`, and `artifacts/releases/0.1.12/android/PocketAgent-0.1.12-android.apk`. Older releases are preserved under the same versioned layout. A running 0.1.9 folder is left in place until closed. The installed VS Code Codex binary is discovered automatically and is not redistributed.
+Outputs are grouped under `artifacts/releases/<version>`. A release contains a per-user Windows installer, a portable desktop ZIP, the signed Android APK, and SHA-256 manifests. The installed VS Code Codex binary is discovered automatically and is not redistributed. No release is published unless the release script is called with `-Publish`.
 
 Follow [direct internet setup](documentation/SETUP.md#direct-internet-ip-and-port) to forward one chosen TCP port to the desktop. On first start, the desktop can create one elevated port-based Windows Firewall rule that survives versioned executable updates. Start the server, then open Devices to scan/copy pairing. Pair over cellular to test the outside route. No domain, central hosting or traffic relay is required. No public release or internet endpoint has been published automatically.
 
@@ -23,6 +23,8 @@ Each conversation selects its existing desktop folder and available model. Archi
 .\scripts\Build.ps1 -Target Android
 .\scripts\Start-Desktop.ps1 -Repository C:\GitHub\YourProject
 ```
+
+To stage a complete 0.2.0 release locally, install Inno Setup 6 and run `scripts/Release.ps1 -Version 0.2.0`. Add `-SkipInstaller` when only the portable/Android assets are needed. The script validates the version, refuses to reuse an existing version directory unless `-Clean` is supplied, checks the desktop package for private files, and writes `SHA256SUMS.txt`. Add `-Publish` only after authenticating `gh` with `gh auth login`; it creates the versioned GitHub release and uploads the staged assets.
 
 See [build prerequisites and signing](documentation/SETUP.md#build-from-source), [focused verification](documentation/SETUP.md#verification-commands-and-limits), [architecture](documentation/ARCHITECTURE.md), [project requirements](documentation/PROJECT.md), and [complete contents](documentation/TABLEOFCONTENTS.md). Contributor instructions are in [AGENTS.md](AGENTS.md).
 

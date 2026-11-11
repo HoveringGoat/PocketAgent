@@ -105,6 +105,8 @@ Use .NET SDK 10.0.404, JDK 17/21, Android SDK 34/build-tools 35.0.0 and the pinn
 
 Build-Android.ps1 accepts -GradleCommand for an existing matching installation and -DebugOnly to skip signing. Signing keys and the DPAPI-protected password stay under ignored .local/android-signing; preserve them for upgrades. The APK and ZIP are separate sibling artifacts, each with checksums. Build.ps1 -SkipAndroid remains supported for desktop iteration. Generate-Icon.ps1 regenerates the committed desktop icon asset.
 
+For a distributable release, use `scripts/Release.ps1 -Version 0.2.0`. This runs the release build, stages the portable desktop ZIP and signed Android APK, creates a per-user Windows installer from `installer/PocketAgent.iss` when Inno Setup 6 is installed, rejects private/runtime files in the desktop package, and writes an aggregate `SHA256SUMS.txt`. Release directories are versioned and are not reused unless `-Clean` is supplied. `-Publish` is an explicit second step: it requires an authenticated GitHub CLI session and creates `v<version>` in the configured repository. The script never embeds provider credentials, pairing data, signing keys or local paths in an artifact.
+
 Organize-Artifacts.ps1 moves historical flat artifacts into release folders without deletion/overwrites. It skips running executables, checks targets remain under artifacts, and uses an atomic directory move. -WhatIf previews operations. A running old folder must remain until its application is closed. No runtime databases or keys are relocated.
 
 ## Verification commands and limits
