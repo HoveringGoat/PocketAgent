@@ -5,4 +5,7 @@
     <AssemblyName>PocketAgent.Updater</AssemblyName>
     <RootNamespace>PocketAgent.Updater</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="10.0.15" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

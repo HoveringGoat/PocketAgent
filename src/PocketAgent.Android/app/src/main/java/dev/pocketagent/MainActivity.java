@@ -479,12 +479,12 @@ public final class MainActivity extends Activity {
     sessionLocation.setTextColor(Color.rgb(143, 188, 143));
     identity.addView(sessionLocation, match());
     header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
-    Button menu = button("⋮", v -> showMenu());
+    Button menu = button("...", v -> showMenu());
     menu.setContentDescription("Connection options");
     header.addView(menu);
     root.addView(header, match());
     connection.setOnClickListener(v -> showServers());
-    usageView = label("5h: unavailable · Weekly: unavailable", 11);
+    usageView = label("5h: unavailable - Weekly: unavailable", 11);
     usageView.setContentDescription("Usage remaining");
     usageView.setOnClickListener(v -> showUsage());
     root.addView(usageView, match());
@@ -721,7 +721,7 @@ public final class MainActivity extends Activity {
     if (!state.isNull("activeTurnStartedAt")) {
       try {
         status +=
-            " · "
+            " - "
                 + elapsed(
                     java.time.Duration.between(
                             java.time.Instant.parse(state.optString("activeTurnStartedAt")),
@@ -730,11 +730,12 @@ public final class MainActivity extends Activity {
       } catch (Exception ignored) {
       }
     } else if (!state.isNull("lastWorkDurationMs"))
-      status += " · worked " + elapsed(state.optLong("lastWorkDurationMs"));
+      status += " - worked " + elapsed(state.optLong("lastWorkDurationMs"));
     String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
-    context.setText(getString(R.string.session_context_v2, status)
-        + (state.optBoolean("historyTruncated") ? " · older history is hidden" : ""));
+    context.setText(state.optBoolean("historyTruncated")
+        ? getString(R.string.session_context_history, status)
+        : getString(R.string.session_context_v2, status));
     sessionLocation.setMaxLines(2);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
@@ -776,7 +777,7 @@ public final class MainActivity extends Activity {
           text = label(item.optString("text"), 16);
           text.setTextIsSelectable(true);
         } else {
-          String summary = type + " · " + item.optString("status");
+          String summary = type + " - " + item.optString("status");
           boolean expanded = expandedItems.contains(item.optString("id"));
           text = label(expanded ? summary + "\n" + item.optString("detail") : summary, 13);
           text.setOnClickListener(
@@ -860,7 +861,9 @@ public final class MainActivity extends Activity {
       } catch (Exception ignored) {
       }
     } else if (!conversation.isNull("lastWorkDurationMs")) status += " - worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
-    context.setText(getString(R.string.session_context_v2, status) + (conversation.optBoolean("historyTruncated") ? " - older history is hidden" : ""));
+    context.setText(conversation.optBoolean("historyTruncated")
+        ? getString(R.string.session_context_history, status)
+        : getString(R.string.session_context_v2, status));
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {
@@ -1583,7 +1586,7 @@ public final class MainActivity extends Activity {
     version.setTextColor(ACCENT);
     panel.addView(version, match());
     android.widget.CheckBox updates = new android.widget.CheckBox(this);
-    updates.setText("Check for updates on startup");
+    updates.setText(R.string.check_updates_on_startup);
     updates.setTextColor(TEXT);
     updates.setChecked(store.checkUpdatesOnStartup());
     panel.addView(updates, match());
@@ -1670,7 +1673,7 @@ public final class MainActivity extends Activity {
     String value =
         "5h: "
             + remaining(usageState == null ? null : usageState.optJSONObject("fiveHour"))
-            + " · Weekly: "
+            + " - Weekly: "
             + remaining(usageState == null ? null : usageState.optJSONObject("weekly"));
     usageView.setText(value);
   }
@@ -1789,7 +1792,7 @@ public final class MainActivity extends Activity {
             String preview = job.optString("text");
             choices[i] =
                 job.optString("status")
-                    + " · "
+                    + " - "
                     + localTime(job.optString("dueAt"))
                     + "\n"
                     + preview.substring(0, Math.min(preview.length(), 120));

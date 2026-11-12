@@ -2,7 +2,7 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
-## 0.3.0 - Unreleased
+## 0.3.0 - 2026-11-11
 
 - Added a top-level desktop Menu for Sessions, Devices, general settings, update checks, release notes, and version information.
 - Expanded the README and durable project documentation for first-time users and the direct-connection security model.
