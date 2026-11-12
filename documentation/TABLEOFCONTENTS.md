@@ -3,6 +3,7 @@
 - [Documentation home](README.md)
 - [Repository overview and current state](../README.md)
 - [Working agreement](../AGENTS.md)
+- [Code and flow audit](AUDIT.md)
 - [Changelog index](../CHANGELOG.md)
   - [Desktop and server](../CHANGELOG-desktop.md)
   - [Android](../CHANGELOG-android.md)

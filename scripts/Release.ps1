@@ -137,6 +137,46 @@ function Invoke-ReleaseCommit([string]$version) {
     Write-Output "Created release commit for v$version ($($staged.Count) path(s))."
 }
 
+function Get-CurrentCommit {
+    $commit = (git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or !$commit) { throw 'Git could not resolve the release commit.' }
+    return $commit
+}
+
+function Get-CurrentBranch {
+    $branch = (git branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or !$branch) { throw 'A published release must be created from a named branch, not a detached HEAD.' }
+    return $branch
+}
+
+function Get-RemoteCommit([string]$reference) {
+    $line = @(git ls-remote origin $reference | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0) { throw "Git could not resolve remote reference $reference." }
+    if ($line.Count -eq 0 -and $reference.EndsWith('^{}', [StringComparison]::Ordinal)) {
+        $line = @(git ls-remote origin $reference.Substring(0, $reference.Length - 3) | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0) { throw "Git could not resolve remote reference $reference." }
+    }
+    if ($line.Count -eq 0) { return $null }
+    return ($line[0] -split '\s+')[0]
+}
+
+function Assert-ReleaseSource([string]$commit) {
+    if (!$Publish) { return }
+    $status = @(git status --short)
+    if ($LASTEXITCODE -ne 0) { throw 'Git status failed before publishing the release.' }
+    if ($status.Count -gt 0) { throw 'The worktree is still dirty after release preparation. Refusing to publish uncommitted source.' }
+
+    $branch = Get-CurrentBranch
+    if ($CommitChanges) {
+        Invoke-Checked 'git' @('push', 'origin', $branch) "Git could not push release commit $commit to origin/$branch."
+    }
+
+    $remoteCommit = Get-RemoteCommit "refs/heads/$branch"
+    if ($remoteCommit -ne $commit) {
+        throw "origin/$branch resolves to $remoteCommit, but the release was built from $commit. Push the intended commit before publishing."
+    }
+}
+
 function Get-ChangelogSection([string]$path, [string]$version, [string]$label) {
     if (!(Test-Path -LiteralPath $path)) { throw "$label changelog was not found: $path" }
     $content = Get-Content -LiteralPath $path -Raw
@@ -220,6 +260,8 @@ if ($Check) {
 }
 
 if ($CommitChanges) { Invoke-ReleaseCommit $Version }
+$releaseCommit = Get-CurrentCommit
+Assert-ReleaseSource $releaseCommit
 
 if ($Clean -and (Test-Path -LiteralPath $releaseDirectory)) {
     Remove-Item -LiteralPath $releaseDirectory -Recurse -Force
@@ -309,9 +351,13 @@ if ($Publish) {
     }
 
     if ($releaseExists) {
+        $tagCommit = Get-RemoteCommit "refs/tags/$tag^{}"
+        if ($tagCommit -and $tagCommit -ne $releaseCommit) {
+            throw "GitHub tag $tag already points to $tagCommit, not release commit $releaseCommit. Refusing to attach new assets to a different source."
+        }
         $releaseArguments = @('release', 'upload', $tag, '--repo', $Repository, '--clobber')
     } else {
-        $releaseArguments = @('release', 'create', $tag, '--repo', $Repository, '--title', "PocketAgent $Version")
+        $releaseArguments = @('release', 'create', $tag, '--repo', $Repository, '--target', $releaseCommit, '--title', "PocketAgent $Version")
         $releaseArguments += @('--notes-file', $notesPath)
     }
     $releaseArguments += $assets
@@ -323,6 +369,10 @@ if ($Publish) {
         }
     } finally {
         if ($generatedNotesFile -and (Test-Path -LiteralPath $generatedNotesFile)) { Remove-Item -LiteralPath $generatedNotesFile -Force }
+    }
+    $publishedTagCommit = Get-RemoteCommit "refs/tags/$tag^{}"
+    if ($publishedTagCommit -ne $releaseCommit) {
+        throw "GitHub tag $tag resolves to $publishedTagCommit after publishing, expected $releaseCommit."
     }
     Write-Output "Published/updated GitHub release $tag on $Repository"
 }

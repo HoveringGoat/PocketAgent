@@ -5,11 +5,14 @@ namespace PocketAgent;
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
 public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
 public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics) : BackgroundService
 {
+    private const int MaxSnapshotItems = 200;
+    private const int MaxSnapshotText = 8_000;
+    private const int MaxSnapshotDetail = 16_000;
     private sealed class State(ConversationReference reference)
     {
         public ConversationReference Reference { get; set; } = reference;
@@ -32,6 +35,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<string, State> states = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<State>> readHydrations = [];
     private long lastPublished;
 
     public async Task<ConversationSummary[]> List(bool archived = false)
@@ -85,7 +89,15 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     public async Task<ConversationSnapshot> Get(string id)
     {
         await gate.WaitAsync();
-        try { return Snapshot(await Load(id)); }
+        try
+        {
+            if (states.TryGetValue(id, out var existing)) return Snapshot(existing);
+        }
+        finally { gate.Release(); }
+
+        var hydrated = await readHydrations.GetOrAdd(id, HydrateForRead).ConfigureAwait(false);
+        await gate.WaitAsync();
+        try { return Snapshot(hydrated); }
         finally { gate.Release(); }
     }
 
@@ -307,6 +319,35 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         return state;
     }
 
+    private async Task<State> HydrateForRead(string id)
+    {
+        try
+        {
+            await gate.WaitAsync();
+            ConversationReference reference;
+            try
+            {
+                if (states.TryGetValue(id, out var existing)) return existing;
+                reference = store.Conversations(true).FirstOrDefault(row => row.Id == id) ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
+            }
+            finally { gate.Release(); }
+
+            await codex.EnsureStarted();
+            var state = new State(reference);
+            var result = await codex.Request("thread/read", new { threadId = id, includeTurns = false });
+            await Hydrate(state, result.GetProperty("thread"));
+            await gate.WaitAsync();
+            try
+            {
+                if (states.TryGetValue(id, out var existing)) return existing;
+                states[id] = state;
+                return state;
+            }
+            finally { gate.Release(); }
+        }
+        finally { readHydrations.TryRemove(id, out _); }
+    }
+
     private async Task Hydrate(State state, JsonElement thread)
     {
         state.Hydrating = true;
@@ -387,9 +428,19 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         return new(item.Text("id"), type, text, detail, item.Text("status"));
     }
 
-    private ConversationSnapshot Snapshot(State state) => new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
-        [.. state.Items], state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
-        settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort);
+    private ConversationSnapshot Snapshot(State state)
+    {
+        var historyTruncated = state.Items.Count > MaxSnapshotItems;
+        var items = state.Items
+            .Skip(Math.Max(0, state.Items.Count - MaxSnapshotItems))
+            .Select(item => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) })
+            .ToArray();
+        return new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
+            items, state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
+            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated);
+    }
+
+    private static string Limit(string value, int length) => value.Length <= length ? value : value[..length] + "\n[output truncated]";
 
     private static DateTimeOffset? Timestamp(JsonElement value) => value.TryGetInt64Safe(out var seconds) && seconds > 0 && seconds < 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
 

@@ -142,6 +142,19 @@ public final class MainActivity extends Activity {
             JSONObject release = new JSONObject(body.toString());
             String version = release.optString("tag_name").replaceFirst("^[vV]", "");
             if (!isNewerVersion(version, BuildConfig.VERSION_NAME)) return;
+            boolean hasAndroidAsset = false;
+            JSONArray assets = release.optJSONArray("assets");
+            if (assets != null) {
+              String expectedAsset = "PocketAgent-" + version + "-android.apk";
+              for (int i = 0; i < assets.length(); i++) {
+                JSONObject asset = assets.optJSONObject(i);
+                if (asset != null && expectedAsset.equals(asset.optString("name"))) {
+                  hasAndroidAsset = true;
+                  break;
+                }
+              }
+            }
+            if (!hasAndroidAsset) return;
             String releasePage = release.optString("html_url", "https://github.com/HoveringGoat/PocketAgent/releases");
             String notes = release.optString("body", "").trim();
             if (notes.length() > 1200) notes = notes.substring(0, 1200) + "…";
@@ -651,7 +664,8 @@ public final class MainActivity extends Activity {
     String reasoning = state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
     String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
-    context.setText(getString(R.string.session_context_v2, status, model, reasoning, workingDirectory));
+    context.setText(getString(R.string.session_context_v2, status, model, reasoning, workingDirectory)
+        + (state.optBoolean("historyTruncated") ? " · older history is hidden" : ""));
     sessionLocation.setText(getString(R.string.session_location, hostName));
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
@@ -751,15 +765,19 @@ public final class MainActivity extends Activity {
       JSONArray canonical = state.optJSONArray("items");
       JSONArray merged = new JSONArray();
       for (int i = 0; i < canonical.length(); i++) merged.put(canonical.optJSONObject(i));
+      java.util.HashSet<Integer> matched = new java.util.HashSet<>();
       java.util.Iterator<JSONObject> iterator = pending.iterator();
       while (iterator.hasNext()) {
         JSONObject item = iterator.next();
         boolean found = false;
         for (int i = 0; i < canonical.length(); i++) {
+          if (matched.contains(i)) continue;
           JSONObject existing = canonical.optJSONObject(i);
           if (existing != null && "userMessage".equals(existing.optString("type"))
-              && item.optString("text").equals(existing.optString("text"))) {
+              && item.optString("text").equals(existing.optString("text"))
+              && withinMinutes(item.optString("timestamp"), existing.optString("timestamp"), 10)) {
             found = true;
+            matched.add(i);
             break;
           }
         }
@@ -770,6 +788,15 @@ public final class MainActivity extends Activity {
       return new JSONObject(state.toString()).put("items", merged);
     } catch (Exception ignored) {
       return state;
+    }
+  }
+
+  private static boolean withinMinutes(String left, String right, int minutes) {
+    try {
+      long difference = Math.abs(java.time.Instant.parse(left).toEpochMilli() - java.time.Instant.parse(right).toEpochMilli());
+      return difference <= java.time.Duration.ofMinutes(minutes).toMillis();
+    } catch (Exception ignored) {
+      return false;
     }
   }
 
@@ -799,6 +826,10 @@ public final class MainActivity extends Activity {
   }
 
   private void action(Work work, Done done, boolean delivery) {
+    action(work, done, delivery, null);
+  }
+
+  private void action(Work work, Done done, boolean delivery, Runnable definiteFailure) {
     if (submitting) return;
     submitting = true;
     problem("");
@@ -826,9 +857,10 @@ public final class MainActivity extends Activity {
                   refresh();
                 });
           } catch (Exception ex) {
-            if (delivery
+            boolean rejected = delivery
                 && ex instanceof ApiClient.ApiError
-                && ((ApiClient.ApiError) ex).status < 500)
+                && ((ApiClient.ApiError) ex).status < 500;
+            if (rejected)
               store.uncertain(client.origin, id, false);
             if (delivery
                 && (!(ex instanceof ApiClient.ApiError) || ((ApiClient.ApiError) ex).status >= 500))
@@ -837,6 +869,7 @@ public final class MainActivity extends Activity {
                 () -> {
                   if (epoch == generation) {
                     submitting = false;
+                    if (rejected && definiteFailure != null) definiteFailure.run();
                     problem(
                         safeError(ex)
                             + (store.uncertain(client.origin, id)
@@ -856,10 +889,11 @@ public final class MainActivity extends Activity {
     String id = selected, text = composer.getText().toString();
     ApiClient client = api;
     JSONObject state = conversation;
+    final String optimisticId = "local-" + java.util.UUID.randomUUID();
     try {
       JSONObject optimistic =
           new JSONObject()
-              .put("id", "local-" + java.util.UUID.randomUUID())
+              .put("id", optimisticId)
               .put("type", "userMessage")
               .put("text", text)
               .put("status", "pending")
@@ -882,7 +916,30 @@ public final class MainActivity extends Activity {
           if (receipt instanceof JSONObject && ((JSONObject) receipt).optBoolean("queued"))
             notice(((JSONObject) receipt).optString("message", "Queued until usage resets."));
         },
-        true);
+        true,
+        () -> removeOptimistic(id, optimisticId));
+  }
+
+  private void removeOptimistic(String conversationId, String itemId) {
+    java.util.ArrayList<JSONObject> pending = optimisticItems.get(conversationId);
+    if (pending != null) {
+      pending.removeIf(item -> itemId.equals(item.optString("id")));
+      if (pending.isEmpty()) optimisticItems.remove(conversationId);
+    }
+    if (conversation != null && conversationId.equals(conversation.optString("id"))) {
+      try {
+        JSONArray items = conversation.optJSONArray("items");
+        JSONArray remaining = new JSONArray();
+        for (int i = 0; i < items.length(); i++) {
+          JSONObject item = items.optJSONObject(i);
+          if (item != null && !itemId.equals(item.optString("id"))) remaining.put(item);
+        }
+        conversation = new JSONObject(conversation.toString()).put("items", remaining);
+        transcriptSignature = "";
+        renderConversation(conversation);
+      } catch (Exception ignored) {
+      }
+    }
   }
 
   private boolean reviewDelivery() {

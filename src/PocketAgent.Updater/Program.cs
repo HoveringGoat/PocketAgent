@@ -10,10 +10,13 @@ foreach (var required in new[] { "asset-url", "install-root", "restart-path", "w
 
 var installRoot = Path.GetFullPath(arguments["install-root"]);
 var restartPath = Path.GetFullPath(arguments["restart-path"]);
-var staging = Path.Combine(Path.GetTempPath(), "PocketAgent-update-" + Guid.NewGuid().ToString("N"));
+var installParent = Directory.GetParent(installRoot)?.FullName ?? throw new InvalidOperationException("The install root must have a parent directory.");
+var staging = Path.Combine(installParent, ".PocketAgent-update-" + Guid.NewGuid().ToString("N"));
 var archive = Path.Combine(staging, "package.zip");
 var extracted = Path.Combine(staging, "extracted");
-var backup = installRoot.TrimEnd(Path.DirectorySeparatorChar) + ".previous-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+var backup = installRoot.TrimEnd(Path.DirectorySeparatorChar) + ".previous-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N");
+var movedOriginal = false;
+var healthFile = arguments.GetValueOrDefault("health-file");
 try
 {
     WriteLog(logFile, $"Starting update to {arguments.GetValueOrDefault("version", "unknown")}.");
@@ -38,24 +41,48 @@ try
     if (executable is null) return Fail("The update package did not contain the desktop executable.", logFile);
     var replacement = Directory.GetParent(executable)!.FullName;
     Directory.Move(installRoot, backup);
+    movedOriginal = true;
     Directory.Move(replacement, installRoot);
-    var process = Process.Start(new ProcessStartInfo(restartPath) { UseShellExecute = true });
+    var restart = new ProcessStartInfo(restartPath)
+    {
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        WorkingDirectory = Path.GetDirectoryName(restartPath) ?? installRoot
+    };
+    if (!string.IsNullOrWhiteSpace(healthFile)) { restart.ArgumentList.Add("--health-file"); restart.ArgumentList.Add(healthFile); }
+    restart.ArgumentList.Add("--update-version"); restart.ArgumentList.Add(arguments.GetValueOrDefault("version", "unknown"));
+    var process = Process.Start(restart);
     if (process is null) throw new InvalidOperationException("The updated desktop could not be started.");
     WriteLog(logFile, "Updated application started; waiting for health check.");
     var healthy = await WaitForFile(arguments.GetValueOrDefault("health-file"), TimeSpan.FromSeconds(30));
     if (!healthy)
     {
         try { if (!process.HasExited) process.Kill(true); } catch { }
-        Directory.Move(installRoot, installRoot + ".failed-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss"));
+        Directory.Move(installRoot, installRoot + ".failed-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N"));
         Directory.Move(backup, installRoot);
-        Process.Start(new ProcessStartInfo(restartPath) { UseShellExecute = true });
+        movedOriginal = false;
+        var rollbackRestart = new ProcessStartInfo(restartPath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = installRoot };
+        if (!string.IsNullOrWhiteSpace(healthFile)) { rollbackRestart.ArgumentList.Add("--health-file"); rollbackRestart.ArgumentList.Add(healthFile); }
+        Process.Start(rollbackRestart);
         return Fail("The update failed its startup check and was rolled back.", logFile);
     }
     WriteLog(logFile, "Update completed successfully.");
     return 0;
 }
-catch (Exception exception) { return Fail($"Update failed: {exception}", logFile); }
-finally { try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { } }
+catch (Exception exception)
+{
+    try
+    {
+        if (movedOriginal && !Directory.Exists(installRoot) && Directory.Exists(backup)) Directory.Move(backup, installRoot);
+    }
+    catch (Exception rollbackException) { WriteLog(logFile, $"Rollback failed: {rollbackException}"); }
+    return Fail($"Update failed: {exception}", logFile);
+}
+finally
+{
+    try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { }
+    try { if (!string.IsNullOrWhiteSpace(healthFile)) File.Delete(healthFile); } catch { }
+}
 
 static Dictionary<string, string> Parse(string[] args)
 {

@@ -38,22 +38,28 @@ public static class UpdateService
         var updater = Path.Combine(AppContext.BaseDirectory, "PocketAgent.Updater.exe");
         var executable = Environment.ProcessPath;
         if (!File.Exists(updater) || string.IsNullOrWhiteSpace(executable)) return null;
-        var logFile = Path.Combine(Path.GetTempPath(), "PocketAgent-update.log");
-        var info = new ProcessStartInfo(updater)
+        try
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = Path.GetDirectoryName(updater) ?? AppContext.BaseDirectory
-        };
-        info.ArgumentList.Add("--asset-url"); info.ArgumentList.Add(update.Asset.ToString());
-        if (update.Sha256 is { Length: > 0 } checksum) { info.ArgumentList.Add("--sha256-url"); info.ArgumentList.Add(checksum); }
-        info.ArgumentList.Add("--install-root"); info.ArgumentList.Add(AppContext.BaseDirectory);
-        info.ArgumentList.Add("--restart-path"); info.ArgumentList.Add(executable);
-        info.ArgumentList.Add("--wait-pid"); info.ArgumentList.Add(parentProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        info.ArgumentList.Add("--version"); info.ArgumentList.Add(update.Version.ToString(3));
-        info.ArgumentList.Add("--health-file"); info.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "PocketAgent-update-health-" + Guid.NewGuid().ToString("N")));
-        info.ArgumentList.Add("--log-file"); info.ArgumentList.Add(logFile);
-        return Process.Start(info);
+            var launchCopy = Path.Combine(Path.GetTempPath(), "PocketAgent-updater-" + Guid.NewGuid().ToString("N") + ".exe");
+            File.Copy(updater, launchCopy, overwrite: false);
+            var logFile = Path.Combine(Path.GetTempPath(), "PocketAgent-update.log");
+            var info = new ProcessStartInfo(launchCopy)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(launchCopy) ?? Path.GetTempPath()
+            };
+            info.ArgumentList.Add("--asset-url"); info.ArgumentList.Add(update.Asset.ToString());
+            if (update.Sha256 is { Length: > 0 } checksum) { info.ArgumentList.Add("--sha256-url"); info.ArgumentList.Add(checksum); }
+            info.ArgumentList.Add("--install-root"); info.ArgumentList.Add(AppContext.BaseDirectory);
+            info.ArgumentList.Add("--restart-path"); info.ArgumentList.Add(executable);
+            info.ArgumentList.Add("--wait-pid"); info.ArgumentList.Add(parentProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            info.ArgumentList.Add("--version"); info.ArgumentList.Add(update.Version.ToString(3));
+            info.ArgumentList.Add("--health-file"); info.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "PocketAgent-update-health-" + Guid.NewGuid().ToString("N")));
+            info.ArgumentList.Add("--log-file"); info.ArgumentList.Add(logFile);
+            return Process.Start(info);
+        }
+        catch { return null; }
     }
 
     private static HttpClient CreateClient()

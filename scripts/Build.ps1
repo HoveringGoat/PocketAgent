@@ -22,9 +22,11 @@ if ($Publish -and $Target -ne 'Android') {
     & $dotnetCommand publish src/PocketAgent.Desktop -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:DebugType=None -p:DebugSymbols=false -o $publishDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
     $updaterDirectory = Join-Path $publishDirectory '.updater'
-    & $dotnetCommand publish src/PocketAgent.Updater -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:DebugType=None -p:DebugSymbols=false -o $updaterDirectory
+    & $dotnetCommand publish src/PocketAgent.Updater -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=false -p:DebugType=None -p:DebugSymbols=false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o $updaterDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Updater publish failed.' }
-    Copy-Item -LiteralPath (Join-Path $updaterDirectory 'PocketAgent.Updater.exe') -Destination (Join-Path $publishDirectory 'PocketAgent.Updater.exe') -Force
+    $updaterExecutable = Join-Path $updaterDirectory 'PocketAgent.Updater.exe'
+    if (!(Test-Path -LiteralPath $updaterExecutable)) { throw 'The updater publish did not produce PocketAgent.Updater.exe.' }
+    Copy-Item -LiteralPath $updaterExecutable -Destination (Join-Path $publishDirectory 'PocketAgent.Updater.exe') -Force
     Remove-Item -LiteralPath $updaterDirectory -Recurse -Force
     New-Item -ItemType Directory -Force -Path (Join-Path $publishDirectory 'documentation') | Out-Null
     Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md,documentation/PROJECT.md -Destination (Join-Path $publishDirectory 'documentation')

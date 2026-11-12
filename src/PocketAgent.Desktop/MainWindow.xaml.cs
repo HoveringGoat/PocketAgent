@@ -40,6 +40,7 @@ public partial class MainWindow : Window
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning;
     private DesktopUpdate? pendingUpdate;
     private string? updateHealthFile;
+    private string? expectedUpdateVersion;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
 
     public MainWindow()
@@ -53,6 +54,8 @@ public partial class MainWindow : Window
         var arguments = Environment.GetCommandLineArgs();
         var healthArgument = Array.IndexOf(arguments, "--health-file");
         if (healthArgument >= 0 && healthArgument + 1 < arguments.Length) updateHealthFile = arguments[healthArgument + 1];
+        var updateVersionArgument = Array.IndexOf(arguments, "--update-version");
+        if (updateVersionArgument >= 0 && updateVersionArgument + 1 < arguments.Length) expectedUpdateVersion = arguments[updateVersionArgument + 1];
         var repositoryArgument = Array.IndexOf(arguments, "--repository");
         if (RepositorySetting.Text.Length == 0 && repositoryArgument >= 0 && repositoryArgument + 1 < arguments.Length)
             RepositorySetting.Text = arguments[repositoryArgument + 1];
@@ -85,19 +88,20 @@ public partial class MainWindow : Window
     private async Task WindowReady()
     {
         if (Environment.GetCommandLineArgs().Contains("--background", StringComparer.OrdinalIgnoreCase)) WindowState = WindowState.Minimized;
+        WriteUpdateHealth();
         try { StartupRegistration.SetEnabled(settings.LaunchOnWindowsStartup); }
         catch (Exception exception) { UpdateStatus.Text = $"Windows startup registration unavailable: {exception.Message}"; }
         if (settings.StartServerOnLaunch && settings.Host.RepositoryPath.Length > 0)
             await StartServerCore();
         if (settings.CheckUpdatesOnStartup)
             await CheckForUpdatesCore(true);
-        if (!settings.StartServerOnLaunch || relay is not null) WriteUpdateHealth();
     }
 
     private void WriteUpdateHealth()
     {
         if (string.IsNullOrWhiteSpace(updateHealthFile)) return;
-        try { File.WriteAllText(updateHealthFile, BuildInfo.Version); } catch { }
+        if (!string.IsNullOrWhiteSpace(expectedUpdateVersion) && !string.Equals(expectedUpdateVersion, BuildInfo.Version, StringComparison.OrdinalIgnoreCase)) return;
+        try { File.WriteAllText(updateHealthFile, BuildInfo.Version + Environment.NewLine + Environment.ProcessId); } catch { }
     }
 
     private async Task Act(Func<Task> work, bool clearError = true)
@@ -265,7 +269,7 @@ public partial class MainWindow : Window
         transitioning = false; StartButton.IsEnabled = relay is null;
     }
 
-    private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false);
+    private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false, true);
 
     private void ViewReleaseNotes(object sender, RoutedEventArgs e)
     {
@@ -274,10 +278,10 @@ public partial class MainWindow : Window
         AppDialogs.Show(this, notes, $"PocketAgent {pendingUpdate.Version} release notes");
     }
 
-    private async Task CheckForUpdatesCore(bool startup)
+    private async Task CheckForUpdatesCore(bool startup, bool userRequested = false)
     {
         if (startup && !settings.CheckUpdatesOnStartup) return;
-        if (!startup && !settings.CheckUpdatesPeriodically) return;
+        if (!startup && !userRequested && !settings.CheckUpdatesPeriodically) return;
         try
         {
             var update = await UpdateService.CheckAsync();
@@ -433,7 +437,7 @@ public partial class MainWindow : Window
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
             var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
                 snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}";
+            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}" + (snapshot.HistoryTruncated ? " · older history is hidden" : "");
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
@@ -449,9 +453,21 @@ public partial class MainWindow : Window
     {
         if (!optimisticItems.TryGetValue(snapshot.Id, out var pending) || pending.Count == 0) return snapshot;
         var canonical = snapshot.Items.ToList();
+        var matched = new HashSet<int>();
         foreach (var item in pending.ToArray())
         {
-            if (canonical.Any(existing => existing.Type == "userMessage" && existing.Text == item.Text && existing.Timestamp is { } existingTime && item.Timestamp is { } itemTime && Math.Abs((existingTime - itemTime).TotalMinutes) < 10))
+            int? match = null;
+            for (var index = 0; index < canonical.Count; index++)
+            {
+                if (matched.Contains(index)) continue;
+                var existing = canonical[index];
+                if (existing.Type == "userMessage" && existing.Text == item.Text && existing.Timestamp is { } existingTime && item.Timestamp is { } itemTime && Math.Abs((existingTime - itemTime).TotalMinutes) < 10)
+                {
+                    match = index;
+                    break;
+                }
+            }
+            if (match is { } matchedIndex && matched.Add(matchedIndex))
                 pending.Remove(item);
             else canonical.Add(item);
         }

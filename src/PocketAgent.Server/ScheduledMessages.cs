@@ -3,7 +3,7 @@ namespace PocketAgent;
 public sealed record MessageReceipt(bool Queued, string? ScheduleId = null, DateTimeOffset? DueAt = null, string? Message = null);
 
 public sealed class ScheduledMessages(LocalStore store, Conversations conversations, ProviderUsage usage, CodexConnection codex,
-    ProgressPublisher publisher, IHostApplicationLifetime application) : BackgroundService
+    ProgressPublisher publisher, IHostApplicationLifetime application, ILogger<ScheduledMessages> logger) : BackgroundService
 {
     public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId)
     {
@@ -60,6 +60,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
                 if (job.DeviceId is not null && !store.IsDeviceActive(job.DeviceId))
                 { store.UpdateSchedule(job.Id, "canceled", "Device access expired or was revoked.", expectedStatus: "pending"); continue; }
                 if (job.NextAttemptAt > DateTimeOffset.UtcNow) continue;
+                var claimed = false;
                 try
                 {
                     var state = await conversations.Get(job.ConversationId);
@@ -69,6 +70,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
                     if (limits.Exhausted || !codex.IsReady)
                     { store.UpdateSchedule(job.Id, "pending", "Waiting for usage or provider availability.", limits.NextResetAt ?? DateTimeOffset.UtcNow.AddSeconds(30), "pending"); continue; }
                     if (!store.UpdateSchedule(job.Id, "dispatching", expectedStatus: "pending")) continue;
+                    claimed = true;
                     try
                     {
                         await conversations.StartTurn(job.ConversationId, job.Text, sourceDeviceId: job.DeviceId, scheduledMessageId: job.Id);
@@ -82,7 +84,27 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
                     }
                     await publisher.Changed(job.ConversationId);
                 }
-                catch (ApiException) { store.UpdateSchedule(job.Id, "pending", "Waiting for the provider.", DateTimeOffset.UtcNow.AddSeconds(30), "pending"); }
+                catch (ApiException exception)
+                {
+                    var status = claimed ? "uncertain" : "pending";
+                    var expected = claimed ? "dispatching" : "pending";
+                    var message = claimed
+                        ? $"Scheduled delivery outcome is unknown after a host error: {exception.Message} Review the conversation before retrying."
+                        : $"Waiting for the provider: {exception.Message}";
+                    try { store.UpdateSchedule(job.Id, status, message, DateTimeOffset.UtcNow.AddSeconds(30), expected); }
+                    catch (Exception persistenceException) { logger.LogError(persistenceException, "Could not persist scheduled message {JobId} after an API failure.", job.Id); }
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Scheduled message {JobId} failed in the worker.", job.Id);
+                    var status = claimed ? "uncertain" : "pending";
+                    var expected = claimed ? "dispatching" : "pending";
+                    var message = claimed
+                        ? "Scheduled delivery outcome is unknown after an unexpected host error. Review the conversation before retrying."
+                        : "The scheduled message worker encountered an unexpected error; it will retry.";
+                    try { store.UpdateSchedule(job.Id, status, message, DateTimeOffset.UtcNow.AddSeconds(30), expected); }
+                    catch (Exception persistenceException) { logger.LogError(persistenceException, "Could not persist scheduled message {JobId} after an unexpected failure.", job.Id); }
+                }
             }
         } while (await timer.WaitForNextTickAsync(stoppingToken));
     }
