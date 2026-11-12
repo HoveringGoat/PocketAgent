@@ -736,10 +736,7 @@ public final class MainActivity extends Activity {
     String model = state.isNull("model") ? "Codex" : state.optString("model");
     String reasoning =
         state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
-    context.setText(
-        state.optBoolean("historyTruncated")
-            ? getString(R.string.session_context_history, status, model, reasoning)
-            : getString(R.string.session_context_v2, status, model, reasoning));
+    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
     sessionLocation.setMaxLines(2);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
@@ -870,9 +867,7 @@ public final class MainActivity extends Activity {
         conversation.isNull("reasoningEffort")
             ? "default"
             : conversation.optString("reasoningEffort");
-    context.setText(conversation.optBoolean("historyTruncated")
-        ? getString(R.string.session_context_history, status, model, reasoning)
-        : getString(R.string.session_context_v2, status, model, reasoning));
+    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {

@@ -20,6 +20,10 @@ internal static class Program
         try
         {
             var window = new MainWindow();
+            var hourMethod = typeof(MainWindow).GetMethod("TwelveHourClockHour", BindingFlags.NonPublic | BindingFlags.Static)!;
+            if ((int)hourMethod.Invoke(null, [new DateTime(2026, 1, 1, 0, 0, 0)])! != 12 ||
+                (int)hourMethod.Invoke(null, [new DateTime(2026, 1, 1, 13, 0, 0)])! != 1)
+                throw new InvalidOperationException("Schedule dialog must initialize a valid twelve-hour clock value.");
             var firewallRule = WindowsFirewall.AddRuleArguments(5147);
             if (WindowsFirewall.RuleName(5147) != "PocketAgent inbound TCP 5147" || !firewallRule.Contains("localport=5147") || firewallRule.Contains(Environment.ProcessPath ?? ""))
                 throw new InvalidOperationException("Firewall setup must use a stable port rule rather than the versioned executable path.");

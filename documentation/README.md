@@ -12,6 +12,10 @@
 
 [Runtime architecture](ARCHITECTURE.md) describes authentication, session ownership, networking, recovery, and artifact boundaries. [Local setup](SETUP.md) contains build and phone connection instructions.
 
+[Release convention](RELEASE-CONVENTION.md) is a short template for adding
+platform-specific changelogs, guarded release commits, immutable tags, and
+versioned artifacts to another repository.
+
 [Code and flow audit](AUDIT.md) records the 2026-11-11 review, reproduced updater/release defects, flow boundaries, and remaining verification work. Its findings qualify earlier release verification claims.
 
 [Desktop/server changelog](../CHANGELOG-desktop.md) and [Android changelog](../CHANGELOG-android.md) are maintained separately. Release notes are assembled from both files and shown by packaged clients when a newer GitHub release is available.
@@ -20,7 +24,7 @@
 
 ## Documentation status
 
-Current releases: desktop/server 0.3.1 and Android 0.3.1. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Releases are grouped under artifacts/releases/<version> with separate installer, portable desktop and Android outputs. The 0.3.1 desktop patch adds the persisted heartbeat toggle and compact usage summary; the Android patch restores model/reasoning context and groups overflow actions. See setup for focused verification and remaining real-device acceptance.
+Current releases: desktop/server 0.3.2 and Android 0.3.1. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Releases are grouped under artifacts/releases/<version> with separate installer, portable desktop and Android outputs. The 0.3.2 desktop patch fixes the scheduling-dialog crash and removes the older-history notice; the Android 0.3.1 patch restores model/reasoning context and groups overflow actions. See setup for focused verification and remaining real-device acceptance.
 
 Version 0.1.4 adds six-digit pairing, a folder and model per conversation, archive/restore, direct IP-and-port HTTPS setup/diagnostics, distinct outgoing bubbles, and fixes for Unicode decoding and incoming-output focus loss. Earlier native features include usage, scheduling, saved hosts, steering/timing and desktop permissions. See [direct internet setup](SETUP.md#direct-internet-ip-and-port). The setup guide distinguishes focused/emulator/read-only-provider checks from remaining physical-device, external-network and real-inference acceptance. Historical 0.1.0/0.1.1 scope remains in the project brief.
 

@@ -136,7 +136,7 @@ steps and troubleshooting limits.
 
 ## Current packaged release
 
-The latest stable releases are **desktop/server 0.3.1** and **Android 0.3.1**.
+The latest stable releases are **desktop/server 0.3.2** and **Android 0.3.1**.
 Releases contain a per-user Windows installer, a portable desktop ZIP, the
 signed Android APK, and SHA-256 manifests. Desktop and Android release channels
 are tracked independently and may have different version numbers.
@@ -164,7 +164,7 @@ native apps with the repository scripts:
 To check release prerequisites without building:
 
 ```powershell
-.\scripts\Release.ps1 -Version 0.3.1 -Target Desktop -Check
+.\scripts\Release.ps1 -Version 0.3.2 -Target Desktop -Check
 ```
 
 Add `-InstallPrerequisites` to let Windows Package Manager install missing

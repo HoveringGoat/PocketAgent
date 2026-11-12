@@ -473,7 +473,7 @@ public partial class MainWindow : Window
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
             var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
                 snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}" + (snapshot.HistoryTruncated ? " · older history is hidden" : "");
+            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}";
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
@@ -516,7 +516,7 @@ public partial class MainWindow : Window
         if (conversation is null) return;
         var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" : conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
         var policy = conversation.SandboxMode is null ? $"{CodexPermissions.Label(conversation.PermissionMode)} selected · provider policy checked on start/resume" : $"Provider: {conversation.SandboxMode} · approvals: {conversation.ApprovalPolicy ?? "not reported"}";
-        ConversationMeta.Text = $"{conversation.Status}{work} · {policy}" + (conversation.HistoryTruncated ? " · older history is hidden" : "");
+        ConversationMeta.Text = $"{conversation.Status}{work} · {policy}";
     }
 
     private void RenderDevices()
@@ -872,6 +872,7 @@ public partial class MainWindow : Window
         var resetText = reset is null ? "reset unavailable" : reset.Value.ToString(fiveHour ? "h:mm tt" : "M/d/yy", System.Globalization.CultureInfo.CurrentCulture);
         return $"{window.RemainingPercent}% {resetText}";
     }
+    private static int TwelveHourClockHour(DateTime value) => value.Hour % 12 == 0 ? 12 : value.Hour % 12;
     private static string Elapsed(long milliseconds)
     {
         var time = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));
@@ -882,10 +883,11 @@ public partial class MainWindow : Window
         if (relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) { ErrorDisplay.Text = "Write a message before scheduling it."; return; }
         var id = conversation.Id;
         var text = Composer.Text;
-        var date = new DatePicker { SelectedDate = DateTime.Today, Margin = new Thickness(0, 4, 0, 10) };
-        var hours = new ComboBox { ItemsSource = Enumerable.Range(1, 12).ToArray(), SelectedItem = DateTime.Now.ToString("h") is string h && int.TryParse(h, out var hour) ? hour : 12, Width = 72 };
-        var minutes = new ComboBox { ItemsSource = Enumerable.Range(0, 60).Select(value => value.ToString("D2")).ToArray(), SelectedItem = DateTime.Now.ToString("mm"), Width = 72 };
-        var period = new ComboBox { ItemsSource = new[] { "AM", "PM" }, SelectedItem = DateTime.Now.ToString("tt", System.Globalization.CultureInfo.InvariantCulture), Width = 72 };
+        var now = DateTime.Now;
+        var date = new DatePicker { SelectedDate = now.Date, Margin = new Thickness(0, 4, 0, 10) };
+        var hours = new ComboBox { ItemsSource = Enumerable.Range(1, 12).ToArray(), SelectedItem = TwelveHourClockHour(now), Width = 72 };
+        var minutes = new ComboBox { ItemsSource = Enumerable.Range(0, 60).Select(value => value.ToString("D2")).ToArray(), SelectedItem = now.ToString("mm"), Width = 72 };
+        var period = new ComboBox { ItemsSource = new[] { "AM", "PM" }, SelectedItem = now.ToString("tt", System.Globalization.CultureInfo.InvariantCulture), Width = 72 };
         var quick = new ComboBox { ItemsSource = new[] { "Choose date and time", "In 15 minutes", "In 1 hour", "Tomorrow at 9:00 AM" }, SelectedIndex = 0, Margin = new Thickness(0, 4, 0, 10) };
         var preview = new TextBox { Text = text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 100, Margin = new Thickness(0, 4, 0, 10) };
         var validation = new TextBlock { Foreground = Brushes.Salmon, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 8) };
@@ -922,7 +924,7 @@ public partial class MainWindow : Window
         quick.SelectionChanged += (_, _) => { if (quick.SelectedIndex == 1) SetQuick(DateTime.Now.AddMinutes(15)); else if (quick.SelectedIndex == 2) SetQuick(DateTime.Now.AddHours(1)); else if (quick.SelectedIndex == 3) SetQuick(DateTime.Today.AddDays(1).AddHours(9)); };
         date.SelectedDateChanged += (_, _) => Validate(); hours.SelectionChanged += (_, _) => Validate(); minutes.SelectionChanged += (_, _) => Validate(); period.SelectionChanged += (_, _) => Validate();
         schedule.Click += (_, _) => { Validate(); if (schedule.IsEnabled) dialog.DialogResult = true; };
-        SetQuick(DateTime.Now.AddMinutes(15));
+        SetQuick(now.AddMinutes(15));
         if (dialog.ShowDialog() != true) return;
         await Act(async () =>
         {

@@ -2,6 +2,10 @@
 
 This file covers the Android companion application.
 
+## Unreleased
+
+- Removed the nonessential older-history notice from the conversation status.
+
 ## 0.3.1 - 2026-11-11
 
 - Restored the selected model and reasoning effort to the conversation status line.

@@ -2,6 +2,12 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
+## 0.3.2 - 2026-11-11
+
+- Fixed the schedule dialog crash caused by initializing the hour selector with
+  an invalid one-character date format.
+- Removed the nonessential older-history notice from the conversation status.
+
 ## 0.3.1 - 2026-11-11
 
 - Added a persisted desktop toggle for five-minute hidden progress heartbeats, enabled by default.
