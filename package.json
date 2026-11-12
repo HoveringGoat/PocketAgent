@@ -1,7 +1,7 @@
 {
   "name": "pocketagent",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "format:check": "prettier --check \"tests/**/*.mjs\" \"scripts/*.mjs\" package.json .prettierrc.json"
   },
