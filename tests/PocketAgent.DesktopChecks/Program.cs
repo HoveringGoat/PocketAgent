@@ -24,6 +24,21 @@ internal static class Program
             if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
                 throw new InvalidOperationException("The desktop updater must parse its platform release tag.");
             var window = new MainWindow();
+            if (window.FindName("StartButton") is not null || window.FindName("StopButton") is not null || window.FindName("Menu") is not null)
+                throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
+            var serverToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ServerToggle")!;
+            if (serverToggle.IsChecked == true || !Equals(serverToggle.Content, "OFF"))
+                throw new InvalidOperationException("The server switch must start in the OFF state.");
+            var setServerToggle = typeof(MainWindow).GetMethod("SetServerToggle", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            setServerToggle.Invoke(window, [true, null, true]);
+            if (serverToggle.IsChecked != true || !Equals(serverToggle.Content, "ON"))
+                throw new InvalidOperationException("The server switch must show ON when enabled.");
+            setServerToggle.Invoke(window, [false, "Starting...", false]);
+            if (serverToggle.IsChecked == true || serverToggle.IsEnabled || !Equals(serverToggle.Content, "Starting..."))
+                throw new InvalidOperationException("The server switch must show a disabled transition state while starting.");
+            setServerToggle.Invoke(window, [false, null, true]);
+            if (serverToggle.IsChecked == true || !Equals(serverToggle.Content, "OFF"))
+                throw new InvalidOperationException("The server switch must show OFF when disabled.");
             var hourMethod = typeof(MainWindow).GetMethod("TwelveHourClockHour", BindingFlags.NonPublic | BindingFlags.Static)!;
             if ((int)hourMethod.Invoke(null, [new DateTime(2026, 1, 1, 0, 0, 0)])! != 12 ||
                 (int)hourMethod.Invoke(null, [new DateTime(2026, 1, 1, 13, 0, 0)])! != 1)
@@ -36,9 +51,24 @@ internal static class Program
             using (var data = QRCoder.QRCodeGenerator.GenerateQrCode(fixturePayload, QRCoder.QRCodeGenerator.ECCLevel.M))
             using (var qr = new QRCoder.PngByteQRCode(data)) File.WriteAllBytes(Path.Combine(fixtureDirectory, "desktop-qr.png"), qr.GetGraphic(6));
             File.WriteAllText(Path.Combine(fixtureDirectory, "desktop-qr.txt"), fixturePayload);
+            var imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+            var imagePath = Path.Combine(fixtureDirectory, "fixture-image.png");
+            File.WriteAllBytes(imagePath, imageBytes);
+            var imageReader = typeof(MainWindow).GetMethod("ReadImageBytes", BindingFlags.NonPublic | BindingFlags.Static)!;
+            foreach (var source in new[] { "fixture-image.png", new Uri(imagePath).AbsoluteUri, $"data:image/png;base64,{Convert.ToBase64String(imageBytes)}" })
+            {
+                var decoded = (byte[])imageReader.Invoke(null, [source, fixtureDirectory])!;
+                if (!decoded.SequenceEqual(imageBytes)) throw new InvalidOperationException($"Desktop image loading failed for {source}.");
+            }
             ((TabControl)window.FindName("Navigation")).SelectedIndex = 0;
             ((Grid)window.FindName("ConversationPanel")).IsEnabled = true;
             var transcript = (StackPanel)window.FindName("Transcript");
+            var sessions = (ListBox)window.FindName("SessionList");
+            sessions.DisplayMemberPath = "";
+            foreach (var title in new[] { "Release planning", "Image review", "Network setup", "Updater tests", "Documentation" }) sessions.Items.Add(title);
+            sessions.SelectedIndex = 0;
+            ((TextBlock)window.FindName("ServerNameDisplay")).Text = "WORK-PC";
+            ((TextBlock)window.FindName("ConversationLocation")).Text = "C:\\Github\\PocketAgent";
             var now = DateTimeOffset.Now;
             var snapshot = new ConversationSnapshot("readability", "Readability", "completed", null,
                 [new("user", "userMessage", "User sample", "", "completed", now), new("agent", "agentMessage", "Assistant sample", "", "completed", now), new("tool", "commandExecution", "", "Tool sample", "completed", now)],
@@ -47,6 +77,12 @@ internal static class Program
             window.Show();
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
             window.UpdateLayout();
+            if (Environment.GetCommandLineArgs().Contains("--toggle-preview"))
+                CaptureSwitch(serverToggle, root, "off");
+            setServerToggle.Invoke(window, [true, null, true]);
+            window.UpdateLayout();
+            if (Environment.GetCommandLineArgs().Contains("--toggle-preview"))
+                CaptureSwitch(serverToggle, root, "on");
             var texts = Descendants(transcript).OfType<TextBlock>().ToArray();
             foreach (var sample in new[] { "User sample", "Assistant sample", "Approval reason", "Your input is needed" })
                 ColorIs(texts.Single(text => text.Text == sample).Foreground, "#C1DAA6", sample);
@@ -115,6 +151,39 @@ internal static class Program
     {
         if (brush is not SolidColorBrush actual || actual.Color != (Color)ColorConverter.ConvertFromString(expected))
             throw new InvalidOperationException($"{label}: expected readable foreground {expected}, observed {brush}.");
+    }
+
+    private static void CaptureSwitch(FrameworkElement control, string root, string state)
+    {
+        // Let the real template's 140 ms slide finish before capturing its endpoint.
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var settle = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        settle.Tick += (_, _) => { settle.Stop(); frame.Continue = false; };
+        settle.Start();
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        const int padding = 20;
+        var width = control.ActualWidth + padding * 2;
+        var height = control.ActualHeight + padding * 2;
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.DrawRectangle(new SolidColorBrush(Color.FromRgb(17, 27, 23)), null, new Rect(0, 0, width, height));
+            drawing.DrawRectangle(new VisualBrush(control), null, new Rect(padding, padding, control.ActualWidth, control.ActualHeight));
+        }
+        var image = new RenderTargetBitmap((int)(width * 2), (int)(height * 2), 192, 192, PixelFormats.Pbgra32);
+        image.Render(visual);
+        var directory = Path.Combine(root, ".local", "previews", "desktop");
+        Directory.CreateDirectory(directory);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
+        using var output = File.Create(Path.Combine(directory, $"server-switch-{state}.png"));
+        encoder.Save(output);
+
+        var window = Window.GetWindow(control);
+        var full = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        full.Render(window);
+        var fullEncoder = new PngBitmapEncoder(); fullEncoder.Frames.Add(BitmapFrame.Create(full));
+        using var fullOutput = File.Create(Path.Combine(directory, $"desktop-switch-{state}.png"));
+        fullEncoder.Save(fullOutput);
     }
 
     private static void CheckDarkSurface(FrameworkElement element, int screen)

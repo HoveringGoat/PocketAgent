@@ -2,7 +2,7 @@
 
 ## Use the packaged native apps
 
-Current release: **Android 0.4.2 / desktop-server 0.3.5**. Install the 0.4.2 Android app and desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
+Current release: **Android 0.4.2 / desktop-server 0.3.6**. Install the 0.4.2 Android app and 0.3.6 desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
 
 Release files are grouped together:
 
@@ -157,3 +157,5 @@ node --test tests/direct-internet.test.mjs
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
 Build/lint/signature checks and focused native/protocol tests are distinguished from physical acceptance: scanning a real screen with the phone camera and connecting through the actual router/cellular route still require user verification. No public endpoint, router/Caddy configuration, live model turn or full test suite was used. Native title-bar attributes can fall back to Windows behavior; OS-owned folder pickers retain the OS theme. A prior theme claim was too broad: brush/render tests do not prove every OS theme state matches the user's display.
+
+For previews of the actual desktop server switch, run `dotnet run --project tests/PocketAgent.DesktopChecks -- --toggle-preview`. This captures OFF and ON from the real WPF template at twice normal resolution into `.local/previews/desktop/server-switch-off.png` and `server-switch-on.png`, plus full-window views with dummy conversations in `desktop-switch-off.png` and `desktop-switch-on.png`. The fixture changes only the displayed state and does not start a server. These visual captures do not verify real server start/stop failure recovery.

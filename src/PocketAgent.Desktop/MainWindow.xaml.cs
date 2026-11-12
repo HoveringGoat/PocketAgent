@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, TextBlock> renderedRows = [];
     private readonly Dictionary<string, (string Type, string Text, string Detail, string Status)> renderedRowState = [];
     private readonly HashSet<string> expandedWorkItems = [];
+    private readonly HashSet<string> viewedImages = [];
     private ConversationSnapshot? conversation;
     private string? selected;
     private string rendered = "";
@@ -52,6 +54,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Title = $"PocketAgent Server {BuildInfo.Version}";
+        ServerNameDisplay.Text = Environment.MachineName;
         BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
@@ -80,6 +83,7 @@ public partial class MainWindow : Window
         DirectOriginSetting.Text = settings.Host.DirectOrigin;
         if (settings.Host.RepositoryPath.Length == 0) Navigation.SelectedIndex = 2;
         ResolveCodex();
+        UpdateNavigationButtons();
         timer.Tick += async (_, _) => { UpdateElapsedDisplay(); await Refresh(); };
         timer.Start();
         updateTimer.Tick += async (_, _) => await CheckForUpdatesCore(false);
@@ -93,26 +97,21 @@ public partial class MainWindow : Window
         catch (Exception exception) { CodexResolved.Text = exception.Message; }
     }
 
-    private void OpenMainMenu(object sender, RoutedEventArgs e)
+    private void SelectNavigation(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button button) return;
-        var menu = new ContextMenu();
-        AddMenuItem(menu, "Sessions", () => Navigation.SelectedIndex = 0);
-        AddMenuItem(menu, "Devices", () => Navigation.SelectedIndex = 1);
-        AddMenuItem(menu, "General settings", () => Navigation.SelectedIndex = 2);
-        menu.Items.Add(new Separator());
-        AddMenuItem(menu, "Check for updates", () => _ = CheckForUpdatesCore(false, true));
-        AddMenuItem(menu, "View release notes", () => ViewReleaseNotes(this, new RoutedEventArgs()), pendingUpdate is not null);
-        AddMenuItem(menu, $"Version {BuildInfo.Version}", () => AppDialogs.Show(this, $"PocketAgent desktop/server {BuildInfo.Version}\n{Environment.ProcessPath}", "About PocketAgent"));
-        menu.PlacementTarget = button;
-        menu.IsOpen = true;
+        if (sender is Button { Tag: string tag } && int.TryParse(tag, out var index)) Navigation.SelectedIndex = index;
     }
 
-    private static void AddMenuItem(ContextMenu menu, string header, Action action, bool enabled = true)
+    private void NavigationSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateNavigationButtons();
+
+    private void UpdateNavigationButtons()
     {
-        var item = new MenuItem { Header = header, IsEnabled = enabled };
-        item.Click += (_, _) => action();
-        menu.Items.Add(item);
+        if (SessionsNavButton is null) return;
+        var selectedBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2A4734"));
+        var normalBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#18271F"));
+        SessionsNavButton.Background = Navigation.SelectedIndex == 0 ? selectedBrush : normalBrush;
+        DevicesNavButton.Background = Navigation.SelectedIndex == 1 ? selectedBrush : normalBrush;
+        SettingsNavButton.Background = Navigation.SelectedIndex == 2 ? selectedBrush : normalBrush;
     }
 
     private async Task WindowReady()
@@ -289,11 +288,31 @@ public partial class MainWindow : Window
         var text = new TextBox { Text = string.Join("\n\n", report.Checks), IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(16) };
         new Window { Title = report.LocalConnectionVerified ? "Connection diagnostics - local HTTPS verified" : "Connection diagnostics - setup needs attention", Owner = this, Content = text, Width = 760, Height = 580, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
     });
-    private async void StartServer(object sender, RoutedEventArgs e) => await StartServerCore();
+    private async void ToggleServer(object sender, RoutedEventArgs e)
+    {
+        if (transitioning) return;
+        if (relay is null)
+        {
+            await StartServerCore();
+            return;
+        }
+
+        transitioning = true;
+        ServerToggle.IsEnabled = false;
+        ServerToggle.Content = "Stopping...";
+        await Act(async () =>
+        {
+            if (await ConfirmStop()) await Shutdown();
+            else SetServerToggle(true);
+        });
+        transitioning = false;
+        if (relay is not null) SetServerToggle(true);
+    }
+
     private async Task StartServerCore()
     {
         if (relay is not null || transitioning) return;
-        transitioning = true; StartButton.IsEnabled = false;
+        transitioning = true; SetServerToggle(false, "Starting...", false);
         await Act(async () =>
         {
             SaveConfiguration();
@@ -308,13 +327,12 @@ public partial class MainWindow : Window
             catch { await candidate.DisposeAsync(); throw; }
             relay = candidate;
             sessionSignature = "";
-            ServerStatus.Text = $"Running · {settings.Host.RepositoryPath}";
             ConnectionAddress.Text = settings.Host.ClientOrigin;
-            StopButton.IsEnabled = true; SaveButton.IsEnabled = false;
+            SetServerToggle(true); SaveButton.IsEnabled = false;
             PermissionModeSetting.IsEnabled = false;
             await Refresh();
         });
-        transitioning = false; StartButton.IsEnabled = relay is null;
+        transitioning = false; SetServerToggle(relay is not null);
     }
 
     private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false, true);
@@ -398,18 +416,17 @@ public partial class MainWindow : Window
             finally { await running.DisposeAsync(); }
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
-        ConversationPanel.IsEnabled = false; ConversationTitle.Text = "Select a conversation"; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+        ConversationPanel.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
-        ServerStatus.Text = "Server stopped"; StartButton.IsEnabled = true; StopButton.IsEnabled = false; SaveButton.IsEnabled = true;
+        SetServerToggle(false); SaveButton.IsEnabled = true;
         PermissionModeSetting.IsEnabled = true;
     }
-    private async void StopServer(object sender, RoutedEventArgs e)
+    private void SetServerToggle(bool running, string? label = null, bool enabled = true)
     {
-        if (transitioning) return;
-        transitioning = true;
-        await Act(async () => { if (await ConfirmStop()) await Shutdown(); });
-        transitioning = false;
+        ServerToggle.IsChecked = running;
+        ServerToggle.Content = label ?? (running ? "ON" : "OFF");
+        ServerToggle.IsEnabled = enabled;
     }
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
@@ -442,7 +459,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; ConversationTitle.Text = "Select a conversation"; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+                ConversationPanel.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -485,8 +502,8 @@ public partial class MainWindow : Window
             snapshot = MergeOptimistic(snapshot);
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
-            ConversationTitle.Text = snapshot.Title;
-            ConversationLocation.Text = $"{snapshot.HostName} · {snapshot.WorkingDirectory}";
+            ServerNameDisplay.Text = snapshot.HostName;
+            ConversationLocation.Text = snapshot.WorkingDirectory;
             ModelButton.ToolTip = snapshot.Model is null ? "Model: Codex settings\nReasoning: model default" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
@@ -776,19 +793,20 @@ public partial class MainWindow : Window
     private void RenderImage(DisplayItem item, DisplayImage image)
     {
         var label = string.IsNullOrWhiteSpace(image.AltText) ? image.Source : image.AltText;
+        var imageKey = $"{item.Id}:{image.Source}";
         var button = new Button
         {
-            Content = $"View image: {label}",
+            Content = viewedImages.Contains(imageKey) ? $"Viewed image: {label}" : $"View image: {label}",
             ToolTip = image.Source,
             HorizontalAlignment = HorizontalAlignment.Left,
             Foreground = Brushes.LightGreen,
             Margin = new Thickness(8, 0, 8, 10)
         };
-        button.Click += async (_, _) => await ShowImage(item, image, button, label);
+        button.Click += async (_, _) => await ShowImage(item, image, imageKey, button, label);
         Transcript.Children.Add(button);
     }
 
-    private async Task ShowImage(DisplayItem item, DisplayImage image, Button trigger, string label)
+    private async Task ShowImage(DisplayItem item, DisplayImage image, string imageKey, Button trigger, string label)
     {
         try
         {
@@ -796,24 +814,56 @@ public partial class MainWindow : Window
             using var stream = new MemoryStream(bytes);
             var bitmap = new BitmapImage();
             bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
+            viewedImages.Add(imageKey);
             trigger.Content = $"Viewed image: {label}";
             var panel = new StackPanel { Margin = new Thickness(16) };
             panel.Children.Add(new TextBlock { Text = $"Viewed image: {label}", Foreground = Brushes.LightGreen, Margin = new Thickness(0, 0, 0, 10) });
-            panel.Children.Add(new Image { Source = bitmap, Stretch = Stretch.Uniform, MaxWidth = 1000, MaxHeight = 700 });
-            new Window { Title = "Image", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 900, Height = 760, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
+            var viewer = new Image { Source = bitmap, Stretch = Stretch.Uniform, MaxWidth = 1000, MaxHeight = 700 };
+            var dialog = new Window { Title = "Image", Owner = this, Width = 900, Height = 760, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+            var expand = new Button { Content = "Expand", Margin = new Thickness(0, 0, 8, 10), Padding = new Thickness(12, 5, 12, 5) };
+            expand.Click += (_, _) =>
+            {
+                var expanded = dialog.WindowState == WindowState.Maximized;
+                dialog.WindowState = expanded ? WindowState.Normal : WindowState.Maximized;
+                expand.Content = expanded ? "Expand" : "Restore";
+                viewer.MaxWidth = expanded ? 1000 : double.PositiveInfinity;
+                viewer.MaxHeight = expanded ? 700 : double.PositiveInfinity;
+            };
+            var external = new Button { Content = "Open in external viewer", Margin = new Thickness(0, 0, 8, 10), Padding = new Thickness(12, 5, 12, 5) };
+            external.Click += (_, _) =>
+            {
+                var extension = ImageExtension(image);
+                var path = Path.Combine(Path.GetTempPath(), $"PocketAgent-image-{Guid.NewGuid():N}{extension}");
+                File.WriteAllBytes(path, bytes);
+                Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+                external.Content = "Opened externally";
+            };
+            var actions = new StackPanel { Orientation = Orientation.Horizontal };
+            actions.Children.Add(expand);
+            actions.Children.Add(external);
+            panel.Children.Add(actions);
+            panel.Children.Add(new ScrollViewer { Content = viewer, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            dialog.Content = new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            dialog.ShowDialog();
         }
         catch (Exception exception) { ErrorDisplay.Text = $"Image could not be viewed: {exception.Message}"; }
     }
 
     private static byte[] ReadImageBytes(string source, string workingDirectory)
     {
+        source = source.Trim();
         if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
             var comma = source.IndexOf(',');
             if (comma <= 5 || !source[..comma].Contains(";base64", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The image data is invalid.");
-            return Convert.FromBase64String(source[(comma + 1)..]);
+            var payload = Uri.UnescapeDataString(source[(comma + 1)..]);
+            return Convert.FromBase64String(new string(payload.Where(character => !char.IsWhiteSpace(character)).ToArray()));
         }
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") throw new InvalidOperationException("Remote image URLs are not opened by PocketAgent.");
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme is "http" or "https") throw new InvalidOperationException("Remote image URLs are not opened by PocketAgent.");
+            if (uri.Scheme == Uri.UriSchemeFile) source = uri.LocalPath;
+        }
         var full = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(workingDirectory, source));
         var root = Path.GetFullPath(workingDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Images must be inside the conversation working directory.");
@@ -821,6 +871,20 @@ public partial class MainWindow : Window
         if (!info.Exists) throw new FileNotFoundException("The image is no longer available on the desktop.");
         if (info.Length > 16 * 1024 * 1024) throw new InvalidOperationException("That image is too large to view.");
         return File.ReadAllBytes(full);
+    }
+
+    private static string ImageExtension(DisplayImage image)
+    {
+        var mime = image.MimeType?.ToLowerInvariant();
+        return mime switch
+        {
+            "image/jpeg" => ".jpg",
+            "image/gif" => ".gif",
+            "image/webp" => ".webp",
+            "image/bmp" => ".bmp",
+            "image/svg+xml" => ".svg",
+            _ => Path.GetExtension(image.Source).ToLowerInvariant() is { Length: > 0 } extension ? extension : ".png"
+        };
     }
     private void RenderWorkItem(DisplayItem item)
     {

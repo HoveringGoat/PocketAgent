@@ -2,18 +2,66 @@
   <Grid x:Name="RootLayout" Margin="22" Background="#111B17" TextElement.Foreground="#C1DAA6">
     <Grid.LayoutTransform><ScaleTransform x:Name="UiScaleTransform" ScaleX="1" ScaleY="1"/></Grid.LayoutTransform>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <DockPanel Margin="0,0,0,20">
-      <StackPanel DockPanel.Dock="Left"><TextBlock Text="PocketAgent" FontSize="28" FontWeight="Bold"/><TextBlock x:Name="ServerStatus" Text="Server stopped" Foreground="#A7BAA7"/><TextBlock x:Name="UsageDisplay" Foreground="#C1DAA6" FontSize="12"/></StackPanel>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="Menu" Click="OpenMainMenu"/><Button x:Name="StartButton" Content="Start server" Click="StartServer"/><Button x:Name="StopButton" Content="Stop server" Click="StopServer" IsEnabled="False"/></StackPanel>
+    <DockPanel Margin="0,0,0,10">
+      <StackPanel DockPanel.Dock="Left"><TextBlock Text="PocketAgent" FontSize="28" FontWeight="Bold"/><TextBlock x:Name="ServerNameDisplay" Foreground="#A7BAA7" FontSize="12"/><TextBlock x:Name="UsageDisplay" Foreground="#C1DAA6" FontSize="12"/></StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="SessionsNavButton" Content="Sessions" Tag="0" Click="SelectNavigation"/><Button x:Name="DevicesNavButton" Content="Devices" Tag="1" Click="SelectNavigation"/><Button x:Name="SettingsNavButton" Content="Settings" Tag="2" Click="SelectNavigation"/><ToggleButton x:Name="ServerToggle" Content="OFF" IsChecked="False" IsThreeState="False" Click="ToggleServer" ToolTip="ON starts the local PocketAgent server; OFF stops it." AutomationProperties.Name="Server power switch" AutomationProperties.HelpText="ON means the server is running; OFF means it is stopped." Width="64" Height="26" Margin="8,0,0,0" VerticalAlignment="Top" Cursor="Hand">
+        <ToggleButton.Style>
+          <Style TargetType="ToggleButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                  <Grid Width="64" Height="26">
+                    <!-- One recessed track and a matte knob; illumination stays inside the rim. -->
+                    <Border CornerRadius="13" Background="#0C1410" BorderThickness="1" BorderBrush="#46544A">
+                      <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="3" ShadowDepth="1" Opacity="0.35"/></Border.Effect>
+                    </Border>
+                    <Border x:Name="Track" Margin="2" CornerRadius="11">
+                      <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#111914" Offset="0"/><GradientStop Color="#202C24" Offset="1"/></LinearGradientBrush></Border.Background>
+                    </Border>
+                    <TextBlock x:Name="StateLabel" Text="{TemplateBinding Content}" Width="34" TextAlignment="Center" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,3,0" Foreground="#A7B5AA" FontWeight="Medium" FontSize="11"/>
+                    <Border x:Name="Knob" Width="20" Height="20" CornerRadius="10" BorderThickness="0.75" BorderBrush="#C0CCC0" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="3,0,0,0">
+                      <Border.RenderTransform><TranslateTransform/></Border.RenderTransform>
+                      <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#D1DACF" Offset="0"/><GradientStop Color="#B4C0B2" Offset="1"/></LinearGradientBrush></Border.Background>
+                      <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="2" ShadowDepth="1" Opacity="0.45"/></Border.Effect>
+                    </Border>
+                    <Border x:Name="FocusRing" Margin="-2" CornerRadius="15" BorderBrush="#C1DAA6" BorderThickness="1" Visibility="Collapsed"/>
+                  </Grid>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Track" Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#355C36" Offset="0"/><GradientStop Color="#4E7845" Offset="1"/></LinearGradientBrush></Setter.Value></Setter>
+                      <Setter TargetName="StateLabel" Property="HorizontalAlignment" Value="Left"/>
+                      <Setter TargetName="StateLabel" Property="Margin" Value="3,0,0,0"/>
+                      <Setter TargetName="StateLabel" Property="Foreground" Value="#F0FADF"/>
+                      <Trigger.EnterActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="38" Duration="0:0:0.14"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation></Storyboard></BeginStoryboard></Trigger.EnterActions>
+                      <Trigger.ExitActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="0" Duration="0:0:0.14"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation></Storyboard></BeginStoryboard></Trigger.ExitActions>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True"><Setter TargetName="Knob" Property="Opacity" Value="0.8"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/></Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.65"/></Trigger>
+            </Style.Triggers>
+          </Style>
+        </ToggleButton.Style>
+      </ToggleButton></StackPanel>
     </DockPanel>
-    <TabControl x:Name="Navigation" Grid.Row="1">
+    <TabControl x:Name="Navigation" Grid.Row="1" SelectionChanged="NavigationSelectionChanged">
+      <TabControl.Template>
+        <ControlTemplate TargetType="TabControl">
+          <Border Background="Transparent"><ContentPresenter ContentSource="SelectedContent"/></Border>
+        </ControlTemplate>
+      </TabControl.Template>
       <TabItem Header="Sessions">
         <Grid Margin="0,16,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <DockPanel Margin="0,0,0,12"><Button DockPanel.Dock="Right" Content="+" AutomationProperties.Name="New conversation" ToolTip="New conversation" Click="NewConversation"/><ListBox x:Name="SessionList" Background="#18271F" Foreground="#EBF1EA" BorderThickness="0" DisplayMemberPath="Label" SelectionChanged="SessionSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"><ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel><ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource ReadableListItem}"><Setter Property="Padding" Value="16,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style></ListBox.ItemContainerStyle></ListBox></DockPanel>
           <Grid Grid.Row="1" x:Name="ConversationPanel" IsEnabled="False">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <DockPanel Background="#213128" LastChildFill="True"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="&#x270E;" ToolTip="Rename conversation" AutomationProperties.Name="Rename conversation" Click="RenameConversation" FontSize="18" MinWidth="42" Foreground="#C1DAA6"/><Button x:Name="ModelButton" Content="&#x1F916;" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" FontSize="18" MinWidth="42" Foreground="#C1DAA6"/><Button Content="&#x21E9;" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" FontSize="18" MinWidth="42" Foreground="#C1DAA6"/><Button Content="&#x21E7;" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" FontSize="18" MinWidth="42" Foreground="#C1DAA6"/></StackPanel><StackPanel Margin="12,8"><TextBlock x:Name="ConversationTitle" Text="Select a conversation" FontSize="22"/><TextBlock x:Name="ConversationLocation" Foreground="#8FBC8F" FontSize="12"/></StackPanel></DockPanel>
+            <DockPanel Background="#213128" LastChildFill="True"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="&#x270E;" ToolTip="Rename conversation" AutomationProperties.Name="Rename conversation" Click="RenameConversation" FontSize="15" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button x:Name="ModelButton" Content="&#x1F916;" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" FontSize="15" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button Content="&#x21E9;" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" FontSize="15" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button Content="&#x21E7;" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" FontSize="15" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/></StackPanel><StackPanel Margin="12,3"><TextBlock x:Name="ConversationLocation" Foreground="#8FBC8F" FontSize="11"/></StackPanel></DockPanel>
             <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" Margin="0,12" ScrollChanged="TranscriptScrollChanged"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
             <!-- Native equivalent of conversation-meta: outside the transcript, immediately above input. -->
             <Border Grid.Row="2" x:Name="ConversationMetaSurface" Background="#213128" BorderBrush="#47604B" BorderThickness="1" Padding="12,8" Margin="0,0,0,6">

@@ -4,9 +4,15 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.6 - 2026-11-12
+
+- Replaced the separate Start/Stop server buttons with one ON/OFF switch and removed the redundant Menu button; Sessions, Devices, and Settings remain top-level destinations.
+- Added a compact 64-by-26 server switch with a matte sliding knob, recessed track, centered ON/OFF labels, and a short slide animation: OFF has the knob on the left and an unlit track; ON has the knob on the right and green illumination contained inside the track.
+- Unified Sessions, Devices, Settings, and the server switch into one top-right header row; removed repeated conversation titles and the redundant global server-status line to reclaim vertical space.
+- Moved the server machine name into the global header and left only the working directory in the selected conversation context line.
+- Removed the duplicate working-directory text from the global server status; the selected conversation header remains the single directory context.
+- Hardened desktop image viewing for file URIs and encoded data URIs, preserved viewed-image labels, and added expand/restore plus external-viewer actions.
 - Server now persists conversation pin state/message activity and automatically archives unpinned conversations after seven days without a user or agent message.
-- Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
-- Moved conversation actions into the selected conversation pane title strip and replaced text-heavy controls with compact rename, robot/model, archive, and archived-history actions.
 
 ## 0.3.5 - 2026-11-12
 
