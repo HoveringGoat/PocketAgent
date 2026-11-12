@@ -74,7 +74,7 @@ public partial class MainWindow : Window
         DirectOriginSetting.Text = settings.Host.DirectOrigin;
         if (settings.Host.RepositoryPath.Length == 0) Navigation.SelectedIndex = 2;
         ResolveCodex();
-        timer.Tick += async (_, _) => await Refresh();
+        timer.Tick += async (_, _) => { UpdateElapsedDisplay(); await Refresh(); };
         timer.Start();
         updateTimer.Tick += async (_, _) => await CheckForUpdatesCore(false);
         updateTimer.Start();
@@ -485,6 +485,14 @@ public partial class MainWindow : Window
         if (pending.Count == 0) optimisticItems.Remove(snapshot.Id);
         return snapshot with { Items = canonical.ToArray() };
     }
+    private void UpdateElapsedDisplay()
+    {
+        if (conversation is null) return;
+        var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" : conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
+        var policy = conversation.SandboxMode is null ? $"{CodexPermissions.Label(conversation.PermissionMode)} selected · provider policy checked on start/resume" : $"Provider: {conversation.SandboxMode} · approvals: {conversation.ApprovalPolicy ?? "not reported"}";
+        ConversationMeta.Text = $"{conversation.Status}{work} · {policy}" + (conversation.HistoryTruncated ? " · older history is hidden" : "");
+    }
+
     private void RenderDevices()
     {
         DeviceList.Children.Clear();

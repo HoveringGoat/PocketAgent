@@ -73,6 +73,16 @@ public final class MainActivity extends Activity {
           }
         }
       };
+  private final Runnable elapsedTicker =
+      new Runnable() {
+        @Override
+        public void run() {
+          if (resumed) {
+            updateElapsedStatus();
+            ui.postDelayed(this, 1000);
+          }
+        }
+      };
 
   @Override
   public void onCreate(Bundle state) {
@@ -103,12 +113,15 @@ public final class MainActivity extends Activity {
     resumed = true;
     ui.removeCallbacks(poll);
     ui.post(poll);
+    ui.removeCallbacks(elapsedTicker);
+    ui.post(elapsedTicker);
   }
 
   @Override
   protected void onPause() {
     resumed = false;
     ui.removeCallbacks(poll);
+    ui.removeCallbacks(elapsedTicker);
     super.onPause();
   }
 
@@ -811,6 +824,18 @@ public final class MainActivity extends Activity {
     else if (!state.isNull("error") && !state.optString("error").isEmpty())
       problem(state.optString("error"));
     updateSend();
+  }
+
+  private void updateElapsedStatus() {
+    if (conversation == null || context == null) return;
+    String status = conversation.optString("status");
+    if (!conversation.isNull("activeTurnStartedAt")) {
+      try {
+        status += " A� " + elapsed(java.time.Duration.between(java.time.Instant.parse(conversation.optString("activeTurnStartedAt")), java.time.Instant.now()).toMillis());
+      } catch (Exception ignored) {
+      }
+    } else if (!conversation.isNull("lastWorkDurationMs")) status += " A� worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
+    context.setText(getString(R.string.session_context_v2, status) + (conversation.optBoolean("historyTruncated") ? " A� older history is hidden" : ""));
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {
