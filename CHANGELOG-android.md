@@ -4,6 +4,18 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+- Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
+- Added image-reference actions to transcript rows so generated workspace images can be opened and identified after viewing.
+- Hide the server's automatic five-minute `update requested` heartbeat prompt while keeping its progress response visible.
+- Moved usage and reset details into each server card so quotas stay scoped to the server account.
+- Reworked conversation tabs into a binder-style pane with selected-conversation actions in the pane title strip.
+
+## 0.3.4 - 2026-11-11
+
+- Added image-reference actions to transcript rows so generated workspace images can be opened and identified after viewing.
+- Added Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) persisted UI scale presets.
+- Hide the server's automatic five-minute `update requested` heartbeat prompt while keeping its progress response visible.
+
 ## 0.3.3 - 2026-11-11
 
 - Reworked Settings into a full page with current/saved server information, per-server actions, add-server access, and inline application details.

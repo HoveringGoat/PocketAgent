@@ -11,6 +11,7 @@ public sealed class DesktopSettings
     public bool AutomaticUpdates { get; set; }
     public bool StartServerOnLaunch { get; set; } = true;
     public bool LaunchOnWindowsStartup { get; set; }
+    public string UiScale { get; set; } = "comfortable";
     public static string DirectoryPath => Environment.GetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA") is { Length: > 0 } configured ? Path.GetFullPath(configured) :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PocketAgent");
     public static string FilePath => Path.Combine(DirectoryPath, "desktop.json");

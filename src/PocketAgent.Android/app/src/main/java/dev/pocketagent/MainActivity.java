@@ -2,7 +2,10 @@ package dev.pocketagent;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -12,13 +15,19 @@ import android.os.Looper;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.net.Uri;
 import java.io.BufferedReader;
@@ -42,6 +51,9 @@ public final class MainActivity extends Activity {
   private final Handler ui = new Handler(Looper.getMainLooper());
   private final ExecutorService network = Executors.newCachedThreadPool();
   private SessionStore store;
+  private SharedPreferences appPreferences;
+  private static final String UI_SCALE_KEY = "uiScale";
+  private float uiScale = 1.0f;
   private ApiClient api;
   private final java.util.LinkedHashMap<String, ApiClient> connections = new java.util.LinkedHashMap<>();
   private final java.util.HashMap<String, String> connectionNames = new java.util.HashMap<>();
@@ -52,10 +64,11 @@ public final class MainActivity extends Activity {
   private String historyBefore = "";
   private JSONObject conversation;
   private LinearLayout root, tabs, transcript, metadata;
-  private TextView connection, sessionLocation, error, context, usageView, scheduledNotice;
+  private TextView connection, conversationTitle, sessionLocation, error, context, usageView, scheduledNotice;
   private JSONObject usageState;
   private JSONArray scheduledState = new JSONArray();
   private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
+  private final java.util.HashSet<String> viewedImages = new java.util.HashSet<>();
   private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> optimisticItems = new java.util.HashMap<>();
   private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> olderHistory = new java.util.HashMap<>();
   private final java.util.HashMap<String, String> historyCursors = new java.util.HashMap<>();
@@ -64,6 +77,7 @@ public final class MainActivity extends Activity {
   private String serverName = "PocketAgent";
   private EditText composer;
   private Button send, stop, schedule;
+  private ImageButton renameAction, modelAction, archiveAction, archivedAction;
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
   private boolean updateCheckStarted;
@@ -95,6 +109,8 @@ public final class MainActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     store = new SessionStore(this);
+    appPreferences = getSharedPreferences("app", MODE_PRIVATE);
+    uiScale = appPreferences.getFloat(UI_SCALE_KEY, 1.0f);
     try {
       JSONObject session = store.load();
       loadSavedConnections();
@@ -191,6 +207,10 @@ public final class MainActivity extends Activity {
 
   private int dp(int value) {
     return Math.round(value * getResources().getDisplayMetrics().density);
+  }
+
+  private int scaledDp(int value) {
+    return dp(Math.round(value * uiScale));
   }
 
   private void checkForUpdates() {
@@ -333,8 +353,8 @@ public final class MainActivity extends Activity {
     TextView view = new TextView(this);
     view.setText(text);
     view.setTextColor(TEXT);
-    view.setTextSize(size);
-    view.setPadding(dp(10), dp(8), dp(10), dp(8));
+    view.setTextSize(TypedValue.COMPLEX_UNIT_SP, size * uiScale);
+    view.setPadding(scaledDp(10), scaledDp(8), scaledDp(10), scaledDp(8));
     return view;
   }
 
@@ -343,8 +363,8 @@ public final class MainActivity extends Activity {
     field.setHint(hint);
     field.setTextColor(TEXT);
     field.setHintTextColor(Color.rgb(155, 173, 158));
-    field.setTextSize(16);
-    field.setPadding(dp(12), dp(10), dp(12), dp(10));
+    field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16 * uiScale);
+    field.setPadding(scaledDp(12), scaledDp(10), scaledDp(12), scaledDp(10));
     return field;
   }
 
@@ -353,12 +373,25 @@ public final class MainActivity extends Activity {
     button.setText(text);
     button.setAllCaps(false);
     button.setTextColor(ACCENT);
+    button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14 * uiScale);
     button.setOnClickListener(click);
-    button.setMinWidth(dp(48));
-    button.setMinimumWidth(dp(48));
-    button.setMinHeight(dp(48));
-    button.setMinimumHeight(dp(48));
-    button.setPadding(dp(12), 0, dp(12), 0);
+    button.setMinWidth(scaledDp(48));
+    button.setMinimumWidth(scaledDp(48));
+    button.setMinHeight(scaledDp(48));
+    button.setMinimumHeight(scaledDp(48));
+    button.setPadding(scaledDp(12), 0, scaledDp(12), 0);
+    button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));
+    return button;
+  }
+
+  private ImageButton iconButton(int drawable, String description, View.OnClickListener click) {
+    ImageButton button = new ImageButton(this);
+    button.setImageResource(drawable);
+    button.setContentDescription(description);
+    button.setOnClickListener(click);
+    button.setMinimumWidth(scaledDp(44));
+    button.setMinimumHeight(scaledDp(44));
+    button.setPadding(scaledDp(10), scaledDp(10), scaledDp(10), scaledDp(10));
     button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));
     return button;
   }
@@ -537,9 +570,6 @@ public final class MainActivity extends Activity {
     connection.setTypeface(null, Typeface.BOLD);
     LinearLayout identity = column();
     identity.addView(connection, match());
-    sessionLocation = label("", 11);
-    sessionLocation.setTextColor(Color.rgb(143, 188, 143));
-    identity.addView(sessionLocation, match());
     header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
     Button settings = button("\u2699\uFE0E", v -> showSettings());
     settings.setContentDescription("Settings");
@@ -554,12 +584,47 @@ public final class MainActivity extends Activity {
     HorizontalScrollView tabScroll = new HorizontalScrollView(this);
     tabScroll.setHorizontalScrollBarEnabled(false);
     tabs = row();
+    tabs.setBackgroundColor(CARD);
+    tabs.setPadding(dp(2), dp(2), dp(2), dp(2));
     tabScroll.addView(tabs);
     tabRow.addView(tabScroll, new LinearLayout.LayoutParams(0, -2, 1));
     Button add = button("+", v -> createConversation());
     add.setContentDescription("New conversation");
     tabRow.addView(add);
     root.addView(tabRow, match());
+
+    metadata = row();
+    metadata.setContentDescription("Conversation title, status, context, and actions");
+    metadata.setBackgroundColor(CARD);
+    LinearLayout paneIdentity = column();
+    conversationTitle = label(getString(R.string.conversation_select), 17);
+    conversationTitle.setTypeface(null, Typeface.BOLD);
+    paneIdentity.addView(conversationTitle, match());
+    sessionLocation = label("", 11);
+    sessionLocation.setTextColor(Color.rgb(143, 188, 143));
+    paneIdentity.addView(sessionLocation, match());
+    context = label("", 12);
+    context.setMaxLines(1);
+    context.setOnClickListener(v -> showModels());
+    paneIdentity.addView(context, match());
+    metadata.addView(paneIdentity, new LinearLayout.LayoutParams(0, -2, 1));
+    LinearLayout actions = row();
+    renameAction = iconButton(R.drawable.ic_edit, "Rename conversation", v -> renameSelectedConversation());
+    modelAction = iconButton(R.drawable.ic_robot, "Model and reasoning", v -> showModels());
+    archiveAction = iconButton(R.drawable.ic_archive, "Archive conversation", v -> archive(selected));
+    archivedAction = iconButton(R.drawable.ic_unarchive, "View archived conversations", v -> showArchived());
+    actions.addView(renameAction);
+    actions.addView(modelAction);
+    actions.addView(archiveAction);
+    actions.addView(archivedAction);
+    stop = button("Stop", v -> interrupt());
+    stop.setContentDescription("Stop work");
+    stop.setVisibility(View.GONE);
+    actions.addView(stop);
+    metadata.addView(actions);
+    setConversationActionsVisible(false);
+    root.addView(metadata, match());
+
     scroll = new ScrollView(this);
     scroll.setFillViewport(true);
     scroll.setOnScrollChangeListener(
@@ -571,31 +636,6 @@ public final class MainActivity extends Activity {
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     error = errorLabel();
     root.addView(error, match());
-    metadata = row();
-    metadata.setContentDescription("Conversation status and context");
-    metadata.setBackgroundColor(CARD);
-    context = label("Select a conversation", 12);
-    context.setMaxLines(1);
-    context.setOnClickListener(v -> showModels());
-    metadata.addView(context, new LinearLayout.LayoutParams(0, -2, 1));
-    context.setOnLongClickListener(
-        v -> {
-          if (conversation != null)
-            new AlertDialog.Builder(this)
-                .setTitle("Session location")
-                .setMessage(
-                    conversation.optString("hostName")
-                        + "\n"
-                        + conversation.optString("workingDirectory"))
-                .setPositiveButton("Close", null)
-                .show();
-          return true;
-        });
-    stop = button("Stop", v -> interrupt());
-    stop.setContentDescription("Stop work");
-    stop.setVisibility(View.GONE);
-    metadata.addView(stop);
-    root.addView(metadata, match());
     LinearLayout composeRow = row();
     composer = input("Message Codex");
     composer.setContentDescription("Message Codex");
@@ -654,6 +694,8 @@ public final class MainActivity extends Activity {
     olderHistory.remove(id);
     transcriptSignature = "";
     answers.clear();
+    conversationTitle.setText(R.string.conversation_loading);
+    setConversationActionsVisible(false);
     loadDraft();
     transcript.removeAllViews();
     context.setText(R.string.loading);
@@ -764,17 +806,17 @@ public final class MainActivity extends Activity {
     for (int i = 0; i < sessions.length(); i++) {
       JSONObject entry = sessions.optJSONObject(i);
       String id = entry.optString("id");
-      LinearLayout tabItem = row();
       Button tab = button(entry.optString("title"), v -> select(id));
       tab.setContentDescription("Conversation " + entry.optString("title"));
-      tab.setTextColor(id.equals(selected) ? Color.WHITE : ACCENT);
-      tab.setTypeface(null, id.equals(selected) ? Typeface.BOLD : Typeface.NORMAL);
-      tabItem.addView(tab, new LinearLayout.LayoutParams(-2, -2));
-      Button options = button("\u22EE", v -> showConversationMenu(id, entry.optString("title")));
-      options.setContentDescription("Conversation options for " + entry.optString("title"));
-      options.setPadding(dp(6), 0, dp(6), 0);
-      tabItem.addView(options);
-      tabs.addView(tabItem);
+      boolean active = id.equals(selected);
+      tab.setTextColor(active ? Color.WHITE : ACCENT);
+      tab.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+      tab.setBackgroundTintList(android.content.res.ColorStateList.valueOf(active ? CARD : BG));
+      tabs.addView(tab);
+    }
+    if (selected.isEmpty()) {
+      conversationTitle.setText(R.string.conversation_select);
+      setConversationActionsVisible(false);
     }
     if (sessions.length() == 0 && selected.isEmpty()) {
       transcript.removeAllViews();
@@ -811,10 +853,12 @@ public final class MainActivity extends Activity {
     String model = state.isNull("model") ? "Codex" : state.optString("model");
     String reasoning =
         state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
+    conversationTitle.setText(state.optString("title", "Conversation"));
     context.setText(getString(R.string.session_context_v2, status, model, reasoning));
     sessionLocation.setMaxLines(2);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
+    setConversationActionsVisible(true);
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
@@ -881,6 +925,24 @@ public final class MainActivity extends Activity {
         margin.setMargins(0, dp(6), 0, dp(6));
         transcript.addView(text, margin);
         renderedRows.put(item.optString("id"), text);
+        JSONArray images = item.optJSONArray("images");
+        if (images != null) {
+          for (int imageIndex = 0; imageIndex < images.length(); imageIndex++) {
+            JSONObject image = images.optJSONObject(imageIndex);
+            if (image == null) continue;
+            String source = image.optString("source");
+            String alt = image.optString("altText");
+            if (alt.isEmpty()) alt = source.substring(Math.max(0, source.lastIndexOf('/') + 1));
+            final String imageAlt = alt;
+            String imageKey = item.optString("id") + ":" + source;
+            String imageLabel = viewedImages.contains(imageKey) ? getString(R.string.viewed_image, imageAlt) : getString(R.string.view_image, imageAlt);
+            Button imageButton = button(imageLabel, null);
+            imageButton.setContentDescription(imageLabel);
+            String conversationId = state.optString("id");
+            imageButton.setOnClickListener(v -> viewImage(conversationId, image, imageKey, imageButton, imageAlt));
+            transcript.addView(imageButton, match());
+          }
+        }
       }
       for (int i = 0; i < requests.length(); i++)
         renderRequest(state.optString("id"), requests.optJSONObject(i));
@@ -913,6 +975,7 @@ public final class MainActivity extends Activity {
     for (int i = 0; i < items.length(); i++) {
       JSONObject item = items.optJSONObject(i);
       if (item == null || !renderedRows.containsKey(item.optString("id"))) return false;
+      if (item.optJSONArray("images") != null && item.optJSONArray("images").length() > 0) return false;
     }
     for (int i = 0; i < items.length(); i++) {
       JSONObject item = items.optJSONObject(i);
@@ -1060,6 +1123,18 @@ public final class MainActivity extends Activity {
     scheduledNotice.setText(
         pending == 1 ? "1 scheduled message" : pending + " scheduled messages");
     scheduledNotice.setVisibility(pending == 0 ? View.GONE : View.VISIBLE);
+  }
+
+  private void setConversationActionsVisible(boolean visible) {
+    int visibility = visible ? View.VISIBLE : View.GONE;
+    if (renameAction != null) renameAction.setVisibility(visibility);
+    if (modelAction != null) modelAction.setVisibility(visibility);
+    if (archiveAction != null) archiveAction.setVisibility(visibility);
+  }
+
+  private void renameSelectedConversation() {
+    if (conversation == null || selected.isEmpty()) return;
+    rename(selected, conversation.optString("title", conversationTitle.getText().toString()));
   }
 
   private void updateSend() {
@@ -1640,12 +1715,40 @@ public final class MainActivity extends Activity {
       panel.addView(label("Saved servers could not be read.", 15), match());
     }
 
+    settingsSection(panel, "Appearance");
+    panel.addView(label("Font and UI size", 15), match());
+    Spinner scale = new Spinner(this);
+    String[] scaleLabels = {"Compact (90%)", "Comfortable (100%, default)", "Plus (110%)", "Large (120%)"};
+    scale.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, scaleLabels));
+    scale.setMinimumHeight(scaledDp(48));
+    scale.setPadding(scaledDp(12), 0, scaledDp(12), 0);
+    scale.setSelection(uiScaleIndex(), false);
+    final boolean[] scaleReady = {false};
+    scale.post(() -> scaleReady[0] = true);
+    scale.setOnItemSelectedListener(
+        new AdapterView.OnItemSelectedListener() {
+          @Override
+          public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+            if (!scaleReady[0]) return;
+            float next = position == 0 ? 0.9f : position == 1 ? 1.0f : position == 2 ? 1.1f : 1.2f;
+            if (Math.abs(next - uiScale) < 0.01f) return;
+            uiScale = next;
+            appPreferences.edit().putFloat(UI_SCALE_KEY, uiScale).apply();
+            showSettings();
+          }
+
+          @Override
+          public void onNothingSelected(AdapterView<?> parent) {}
+        });
+    panel.addView(scale, match());
+
     settingsSection(panel, "Application");
-    settingsAction(panel, "Usage and resets", this::showUsage);
     settingsAction(panel, "Check for updates", this::checkForUpdates);
     android.widget.CheckBox updates = new android.widget.CheckBox(this);
     updates.setText(R.string.check_updates_on_startup);
     updates.setTextColor(TEXT);
+    updates.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14 * uiScale);
+    updates.setMinimumHeight(scaledDp(48));
     updates.setChecked(store.checkUpdatesOnStartup());
     updates.setOnCheckedChangeListener((button, checked) -> store.checkUpdatesOnStartup(checked));
     panel.addView(updates, match());
@@ -1673,6 +1776,10 @@ public final class MainActivity extends Activity {
     panel.addView(heading, match());
   }
 
+  private int uiScaleIndex() {
+    return uiScale < 0.95f ? 0 : uiScale > 1.15f ? 3 : uiScale > 1.05f ? 2 : 1;
+  }
+
   private void settingsAction(LinearLayout panel, String title, Runnable action) {
     Button actionButton = button(title, v -> action.run());
     actionButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -1691,6 +1798,7 @@ public final class MainActivity extends Activity {
     card.setBackgroundColor(CARD);
     card.addView(label(name + "\n" + origin + "\n" + status, 14), match());
     LinearLayout actions = row();
+    actions.addView(button("Usage and resets", v -> showServerUsage(origin)));
     actions.addView(button("Open", v -> activateSavedServer(origin)));
     actions.addView(
         button(
@@ -1751,26 +1859,6 @@ public final class MainActivity extends Activity {
     } catch (Exception exception) {
       problem("The saved server could not be opened. Pair with it again.");
     }
-  }
-
-  private void showConversationMenu(String id, String title) {
-    boolean current = id.equals(selected);
-    String[] options =
-        current
-            ? new String[] {"Rename", "Choose model", "Choose reasoning", "Archive"}
-            : new String[] {"Rename", "Archive"};
-    new AlertDialog.Builder(this)
-        .setTitle(title)
-        .setItems(
-            options,
-            (dialog, which) -> {
-              if (which == 0) rename(id, title);
-              else if (current && which == 1) showModels();
-              else if (current && which == 2) showReasoning();
-              else archive(id);
-            })
-        .setNegativeButton("Close", null)
-        .show();
   }
 
   private void unpairServer() {
@@ -1862,10 +1950,69 @@ public final class MainActivity extends Activity {
   }
 
   private void showUsage() {
+    showUsageDialog(serverName, usageState);
+  }
+
+  private void viewImage(String conversationId, JSONObject image, String imageKey, Button trigger, String alt) {
+    ApiClient client = api;
+    if (client == null) return;
+    String source = image.optString("source");
+    network.execute(
+        () -> {
+          try {
+            byte[] bytes;
+            if (source.startsWith("data:") && source.contains(",")) {
+              bytes = android.util.Base64.decode(source.substring(source.indexOf(',') + 1), android.util.Base64.DEFAULT);
+            } else {
+              bytes = client.requestBytes("/conversations/" + ApiClient.segment(conversationId) + "/images?path=" + ApiClient.segment(source));
+            }
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (bitmap == null) throw new IllegalArgumentException("The desktop returned an unsupported image.");
+            ui.post(
+                () -> {
+                  viewedImages.add(imageKey);
+                  trigger.setText(getString(R.string.viewed_image, alt));
+                  showImageDialog(alt, bitmap);
+                });
+          } catch (Exception exception) {
+            ui.post(() -> problem("Image could not be viewed: " + exception.getMessage()));
+          }
+        });
+  }
+
+  private void showImageDialog(String alt, Bitmap bitmap) {
+    LinearLayout panel = column();
+    panel.addView(label(getString(R.string.viewed_image, alt), 14), match());
+    ImageView imageView = new ImageView(this);
+    imageView.setImageBitmap(bitmap);
+    imageView.setAdjustViewBounds(true);
+    imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    panel.addView(imageView, match());
+    new AlertDialog.Builder(this).setTitle("Image").setView(panel).setPositiveButton("Close", null).show();
+  }
+
+  private void showServerUsage(String origin) {
+    ApiClient client = connections.get(origin);
+    if (client == null) {
+      problem("This server is not available. Pair with it again.");
+      return;
+    }
+    network.execute(
+        () -> {
+          try {
+            JSONObject usage = (JSONObject) client.request("/usage", null);
+            ui.post(() -> showUsageDialog(connectionNames.getOrDefault(origin, origin), usage));
+          } catch (Exception exception) {
+            ui.post(() -> problem("Usage could not be read for this server."));
+          }
+        });
+  }
+
+  private void showUsageDialog(String source, JSONObject usageState) {
     JSONObject five = usageState == null ? null : usageState.optJSONObject("fiveHour"),
         week = usageState == null ? null : usageState.optJSONObject("weekly");
     new AlertDialog.Builder(this)
-        .setTitle("Usage remaining")
+        .setTitle(source + " usage remaining")
         .setMessage(
             "Five hours: "
                 + remaining(five)

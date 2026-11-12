@@ -2,6 +2,19 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
+## Unreleased
+
+- Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
+- Moved conversation actions into the selected conversation pane title strip and replaced text-heavy controls with compact rename, robot/model, archive, and archived-history actions.
+
+## 0.3.4 - 2026-11-11
+
+- Added image-reference actions to transcript rows so generated workspace images can be opened and identified after viewing.
+- Added Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) persisted UI scale presets.
+- Hide the server's automatic five-minute `update requested` heartbeat prompt while keeping its progress response visible.
+- Added image-reference actions to transcript rows so generated workspace images can be opened and identified after viewing.
+- Hide the server's automatic five-minute `update requested` heartbeat prompt while keeping its progress response visible.
+
 ## 0.3.3 - 2026-11-11
 
 - Fixed desktop update checks so `desktop-v<version>` releases are compared against the running version.

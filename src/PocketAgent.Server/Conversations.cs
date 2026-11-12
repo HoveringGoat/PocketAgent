@@ -1,8 +1,10 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PocketAgent;
 
-public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null);
+public sealed record DisplayImage(string Id, string Source, string AltText, string? MimeType = null);
+public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null, DisplayImage[]? Images = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
 public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
 public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null);
@@ -121,6 +123,36 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             return new(items, start > 0, start > 0 ? state.Items[start].Id : null);
         }
         finally { state.Gate.Release(); }
+    }
+
+    public async Task<(byte[] Bytes, string ContentType)> ReadImage(string id, string source)
+    {
+        var state = await GetState(id).ConfigureAwait(false);
+        await state.Gate.WaitAsync().ConfigureAwait(false);
+        string workingDirectory;
+        try { workingDirectory = state.Reference.WorkingDirectory; }
+        finally { state.Gate.Release(); }
+
+        if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            var comma = source.IndexOf(',');
+            if (comma <= 5 || comma == source.Length - 1) throw new ApiException(400, "That image data is invalid.");
+            var header = source[..comma];
+            var payload = source[(comma + 1)..];
+            if (!header.Contains(";base64", StringComparison.OrdinalIgnoreCase)) throw new ApiException(400, "That image data is not base64 encoded.");
+            try { return (Convert.FromBase64String(payload), header[5..header.IndexOf(';')]); }
+            catch (FormatException) { throw new ApiException(400, "That image data is invalid."); }
+        }
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+            throw new ApiException(400, "Remote image URLs are not proxied by PocketAgent.");
+        var candidate = Uri.UnescapeDataString(source);
+        var fullPath = Path.GetFullPath(Path.IsPathRooted(candidate) ? candidate : Path.Combine(workingDirectory, candidate));
+        var root = Path.GetFullPath(workingDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new ApiException(403, "Images must be inside the conversation working directory.");
+        if (!File.Exists(fullPath)) throw new ApiException(404, "The image is no longer available on the desktop.");
+        var info = new FileInfo(fullPath);
+        if (info.Length > 16 * 1024 * 1024) throw new ApiException(413, "That image is too large to view.");
+        return (await File.ReadAllBytesAsync(fullPath).ConfigureAwait(false), ContentType(fullPath));
     }
 
     private async Task<State> GetState(string id)
@@ -480,9 +512,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     {
         if (item.Id.Length == 0 || item.Type == "reasoning")
             return;
-        if (item.Type == "userMessage" && state.HiddenPrompts.TryPeek(out var hidden) && string.Equals(hidden, item.Text, StringComparison.Ordinal))
+        if (item.Type == "userMessage" && IsHiddenPrompt(state, item.Text))
         {
-            state.HiddenPrompts.Dequeue();
             return;
         }
         var index = state.Items.FindIndex(existing => existing.Id == item.Id);
@@ -511,7 +542,51 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             "webSearch" => item.Text("query"),
             _ => ""
         };
-        return new(item.Text("id"), type, text, detail, item.Text("status"));
+        return new(item.Text("id"), type, text, detail, item.Text("status"), Images: ExtractImages(item, text));
+    }
+
+    private static DisplayImage[]? ExtractImages(JsonElement item, string text)
+    {
+        var images = new List<DisplayImage>();
+        var type = item.Text("type");
+        if (IsImageType(type)) AddStructuredImage(images, item, "image-" + item.Text("id"));
+        if (item.Field("content") is { ValueKind: JsonValueKind.Array } content)
+            foreach (var part in content.EnumerateArray())
+                if (IsImageType(part.Text("type"))) AddStructuredImage(images, part, "image-" + item.Text("id") + "-" + images.Count);
+        foreach (Match match in Regex.Matches(text, "!\\[([^\\]]*)\\]\\(([^)\\s]+)"))
+            images.Add(new("markdown-" + images.Count, match.Groups[2].Value, match.Groups[1].Value));
+        return images.Count == 0 ? null : images.ToArray();
+    }
+
+    private static bool IsImageType(string type) => type.Contains("image", StringComparison.OrdinalIgnoreCase) || type.Contains("screenshot", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddStructuredImage(List<DisplayImage> images, JsonElement value, string id)
+    {
+        var source = value.Text("path");
+        if (source.Length == 0) source = value.Text("url");
+        if (source.Length == 0) source = value.Text("image_url");
+        if (source.Length == 0) source = value.Text("data");
+        if (source.Length == 0) return;
+        var mime = value.Text("mimeType");
+        var alt = value.Text("alt");
+        if (alt.Length == 0) alt = value.Text("caption");
+        images.Add(new(id, source, alt, mime.Length == 0 ? null : mime));
+    }
+
+    private static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", ".bmp" => "image/bmp", ".svg" => "image/svg+xml", _ => "application/octet-stream"
+    };
+
+    private static bool IsHiddenPrompt(State state, string text)
+    {
+        if (!string.Equals(text.Trim(), HeartbeatPrompt, StringComparison.OrdinalIgnoreCase)) return false;
+        if (state.HiddenPrompts.TryPeek(out var hidden) && string.Equals(hidden, HeartbeatPrompt, StringComparison.OrdinalIgnoreCase))
+        {
+            state.HiddenPrompts.Dequeue();
+            return true;
+        }
+        return false;
     }
 
     private ConversationSnapshot Snapshot(State state)

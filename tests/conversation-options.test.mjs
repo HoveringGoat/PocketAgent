@@ -264,3 +264,30 @@ test('Unicode prompt and streamed response text survive provider and HTTP transp
     await relay.stop();
   }
 });
+
+test('image references are exposed and can be retrieved from the conversation workspace', async () => {
+  const relay = await startRelay();
+  try {
+    await relay.pairNative();
+    const thread = await (await relay.request('/conversations', {})).json();
+    const path = `/conversations/${thread.id}`;
+    assert.equal((await relay.request(`${path}/messages`, { text: 'image' })).status, 202);
+    const completed = await until(async () => {
+      const state = await (await relay.request(path)).json();
+      return state.status === 'completed' && state;
+    });
+    const image = completed.items.find((item) => item.images?.length)?.images[0];
+    assert.ok(image, 'the rendered response should include an image reference');
+    assert.equal(image.altText, 'fixture image');
+    const response = await relay.request(`${path}/images?path=${encodeURIComponent(image.source)}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    assert.ok((await response.arrayBuffer()).byteLength > 20);
+    assert.equal(
+      (await relay.request(`${path}/images?path=${encodeURIComponent('..\\outside.png')}`)).status,
+      403,
+    );
+  } finally {
+    await relay.stop();
+  }
+});

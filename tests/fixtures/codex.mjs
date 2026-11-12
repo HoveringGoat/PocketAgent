@@ -2,6 +2,7 @@
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const path = process.env.POCKETAGENT_FIXTURE_STATE;
 const threads = path && existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
@@ -261,6 +262,27 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         };
         if (text === 'unicode:focus') setTimeout(deliver, 1200);
         else deliver();
+        break;
+      }
+      if (text === 'image') {
+        const imagePath = join(thread.cwd, 'fixture-image.png');
+        writeFileSync(
+          imagePath,
+          Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            'base64',
+          ),
+        );
+        const item = {
+          id: randomUUID(),
+          type: 'agentMessage',
+          text: `Here is the fixture image: ![fixture image](${imagePath})`,
+        };
+        reply({ turn });
+        setTimeout(() => {
+          turn.items.push(item);
+          complete(threadId);
+        }, 20);
         break;
       }
       const itemId = randomUUID();

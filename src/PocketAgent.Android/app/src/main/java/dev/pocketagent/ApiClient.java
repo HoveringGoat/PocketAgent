@@ -127,6 +127,39 @@ final class ApiClient {
     }
   }
 
+  byte[] requestBytes(String path) throws Exception {
+    HttpURLConnection connection =
+        (HttpURLConnection) new URI(origin + "/api" + path).toURL().openConnection();
+    if (!pin.isEmpty()) {
+      if (!(connection instanceof javax.net.ssl.HttpsURLConnection))
+        throw new IllegalArgumentException("Pinned connections require HTTPS.");
+      ((javax.net.ssl.HttpsURLConnection) connection)
+          .setSSLSocketFactory(new PinnedTrust(pin).socketFactory());
+    }
+    connection.setInstanceFollowRedirects(false);
+    connection.setConnectTimeout(10000);
+    connection.setReadTimeout(30000);
+    connection.setUseCaches(false);
+    connection.setRequestProperty("Accept", "image/*");
+    if (!token.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + token);
+    try {
+      int status = connection.getResponseCode();
+      if (status >= 300 && status < 400) throw new ApiError(status, "The server redirected the image request.");
+      if (status >= 400) throw new ApiError(status, "The image could not be loaded from the desktop.");
+      try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+          if (output.size() + count > 16 * 1024 * 1024) throw new ApiError(413, "That image is too large to view.");
+          output.write(buffer, 0, count);
+        }
+        return output.toByteArray();
+      }
+    } finally {
+      connection.disconnect();
+    }
+  }
+
   static String segment(String value) {
     return android.net.Uri.encode(value);
   }

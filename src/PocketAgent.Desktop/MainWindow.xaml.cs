@@ -11,6 +11,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,6 +71,8 @@ public partial class MainWindow : Window
         CheckUpdatesOnStartupSetting.IsChecked = settings.CheckUpdatesOnStartup;
         CheckUpdatesPeriodicallySetting.IsChecked = settings.CheckUpdatesPeriodically;
         AutomaticUpdatesSetting.IsChecked = settings.AutomaticUpdates;
+        UiScaleSetting.SelectedValue = settings.UiScale;
+        ApplyUiScale(settings.UiScale);
         HeartbeatSetting.IsChecked = settings.Host.EnableHeartbeats;
         AddressSetting.Text = settings.Host.ListenAddress;
         PortSetting.Text = settings.Host.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -151,6 +154,7 @@ public partial class MainWindow : Window
             CheckUpdatesOnStartup = CheckUpdatesOnStartupSetting.IsChecked == true,
             CheckUpdatesPeriodically = CheckUpdatesPeriodicallySetting.IsChecked == true,
             AutomaticUpdates = AutomaticUpdatesSetting.IsChecked == true,
+            UiScale = UiScaleSetting.SelectedValue as string ?? "comfortable",
             Host = new HostSettings
             {
                 RepositoryPath = RepositorySetting.Text.Trim(),
@@ -176,6 +180,22 @@ public partial class MainWindow : Window
     }
 
     private async void SaveSettings(object sender, RoutedEventArgs e) => await Act(() => { SaveConfiguration(); ErrorDisplay.Text = "Settings saved."; return Task.CompletedTask; });
+    private void UiScaleChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (UiScaleSetting.SelectedValue is not string value) return;
+        ApplyUiScale(value);
+        if (IsLoaded)
+        {
+            settings.UiScale = value;
+            settings.Save();
+        }
+    }
+    private void ApplyUiScale(string? value)
+    {
+        var scale = value switch { "compact" => 0.9, "plus" => 1.1, "large" => 1.2, _ => 1.0 };
+        UiScaleTransform.ScaleX = scale;
+        UiScaleTransform.ScaleY = scale;
+    }
     private void BrowseRepository(object sender, RoutedEventArgs e)
     {
         var picker = new OpenFolderDialog { Title = "Choose the repository Codex will work in" };
@@ -467,7 +487,7 @@ public partial class MainWindow : Window
             ConversationPanel.IsEnabled = true;
             ConversationTitle.Text = snapshot.Title;
             ConversationLocation.Text = $"{snapshot.HostName} · {snapshot.WorkingDirectory}";
-            ModelButton.Content = snapshot.Model is null ? "Model: Codex settings" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
+            ModelButton.ToolTip = snapshot.Model is null ? "Model: Codex settings\nReasoning: model default" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
@@ -726,6 +746,7 @@ public partial class MainWindow : Window
             renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
             if (item.Type == "agentMessage") { content.Margin = new Thickness(8, 8, 8, 18); Transcript.Children.Add(content); }
             else Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), HorizontalAlignment = item.Type == "userMessage" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch, MaxWidth = item.Type == "userMessage" ? 760 : double.PositiveInfinity, Margin = new Thickness(0, 0, 0, 10) });
+            foreach (var image in item.Images ?? []) RenderImage(item, image);
         }
         if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Foreground = Brushes.Salmon, Margin = new Thickness(12) });
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
@@ -735,6 +756,7 @@ public partial class MainWindow : Window
     private bool TryPatchRenderedRows(ConversationSnapshot snapshot)
     {
         if (renderedRowState.Count == 0 || snapshot.Requests.Length > 0) return false;
+        if (snapshot.Items.Any(item => item.Images is { Length: > 0 })) return false;
         var visible = snapshot.Items.Length > MaxRenderedItems ? snapshot.Items[^MaxRenderedItems..] : snapshot.Items;
         if (visible.Length != renderedRowState.Count || visible.Any(item => !renderedRowState.ContainsKey(item.Id))) return false;
         foreach (var item in visible)
@@ -749,6 +771,56 @@ public partial class MainWindow : Window
             renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
         }
         return true;
+    }
+
+    private void RenderImage(DisplayItem item, DisplayImage image)
+    {
+        var label = string.IsNullOrWhiteSpace(image.AltText) ? image.Source : image.AltText;
+        var button = new Button
+        {
+            Content = $"View image: {label}",
+            ToolTip = image.Source,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Foreground = Brushes.LightGreen,
+            Margin = new Thickness(8, 0, 8, 10)
+        };
+        button.Click += async (_, _) => await ShowImage(item, image, button, label);
+        Transcript.Children.Add(button);
+    }
+
+    private async Task ShowImage(DisplayItem item, DisplayImage image, Button trigger, string label)
+    {
+        try
+        {
+            var bytes = await Task.Run(() => ReadImageBytes(image.Source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
+            using var stream = new MemoryStream(bytes);
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
+            trigger.Content = $"Viewed image: {label}";
+            var panel = new StackPanel { Margin = new Thickness(16) };
+            panel.Children.Add(new TextBlock { Text = $"Viewed image: {label}", Foreground = Brushes.LightGreen, Margin = new Thickness(0, 0, 0, 10) });
+            panel.Children.Add(new Image { Source = bitmap, Stretch = Stretch.Uniform, MaxWidth = 1000, MaxHeight = 700 });
+            new Window { Title = "Image", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 900, Height = 760, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
+        }
+        catch (Exception exception) { ErrorDisplay.Text = $"Image could not be viewed: {exception.Message}"; }
+    }
+
+    private static byte[] ReadImageBytes(string source, string workingDirectory)
+    {
+        if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            var comma = source.IndexOf(',');
+            if (comma <= 5 || !source[..comma].Contains(";base64", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The image data is invalid.");
+            return Convert.FromBase64String(source[(comma + 1)..]);
+        }
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") throw new InvalidOperationException("Remote image URLs are not opened by PocketAgent.");
+        var full = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(workingDirectory, source));
+        var root = Path.GetFullPath(workingDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Images must be inside the conversation working directory.");
+        var info = new FileInfo(full);
+        if (!info.Exists) throw new FileNotFoundException("The image is no longer available on the desktop.");
+        if (info.Length > 16 * 1024 * 1024) throw new InvalidOperationException("That image is too large to view.");
+        return File.ReadAllBytes(full);
     }
     private void RenderWorkItem(DisplayItem item)
     {

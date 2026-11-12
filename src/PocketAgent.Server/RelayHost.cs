@@ -158,6 +158,12 @@ public static class RelayHost
         api.MapGet("/conversations/{id}/scheduled", (string id, LocalStore store) => store.Scheduled(id));
         api.MapGet("/conversations/{id}/history", async (string id, string? before, int? limit, Conversations conversations) =>
             await conversations.History(id, before, limit ?? 50));
+        api.MapGet("/conversations/{id}/images", async (string id, string? path, Conversations conversations) =>
+        {
+            if (string.IsNullOrWhiteSpace(path)) throw new ApiException(400, "An image path is required.");
+            var image = await conversations.ReadImage(id, path);
+            return Results.File(image.Bytes, image.ContentType, enableRangeProcessing: false);
+        });
         api.MapPost("/conversations/{id}/scheduled", (string id, ScheduleInput input, HttpContext context, ScheduledMessages messages) =>
             messages.Schedule(id, input.Text ?? "", input.DueAt, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId));
         api.MapPost("/scheduled/{id}/cancel", async (string id, ScheduledMessages messages) => { await messages.Cancel(id); return Results.NoContent(); });
