@@ -9,6 +9,16 @@ This file covers the Android companion application.
 - Hide the server's automatic five-minute `update requested` heartbeat prompt while keeping its progress response visible.
 - Moved usage and reset details into each server card so quotas stay scoped to the server account.
 - Reworked conversation tabs into a binder-style pane with selected-conversation actions in the pane title strip.
+- Restyled the conversation pane to visually join the selected tab, added a branded top bar with server switching and add-server controls, and kept the server machine visible above the conversations.
+- Kept the working directory in the pane header and moved status/model context above the composer without repeating the conversation title.
+- Moved scheduling below the filled Send action and increased the composer height for clearer primary/secondary actions.
+
+## 0.3.5 - 2026-11-12
+
+- Added persisted Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
+- Added a branded top bar with a current-server selector, separate add-server control, and settings access.
+- Restyled the conversation pane so the selected tab joins the pane, the working directory stays in the pane header, and the conversation title is not repeated.
+- Moved status/model context above the composer and placed the icon-only scheduling action below the filled Send button.
 
 ## 0.3.4 - 2026-11-11
 

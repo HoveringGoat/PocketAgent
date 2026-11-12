@@ -14,8 +14,9 @@ var installParent = Directory.GetParent(installRoot)?.FullName ?? throw new Inva
 var staging = Path.Combine(installParent, ".PocketAgent-update-" + Guid.NewGuid().ToString("N"));
 var archive = Path.Combine(staging, "package.zip");
 var extracted = Path.Combine(staging, "extracted");
-var backup = installRoot.TrimEnd(Path.DirectorySeparatorChar) + ".previous-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N");
-var movedOriginal = false;
+var backup = Path.Combine(staging, "backup");
+var replacementStarted = false;
+var parentExited = false;
 var healthFile = arguments.GetValueOrDefault("health-file");
 try
 {
@@ -35,14 +36,15 @@ try
     }
     WriteLog(logFile, "Package downloaded and checksum verified.");
     await WaitForExit(int.Parse(arguments["wait-pid"], System.Globalization.CultureInfo.InvariantCulture));
+    parentExited = true;
     WriteLog(logFile, "Parent application exited.");
     ZipFile.ExtractToDirectory(archive, extracted);
     var executable = Directory.EnumerateFiles(extracted, "PocketAgent.Desktop.exe", SearchOption.AllDirectories).SingleOrDefault();
     if (executable is null) return Fail("The update package did not contain the desktop executable.", logFile);
     var replacement = Directory.GetParent(executable)!.FullName;
-    Directory.Move(installRoot, backup);
-    movedOriginal = true;
-    Directory.Move(replacement, installRoot);
+    BackupDirectory(installRoot, backup);
+    replacementStarted = true;
+    ReplaceDirectoryContents(replacement, installRoot);
     var restart = new ProcessStartInfo(restartPath)
     {
         UseShellExecute = false,
@@ -58,9 +60,8 @@ try
     if (!healthy)
     {
         try { if (!process.HasExited) process.Kill(true); } catch { }
-        Directory.Move(installRoot, installRoot + ".failed-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N"));
-        Directory.Move(backup, installRoot);
-        movedOriginal = false;
+        ReplaceDirectoryContents(backup, installRoot);
+        replacementStarted = false;
         var rollbackRestart = new ProcessStartInfo(restartPath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = installRoot };
         if (!string.IsNullOrWhiteSpace(healthFile)) { rollbackRestart.ArgumentList.Add("--health-file"); rollbackRestart.ArgumentList.Add(healthFile); }
         Process.Start(rollbackRestart);
@@ -73,9 +74,10 @@ catch (Exception exception)
 {
     try
     {
-        if (movedOriginal && !Directory.Exists(installRoot) && Directory.Exists(backup)) Directory.Move(backup, installRoot);
+        if (replacementStarted && Directory.Exists(backup)) ReplaceDirectoryContents(backup, installRoot);
     }
     catch (Exception rollbackException) { WriteLog(logFile, $"Rollback failed: {rollbackException}"); }
+    if (parentExited) TryStart(restartPath);
     return Fail($"Update failed: {exception}", logFile);
 }
 finally
@@ -107,6 +109,36 @@ static async Task<bool> WaitForFile(string? path, TimeSpan timeout)
         await Task.Delay(250);
     }
     return false;
+}
+
+static void BackupDirectory(string source, string backup)
+{
+    Directory.CreateDirectory(backup);
+    CopyDirectory(source, backup);
+}
+
+static void ReplaceDirectoryContents(string source, string target)
+{
+    Directory.CreateDirectory(target);
+    foreach (var file in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)) File.Delete(file);
+    foreach (var directory in Directory.EnumerateDirectories(target, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length)) Directory.Delete(directory);
+    CopyDirectory(source, target);
+}
+
+static void CopyDirectory(string source, string target)
+{
+    Directory.CreateDirectory(target);
+    foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+    foreach (var directory in Directory.EnumerateDirectories(source)) CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
+}
+
+static void TryStart(string path)
+{
+    try
+    {
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(path) ?? AppContext.BaseDirectory });
+    }
+    catch { }
 }
 
 static int Fail(string message, string? logFile = null)

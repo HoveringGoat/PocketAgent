@@ -20,12 +20,10 @@
               <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="Stop work" Click="InterruptWork"/><TextBlock x:Name="ConversationMeta" VerticalAlignment="Center" Foreground="#C1DAA6"/></DockPanel>
             </Border>
             <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="90" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
+              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="105" MaxHeight="200" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
               <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12">
-                <StackPanel Orientation="Horizontal">
-                  <Button x:Name="SendButton" Content="Send" Click="SendMessage"/>
-                  <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol"/>
-                </StackPanel>
+                <Button x:Name="SendButton" Content="Send" Click="SendMessage" Background="#C1DAA6" Foreground="#111B17" MinWidth="104"/>
+                <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol" MinWidth="104"/>
                 <Button x:Name="ScheduledSummaryButton" Visibility="Collapsed" Click="ShowScheduled"/>
               </StackPanel>
             </Grid>

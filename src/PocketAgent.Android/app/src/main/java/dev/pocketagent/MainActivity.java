@@ -63,8 +63,9 @@ public final class MainActivity extends Activity {
   private String selected = "", tabSignature = "", transcriptSignature = "";
   private String historyBefore = "";
   private JSONObject conversation;
-  private LinearLayout root, tabs, transcript, metadata;
-  private TextView connection, conversationTitle, sessionLocation, error, context, usageView, scheduledNotice;
+  private LinearLayout root, tabs, transcript, metadata, contextSurface;
+  private Button serverSelector;
+  private TextView brand, serverMachine, sessionLocation, error, context, usageView, scheduledNotice;
   private JSONObject usageState;
   private JSONArray scheduledState = new JSONArray();
   private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
@@ -392,7 +393,8 @@ public final class MainActivity extends Activity {
     button.setMinimumWidth(scaledDp(44));
     button.setMinimumHeight(scaledDp(44));
     button.setPadding(scaledDp(10), scaledDp(10), scaledDp(10), scaledDp(10));
-    button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));
+    button.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
+    button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.TRANSPARENT));
     return button;
   }
 
@@ -566,26 +568,37 @@ public final class MainActivity extends Activity {
     scheduledState = new JSONArray();
     base();
     LinearLayout header = row();
-    connection = label("Connecting…", 15);
-    connection.setTypeface(null, Typeface.BOLD);
+    brand = label(getString(R.string.app_brand), 20);
+    brand.setTypeface(null, Typeface.BOLD);
     LinearLayout identity = column();
-    identity.addView(connection, match());
+    identity.addView(brand, match());
+    serverSelector = button(serverName, v -> showServers());
+    serverSelector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    serverSelector.setContentDescription("Current server " + serverName);
+    identity.addView(serverSelector, match());
+    serverMachine = label("", 11);
+    serverMachine.setTextColor(Color.rgb(143, 188, 143));
     header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
+    Button addServer = button("+", v -> showPairing());
+    addServer.setContentDescription("Add server");
+    header.addView(addServer);
     Button settings = button("\u2699\uFE0E", v -> showSettings());
     settings.setContentDescription("Settings");
     header.addView(settings);
     root.addView(header, match());
-    connection.setOnClickListener(v -> showSettings());
+    serverMachine.setContentDescription("Server machine");
+    root.addView(serverMachine, match());
     usageView = label("5h: unavailable - Weekly: unavailable", 11);
     usageView.setContentDescription("Usage remaining");
     usageView.setOnClickListener(v -> showUsage());
     root.addView(usageView, match());
     LinearLayout tabRow = row();
+    tabRow.setBackgroundColor(CARD);
     HorizontalScrollView tabScroll = new HorizontalScrollView(this);
     tabScroll.setHorizontalScrollBarEnabled(false);
     tabs = row();
     tabs.setBackgroundColor(CARD);
-    tabs.setPadding(dp(2), dp(2), dp(2), dp(2));
+    tabs.setPadding(dp(2), dp(2), dp(2), 0);
     tabScroll.addView(tabs);
     tabRow.addView(tabScroll, new LinearLayout.LayoutParams(0, -2, 1));
     Button add = button("+", v -> createConversation());
@@ -594,19 +607,13 @@ public final class MainActivity extends Activity {
     root.addView(tabRow, match());
 
     metadata = row();
-    metadata.setContentDescription("Conversation title, status, context, and actions");
+    metadata.setContentDescription("Conversation title, location, and actions");
     metadata.setBackgroundColor(CARD);
+    metadata.setPadding(dp(8), 0, dp(8), dp(4));
     LinearLayout paneIdentity = column();
-    conversationTitle = label(getString(R.string.conversation_select), 17);
-    conversationTitle.setTypeface(null, Typeface.BOLD);
-    paneIdentity.addView(conversationTitle, match());
     sessionLocation = label("", 11);
     sessionLocation.setTextColor(Color.rgb(143, 188, 143));
     paneIdentity.addView(sessionLocation, match());
-    context = label("", 12);
-    context.setMaxLines(1);
-    context.setOnClickListener(v -> showModels());
-    paneIdentity.addView(context, match());
     metadata.addView(paneIdentity, new LinearLayout.LayoutParams(0, -2, 1));
     LinearLayout actions = row();
     renameAction = iconButton(R.drawable.ic_edit, "Rename conversation", v -> renameSelectedConversation());
@@ -617,10 +624,6 @@ public final class MainActivity extends Activity {
     actions.addView(modelAction);
     actions.addView(archiveAction);
     actions.addView(archivedAction);
-    stop = button("Stop", v -> interrupt());
-    stop.setContentDescription("Stop work");
-    stop.setVisibility(View.GONE);
-    actions.addView(stop);
     metadata.addView(actions);
     setConversationActionsVisible(false);
     root.addView(metadata, match());
@@ -636,6 +639,19 @@ public final class MainActivity extends Activity {
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     error = errorLabel();
     root.addView(error, match());
+    contextSurface = row();
+    contextSurface.setContentDescription("Conversation status, model, reasoning, and permissions");
+    contextSurface.setPadding(dp(12), dp(8), dp(12), dp(8));
+    context = label("", 12);
+    context.setMaxLines(2);
+    context.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    context.setOnClickListener(v -> showModels());
+    contextSurface.addView(context, new LinearLayout.LayoutParams(0, -2, 1));
+    stop = button("Stop", v -> interrupt());
+    stop.setContentDescription("Stop work");
+    stop.setVisibility(View.GONE);
+    contextSurface.addView(stop);
+    root.addView(contextSurface, match());
     LinearLayout composeRow = row();
     composer = input("Message Codex");
     composer.setContentDescription("Message Codex");
@@ -643,17 +659,21 @@ public final class MainActivity extends Activity {
         InputType.TYPE_CLASS_TEXT
             | InputType.TYPE_TEXT_FLAG_MULTI_LINE
             | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-    composer.setMinLines(2);
+    composer.setMinLines(3);
     composer.setMaxLines(5);
     composer.setFilters(
         new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(32000)});
     composeRow.addView(composer, new LinearLayout.LayoutParams(0, -2, 1));
     send = button("Send", v -> submit());
     send.setContentDescription("Send message");
-    composeRow.addView(send);
     schedule = button("\u23F1\uFE0E", v -> scheduleMessage());
     schedule.setContentDescription("Schedule message");
-    composeRow.addView(schedule);
+    LinearLayout sendColumn = column();
+    send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+    send.setTextColor(BG);
+    sendColumn.addView(send, match());
+    sendColumn.addView(schedule, match());
+    composeRow.addView(sendColumn);
     root.addView(composeRow, match());
     scheduledNotice = button("", v -> showScheduled());
     scheduledNotice.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -694,7 +714,6 @@ public final class MainActivity extends Activity {
     olderHistory.remove(id);
     transcriptSignature = "";
     answers.clear();
-    conversationTitle.setText(R.string.conversation_loading);
     setConversationActionsVisible(false);
     loadDraft();
     transcript.removeAllViews();
@@ -745,10 +764,9 @@ public final class MainActivity extends Activity {
                   connected = true;
                   connectionStates.put(client.origin, true);
                   connectionErrors.remove(client.origin);
-                  connection.setText(R.string.connected);
                   renderTabs(sessions);
-                  connection.setText(serverName);
-                  connection.setContentDescription("Server " + serverName + " connected");
+                  serverSelector.setText(serverName);
+                  serverSelector.setContentDescription("Server " + serverName + " connected");
                   if (id.equals(selected)) {
                     scheduledState = pendingJobs;
                     updateScheduledNotice();
@@ -778,7 +796,8 @@ public final class MainActivity extends Activity {
                   connectionStates.put(client.origin, false);
                   connectionErrors.put(client.origin, safeError(ex));
                   connectionProblem = true;
-                  connection.setText(R.string.reconnecting);
+                  serverSelector.setText(serverName);
+                  serverSelector.setContentDescription("Server " + serverName + " reconnecting");
                   if (ex instanceof ApiClient.ApiError && ((ApiClient.ApiError) ex).status == 401) {
                     try {
                       store.remove(client.origin);
@@ -811,11 +830,18 @@ public final class MainActivity extends Activity {
       boolean active = id.equals(selected);
       tab.setTextColor(active ? Color.WHITE : ACCENT);
       tab.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
-      tab.setBackgroundTintList(android.content.res.ColorStateList.valueOf(active ? CARD : BG));
+      GradientDrawable tabBackground = new GradientDrawable();
+      tabBackground.setColor(active ? CARD : BG);
+      tabBackground.setCornerRadii(
+          active
+              ? new float[] {dp(8), dp(8), dp(8), dp(8), 0, 0, 0, 0}
+              : new float[] {dp(8), dp(8), dp(8), dp(8), dp(8), dp(8), dp(8), dp(8)});
+      if (active) tabBackground.setStroke(dp(1), Color.rgb(167, 186, 167));
+      tab.setBackground(tabBackground);
+      tab.setPadding(dp(16), dp(8), dp(16), dp(8));
       tabs.addView(tab);
     }
     if (selected.isEmpty()) {
-      conversationTitle.setText(R.string.conversation_select);
       setConversationActionsVisible(false);
     }
     if (sessions.length() == 0 && selected.isEmpty()) {
@@ -834,7 +860,7 @@ public final class MainActivity extends Activity {
     metadataBackground.setColor(CARD);
     metadataBackground.setCornerRadius(dp(6));
     metadataBackground.setStroke(dp(1), active.isEmpty() ? Color.rgb(71, 96, 75) : Color.rgb(167, 186, 167));
-    metadata.setBackground(metadataBackground);
+    contextSurface.setBackground(metadataBackground);
     if (!state.isNull("activeTurnStartedAt")) {
       try {
         status +=
@@ -853,11 +879,11 @@ public final class MainActivity extends Activity {
     String model = state.isNull("model") ? "Codex" : state.optString("model");
     String reasoning =
         state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
-    conversationTitle.setText(state.optString("title", "Conversation"));
     context.setText(getString(R.string.session_context_v2, status, model, reasoning));
+    serverMachine.setText(hostName);
     sessionLocation.setMaxLines(2);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-    sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
+    sessionLocation.setText(workingDirectory);
     setConversationActionsVisible(true);
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
@@ -1134,7 +1160,7 @@ public final class MainActivity extends Activity {
 
   private void renameSelectedConversation() {
     if (conversation == null || selected.isEmpty()) return;
-    rename(selected, conversation.optString("title", conversationTitle.getText().toString()));
+    rename(selected, conversation.optString("title", "Conversation"));
   }
 
   private void updateSend() {

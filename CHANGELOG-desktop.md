@@ -7,6 +7,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 - Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
 - Moved conversation actions into the selected conversation pane title strip and replaced text-heavy controls with compact rename, robot/model, archive, and archived-history actions.
 
+## 0.3.5 - 2026-11-12
+
+- Added persisted Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
+- Moved conversation actions into the selected conversation pane title strip and replaced text-heavy controls with compact rename, robot/model, archive, and archived-history actions.
+- Hardened the desktop updater replacement flow so an installed application directory is updated file-by-file without attempting to rename the live install root.
+
 ## 0.3.4 - 2026-11-11
 
 - Added image-reference actions to transcript rows so generated workspace images can be opened and identified after viewing.
