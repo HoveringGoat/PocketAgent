@@ -149,7 +149,9 @@ function Get-ChangelogSection([string]$path, [string]$version, [string]$label) {
 function New-ReleaseNotes([string]$version) {
     $desktop = Get-ChangelogSection (Join-Path $projectRoot 'CHANGELOG-desktop.md') $version 'Desktop/server'
     $android = Get-ChangelogSection (Join-Path $projectRoot 'CHANGELOG-android.md') $version 'Android'
-    $notes = "# PocketAgent $version`r`n`r`n$desktop`r`n`r`n$android`r`n"
+    $desktop = [regex]::Replace($desktop, '^##[^\r\n]*\r?\n', '', 1)
+    $android = [regex]::Replace($android, '^##[^\r\n]*\r?\n', '', 1)
+    $notes = "# PocketAgent $version`r`n`r`n## Desktop and server`r`n`r`n$desktop`r`n`r`n## Android`r`n`r`n$android`r`n"
     $path = Join-Path ([IO.Path]::GetTempPath()) ("PocketAgent-$version-release-notes-" + [Guid]::NewGuid().ToString('N') + '.md')
     [IO.File]::WriteAllText($path, $notes, [Text.UTF8Encoding]::new($false))
     return $path
