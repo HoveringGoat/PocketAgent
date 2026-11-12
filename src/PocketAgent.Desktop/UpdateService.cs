@@ -25,13 +25,13 @@ public static class UpdateService
         foreach (var release in root.EnumerateArray())
         {
             var candidateTag = release.TryGetProperty("tag_name", out var tagProperty) ? tagProperty.GetString() ?? "" : "";
-            if (!candidateTag.StartsWith("desktop-v", StringComparison.OrdinalIgnoreCase) || !TryVersion(candidateTag["desktop-".Length..], out var candidateVersion)) continue;
+            if (!TryDesktopVersion(candidateTag, out var candidateVersion)) continue;
             if (selected.ValueKind == JsonValueKind.Undefined || candidateVersion > selectedVersion) { selected = release; selectedVersion = candidateVersion; }
         }
         if (selected.ValueKind == JsonValueKind.Undefined) return null;
         root = selected;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
-        if (!TryVersion(tag, out var version) || version <= Version.Parse(BuildInfo.Version)) return null;
+        if (!TryDesktopVersion(tag, out var version) || version <= Version.Parse(BuildInfo.Version)) return null;
         var assets = root.GetProperty("assets").EnumerateArray().ToArray();
         var desktop = assets.FirstOrDefault(asset => asset.GetProperty("name").GetString()?.EndsWith("-desktop.zip", StringComparison.OrdinalIgnoreCase) == true);
         if (desktop.ValueKind == JsonValueKind.Undefined) return null;
@@ -85,5 +85,15 @@ public static class UpdateService
     {
         var value = tag.StartsWith('v') ? tag[1..] : tag;
         return Version.TryParse(value, out version!);
+    }
+
+    private static bool TryDesktopVersion(string tag, out Version version)
+    {
+        if (!tag.StartsWith("desktop-v", StringComparison.OrdinalIgnoreCase))
+        {
+            version = new Version(0, 0, 0);
+            return false;
+        }
+        return TryVersion(tag["desktop-".Length..], out version);
     }
 }

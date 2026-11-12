@@ -2,6 +2,10 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
+## 0.3.3 - 2026-11-11
+
+- Fixed desktop update checks so `desktop-v<version>` releases are compared against the running version.
+
 ## 0.3.2 - 2026-11-11
 
 - Fixed the schedule dialog crash caused by initializing the hour selector with

@@ -19,6 +19,10 @@ internal static class Program
         application.InitializeComponent();
         try
         {
+            var parser = typeof(UpdateService).GetMethod("TryDesktopVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var parseArguments = new object?[] { "desktop-v0.3.2", null };
+            if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
+                throw new InvalidOperationException("The desktop updater must parse its platform release tag.");
             var window = new MainWindow();
             var hourMethod = typeof(MainWindow).GetMethod("TwelveHourClockHour", BindingFlags.NonPublic | BindingFlags.Static)!;
             if ((int)hourMethod.Invoke(null, [new DateTime(2026, 1, 1, 0, 0, 0)])! != 12 ||
