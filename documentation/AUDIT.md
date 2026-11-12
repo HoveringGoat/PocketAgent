@@ -94,14 +94,13 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 - Desktop/server and Android versions are not independently released. Android now ignores a newer release unless that release contains the matching APK asset, but it still uses the shared latest-release endpoint and tag; fully independent release channels remain open.
 - Android still formats status, model/reasoning and directory on separate lines in the lower context bar. Only the desktop header relocation is present in source after the 0.2.2 build. The requested mobile layout remains unfinished.
 - Android truncates combined release notes at 1,200 characters; an Android section after lengthy desktop notes can be hidden. It offers the full release page, but does not filter notes by app.
-- Documentation previously claimed no installer/startup/updater existed even though source and releases contain those features. Compilation/readability checks did not establish packaged updater correctness.
+- Documentation was corrected in this pass. Compilation/readability checks still do not establish a complete installed upgrade.
 
 ## Recommended order
 
-1. Correct updater packaging, readiness, restart health and rollback as one tested flow, including an isolated packaged upgrade with failure injection.
-2. Make release tags identify the exact source commit and establish independent desktop/Android releases and update discovery.
-3. Correct pending-message acknowledgment and rejection handling.
-4. Bound/paginate history and reduce conversation lock contention.
-5. Finish native layout consistency, manual update preferences, and worker failure handling.
+1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
+2. Establish independent desktop/Android release channels and filtered release notes.
+3. Add server-issued/client-correlated message IDs and true paginated history/incremental rendering.
+4. Finish the requested Android context-bar layout and expose worker health diagnostics.
 
-No runtime fixes, version bumps, commits, or builds were made during this audit. The only repository changes are this report and documentation navigation/corrections.
+This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.
