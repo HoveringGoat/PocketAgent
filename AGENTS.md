@@ -29,6 +29,7 @@
 - Keep linting, formatting, and warnings clean on touched files before handoff.
 - Record validation commands that were run and call out environment limitations that affect verification.
 - Increment the patch once per completed change set after the initial 0.1.0 milestone.
+- When a change may warrant a minor or major version bump, suggest that classification to the user, but do not choose or apply a minor/major bump without explicit user approval. Apply the user-selected version consistently across version files, changelogs, release notes, and artifacts.
 
 ## Deployment standards
 
