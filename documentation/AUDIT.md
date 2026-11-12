@@ -63,7 +63,7 @@ Implementation status: publish now requires a clean worktree whose branch is syn
 
 `mergeOptimistic` also reconciles by matching text anywhere in history. Repeating an earlier prompt can consume the new pending item immediately. Desktop uses a similar text/time heuristic. A client message ID and explicit delivery states would make acknowledgment reliable.
 
-Implementation status: mobile definite 4xx rejections now remove the corresponding optimistic item immediately, while 5xx/network failures continue to be shown as unknown delivery. Mobile and desktop reconciliation now require matching text plus a bounded timestamp and do not reuse the same canonical item for multiple pending entries. A server-issued/client-correlated message ID remains a future hardening step.
+Implementation status: mobile definite 4xx rejections now remove the corresponding optimistic item immediately, while 5xx/network failures continue to be shown as unknown delivery. Both clients now generate and submit a client message ID; receipts, scheduled jobs and canonical user items carry it, and reconciliation prefers that identity before the bounded timestamp fallback. Persisted idempotency across a host restart remains future hardening.
 
 ### A6 - Medium: long conversations eventually cannot load on Android
 
@@ -100,7 +100,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
 2. Establish independent desktop/Android release channels and filtered release notes.
-3. Add server-issued/client-correlated message IDs and true paginated history/incremental rendering.
+3. Add persisted idempotency for message IDs and true paginated history/incremental rendering.
 4. Finish the requested Android context-bar layout and expose worker health diagnostics.
 
 This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.

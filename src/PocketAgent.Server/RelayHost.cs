@@ -156,7 +156,7 @@ public static class RelayHost
         api.MapGet("/scheduled", (LocalStore store) => store.Scheduled());
         api.MapGet("/conversations/{id}/scheduled", (string id, LocalStore store) => store.Scheduled(id));
         api.MapPost("/conversations/{id}/scheduled", (string id, ScheduleInput input, HttpContext context, ScheduledMessages messages) =>
-            messages.Schedule(id, input.Text ?? "", input.DueAt, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+            messages.Schedule(id, input.Text ?? "", input.DueAt, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId));
         api.MapPost("/scheduled/{id}/cancel", async (string id, ScheduledMessages messages) => { await messages.Cancel(id); return Results.NoContent(); });
         api.MapPost("/logout", (HttpContext context, LocalStore store) =>
         {
@@ -174,7 +174,7 @@ public static class RelayHost
         api.MapGet("/conversations/{id}", (string id, Conversations conversations) => conversations.Get(id));
         api.MapPost("/conversations/{id}/messages", async (string id, MessageInput input, ScheduledMessages messages, HttpContext context) =>
         {
-            var receipt = await messages.Send(id, input.Text ?? "", input.ExpectedTurnId, context.User.FindFirstValue(ClaimTypes.NameIdentifier));
+            var receipt = await messages.Send(id, input.Text ?? "", input.ExpectedTurnId, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId);
             return Results.Accepted(value: receipt);
         });
         api.MapPost("/conversations/{id}/interrupt", async (string id, Conversations conversations) =>
@@ -197,5 +197,5 @@ public sealed record PairInput(string? Code, string? DeviceName);
 public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null, string? ReasoningEffort = null);
 public sealed record ModelInput(string? Model);
 public sealed record ReasoningInput(string? Effort);
-public sealed record MessageInput(string? Text, string? ExpectedTurnId = null);
-public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt);
+public sealed record MessageInput(string? Text, string? ExpectedTurnId = null, string? ClientMessageId = null);
+public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt, string? ClientMessageId = null);

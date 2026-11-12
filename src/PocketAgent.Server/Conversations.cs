@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace PocketAgent;
 
-public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null);
+public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
 public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
 public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false);
@@ -29,6 +29,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         public string? ActivePrompt { get; set; }
         public string? SourceDeviceId { get; set; }
         public string? ScheduledMessageId { get; set; }
+        public Queue<(string Id, string Text)> ClientMessages { get; } = [];
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public List<DisplayItem> Items { get; } = [];
         public Dictionary<string, (JsonElement RpcId, PendingRequest Request)> Requests { get; } = [];
@@ -196,7 +197,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null)
+    public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
             throw new ApiException(400, "Messages must contain 1–32,000 characters.");
@@ -219,6 +220,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                     });
                     if (result.Text("turnId") != expectedTurnId)
                         throw new ApiException(504, "Codex did not confirm the expected turn. Steering delivery is unknown; do not resend automatically.");
+                    if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text));
                 }
                 catch (ApiException exception) when (exception.Status is 503 or 504)
                 {
@@ -242,6 +244,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             state.Status = "starting";
             state.Error = null;
             state.ActivePrompt = text; state.SourceDeviceId = sourceDeviceId; state.ScheduledMessageId = scheduledMessageId;
+            if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text));
             state.HasWork = false; state.ActiveTurnStartedAt = DateTimeOffset.UtcNow;
             try
             {
@@ -388,8 +391,18 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         else state.ActiveTurnStartedAt = times.Start;
         var items = turn.Field("items");
         if (items.ValueKind == JsonValueKind.Array)
+        {
             foreach (var item in items.EnumerateArray())
-                Upsert(state, Render(item) with { Timestamp = state.Hydrating ? null : item.Text("type") == "userMessage" ? times.Start : times.End ?? times.Start });
+            {
+                var rendered = Render(item) with { Timestamp = state.Hydrating ? null : item.Text("type") == "userMessage" ? times.Start : times.End ?? times.Start };
+                if (!state.Hydrating && rendered.Type == "userMessage" && state.ClientMessages.TryPeek(out var pending) && string.Equals(pending.Text, rendered.Text, StringComparison.Ordinal))
+                {
+                    state.ClientMessages.Dequeue();
+                    rendered = rendered with { ClientMessageId = pending.Id };
+                }
+                Upsert(state, rendered);
+            }
+        }
     }
 
     private void Upsert(State state, DisplayItem item)

@@ -774,9 +774,12 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < canonical.length(); i++) {
           if (matched.contains(i)) continue;
           JSONObject existing = canonical.optJSONObject(i);
-          if (existing != null && "userMessage".equals(existing.optString("type"))
-              && item.optString("text").equals(existing.optString("text"))
-              && withinMinutes(item.optString("timestamp"), existing.optString("timestamp"), 10)) {
+          if (existing != null
+              && ((item.optString("clientMessageId").length() > 0
+                      && item.optString("clientMessageId").equals(existing.optString("clientMessageId")))
+                  || ("userMessage".equals(existing.optString("type"))
+                      && item.optString("text").equals(existing.optString("text"))
+                      && withinMinutes(item.optString("timestamp"), existing.optString("timestamp"), 10)))) {
             found = true;
             matched.add(i);
             break;
@@ -891,6 +894,7 @@ public final class MainActivity extends Activity {
     ApiClient client = api;
     JSONObject state = conversation;
     final String optimisticId = "local-" + java.util.UUID.randomUUID();
+    final String clientMessageId = java.util.UUID.randomUUID().toString();
     try {
       JSONObject optimistic =
           new JSONObject()
@@ -898,6 +902,7 @@ public final class MainActivity extends Activity {
               .put("type", "userMessage")
               .put("text", text)
               .put("status", "pending")
+              .put("clientMessageId", clientMessageId)
               .put("timestamp", java.time.Instant.now().toString());
       optimisticItems.computeIfAbsent(id, ignored -> new java.util.ArrayList<>()).add(optimistic);
       renderConversation(state);
@@ -905,7 +910,7 @@ public final class MainActivity extends Activity {
     }
     action(
         () -> {
-          JSONObject body = new JSONObject().put("text", text);
+          JSONObject body = new JSONObject().put("text", text).put("clientMessageId", clientMessageId);
           if (!state.isNull("activeTurnId"))
             body.put("expectedTurnId", state.getString("activeTurnId"));
           return client.request("/conversations/" + ApiClient.segment(id) + "/messages", body);
@@ -1538,7 +1543,7 @@ public final class MainActivity extends Activity {
                             () ->
                                 client.request(
                                     "/conversations/" + ApiClient.segment(id) + "/scheduled",
-                                    new JSONObject().put("text", text).put("dueAt", due)),
+                                    new JSONObject().put("text", text).put("dueAt", due).put("clientMessageId", java.util.UUID.randomUUID().toString())),
                             result -> {
                               if (store.draft(client.origin, id).equals(text))
                                 store.draft(client.origin, id, "");

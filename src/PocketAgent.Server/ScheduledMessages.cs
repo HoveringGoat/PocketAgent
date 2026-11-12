@@ -1,39 +1,40 @@
 namespace PocketAgent;
 
-public sealed record MessageReceipt(bool Queued, string? ScheduleId = null, DateTimeOffset? DueAt = null, string? Message = null);
+public sealed record MessageReceipt(bool Queued, string? ScheduleId = null, DateTimeOffset? DueAt = null, string? Message = null, string? ClientMessageId = null);
 
 public sealed class ScheduledMessages(LocalStore store, Conversations conversations, ProviderUsage usage, CodexConnection codex,
     ProgressPublisher publisher, IHostApplicationLifetime application, ILogger<ScheduledMessages> logger) : BackgroundService
 {
-    public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId)
+    public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId, string? clientMessageId = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32000) throw new ApiException(400, "Messages must contain 1–32,000 characters.");
+        if (!string.IsNullOrWhiteSpace(clientMessageId) && clientMessageId.Length > 100) throw new ApiException(400, "Message IDs are too long.");
         var state = await conversations.Get(id);
         if (state.Archived) throw new ApiException(409, "Restore this conversation before sending messages.");
         if (state.Status is "starting" or "uncertain" or "disconnected") throw new ApiException(409, "Wait until the conversation state is confirmed before submitting.");
         if (expectedTurnId is not null && state.ActiveTurnId != expectedTurnId || expectedTurnId is null && state.ActiveTurnId is not null)
             throw new ApiException(409, "Conversation activity changed. Refresh before submitting.");
         var limits = await usage.Check();
-        if (limits.Exhausted) return await Defer(id, text, limits, deviceId);
-        try { await conversations.StartTurn(id, text, expectedTurnId, deviceId); }
+        if (limits.Exhausted) return await Defer(id, text, limits, deviceId, clientMessageId);
+        try { await conversations.StartTurn(id, text, expectedTurnId, deviceId, clientMessageId: clientMessageId); }
         catch (ApiException exception) when (exception.Status == 429)
-        { return await Defer(id, text, await usage.Check(true), deviceId); }
-        return new(false);
+        { return await Defer(id, text, await usage.Check(true), deviceId, clientMessageId); }
+        return new(false, ClientMessageId: clientMessageId);
     }
 
-    private async Task<MessageReceipt> Defer(string id, string text, UsageStatus limits, string? deviceId)
+    private async Task<MessageReceipt> Defer(string id, string text, UsageStatus limits, string? deviceId, string? clientMessageId)
     {
         var due = limits.NextResetAt ?? DateTimeOffset.UtcNow.AddMinutes(5);
-        var job = store.Schedule(id, text, due, "usage-reset", deviceId);
+        var job = store.Schedule(id, text, due, "usage-reset", deviceId, clientMessageId);
         await publisher.Changed(id);
         return new(true, job.Id, limits.NextResetAt, limits.NextResetAt is null
             ? "Queued until usage becomes available. The provider has not reported a reset time."
-            : "Queued for after usage resets. The desktop must remain running.");
+            : "Queued for after usage resets. The desktop must remain running.", clientMessageId);
     }
 
-    public async Task<ScheduledMessage> Schedule(string id, string text, DateTimeOffset due, string? deviceId)
+    public async Task<ScheduledMessage> Schedule(string id, string text, DateTimeOffset due, string? deviceId, string? clientMessageId = null)
     {
-        var job = store.Schedule(id, text, due, "scheduled", deviceId);
+        var job = store.Schedule(id, text, due, "scheduled", deviceId, clientMessageId);
         await publisher.Changed(id); return job;
     }
     public async Task Cancel(string id)
@@ -73,7 +74,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
                     claimed = true;
                     try
                     {
-                        await conversations.StartTurn(job.ConversationId, job.Text, sourceDeviceId: job.DeviceId, scheduledMessageId: job.Id);
+                        await conversations.StartTurn(job.ConversationId, job.Text, sourceDeviceId: job.DeviceId, scheduledMessageId: job.Id, clientMessageId: job.Id);
                         store.UpdateSchedule(job.Id, "submitted", expectedStatus: "dispatching");
                     }
                     catch (ApiException exception)

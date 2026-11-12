@@ -461,7 +461,8 @@ public partial class MainWindow : Window
             {
                 if (matched.Contains(index)) continue;
                 var existing = canonical[index];
-                if (existing.Type == "userMessage" && existing.Text == item.Text && existing.Timestamp is { } existingTime && item.Timestamp is { } itemTime && Math.Abs((existingTime - itemTime).TotalMinutes) < 10)
+                if ((item.ClientMessageId is not null && existing.ClientMessageId == item.ClientMessageId) ||
+                    (existing.Type == "userMessage" && existing.Text == item.Text && existing.Timestamp is { } existingTime && item.Timestamp is { } itemTime && Math.Abs((existingTime - itemTime).TotalMinutes) < 10))
                 {
                     match = index;
                     break;
@@ -578,7 +579,8 @@ public partial class MainWindow : Window
     {
         if (sending || relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) return;
         var id = conversation.Id; var expectedTurn = conversation.ActiveTurnId; var text = Composer.Text;
-        var optimistic = new DisplayItem($"local-{Guid.NewGuid():N}", "userMessage", text, "", "pending", DateTimeOffset.UtcNow);
+        var clientMessageId = Guid.NewGuid().ToString("N");
+        var optimistic = new DisplayItem($"local-{clientMessageId}", "userMessage", text, "", "pending", DateTimeOffset.UtcNow, clientMessageId);
         if (!optimisticItems.TryGetValue(id, out var pending)) optimisticItems[id] = pending = [];
         pending.Add(optimistic);
         conversation = conversation with { Items = conversation.Items.Append(optimistic).ToArray() };
@@ -588,8 +590,13 @@ public partial class MainWindow : Window
         var accepted = false;
         await Act(async () =>
         {
-            var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null);
+            var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null, clientMessageId);
             accepted = true;
+            if (optimisticItems.TryGetValue(id, out var acknowledged))
+            {
+                var index = acknowledged.FindIndex(item => item.ClientMessageId == clientMessageId);
+                if (index >= 0) acknowledged[index] = acknowledged[index] with { Status = receipt.Queued ? "queued" : "accepted" };
+            }
             if (receipt.Queued) ErrorDisplay.Text = receipt.Message;
             if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
             if (selected == id && Composer.Text == text) Composer.Clear();
@@ -822,7 +829,7 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             var local = SelectedLocal() ?? throw new InvalidOperationException("Choose a date and time.");
-            await relay.Services.GetRequiredService<ScheduledMessages>().Schedule(id, text, new DateTimeOffset(local), null);
+            await relay.Services.GetRequiredService<ScheduledMessages>().Schedule(id, text, new DateTimeOffset(local), null, Guid.NewGuid().ToString("N"));
             if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
             if (selected == id && Composer.Text == text) Composer.Clear();
             UpdateScheduledSummary(id);
