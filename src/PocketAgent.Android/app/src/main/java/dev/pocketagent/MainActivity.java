@@ -447,6 +447,7 @@ public final class MainActivity extends Activity {
     metadata.setContentDescription("Conversation status and context");
     metadata.setBackgroundColor(CARD);
     context = label("Select a conversation", 12);
+    context.setMaxLines(1);
     context.setOnClickListener(v -> showModels());
     metadata.addView(context, new LinearLayout.LayoutParams(0, -2, 1));
     context.setOnLongClickListener(
@@ -660,13 +661,13 @@ public final class MainActivity extends Activity {
       }
     } else if (!state.isNull("lastWorkDurationMs"))
       status += " · worked " + elapsed(state.optLong("lastWorkDurationMs"));
-    String model = state.isNull("model") ? "Codex" : state.optString("model");
-    String reasoning = state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
     String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
-    context.setText(getString(R.string.session_context_v2, status, model, reasoning, workingDirectory)
+    context.setText(getString(R.string.session_context_v2, status)
         + (state.optBoolean("historyTruncated") ? " · older history is hidden" : ""));
-    sessionLocation.setText(getString(R.string.session_location, hostName));
+    sessionLocation.setMaxLines(2);
+    sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+    sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");

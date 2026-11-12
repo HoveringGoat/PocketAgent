@@ -92,7 +92,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 ## Requirements still incomplete
 
 - Desktop/server and Android versions are not independently released. Android now ignores a newer release unless that release contains the matching APK asset, but it still uses the shared latest-release endpoint and tag; fully independent release channels remain open.
-- Android still formats status, model/reasoning and directory on separate lines in the lower context bar. Only the desktop header relocation is present in source after the 0.2.2 build. The requested mobile layout remains unfinished.
+- Android now keeps the lower context bar to status/work information and moves the server machine plus conversation working directory into the header location line. Model/reasoning remain available through the model control rather than being repeated in the status bar.
 - Android truncates combined release notes at 1,200 characters; an Android section after lengthy desktop notes can be hidden. It offers the full release page, but does not filter notes by app.
 - Documentation was corrected in this pass. Compilation/readability checks still do not establish a complete installed upgrade.
 
