@@ -70,6 +70,7 @@ public partial class MainWindow : Window
         CheckUpdatesOnStartupSetting.IsChecked = settings.CheckUpdatesOnStartup;
         CheckUpdatesPeriodicallySetting.IsChecked = settings.CheckUpdatesPeriodically;
         AutomaticUpdatesSetting.IsChecked = settings.AutomaticUpdates;
+        HeartbeatSetting.IsChecked = settings.Host.EnableHeartbeats;
         AddressSetting.Text = settings.Host.ListenAddress;
         PortSetting.Text = settings.Host.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         CertificateSetting.Text = settings.Host.CertificatePath;
@@ -162,6 +163,7 @@ public partial class MainWindow : Window
                 PublicOrigin = "",
                 DirectOrigin = DirectOriginSetting.Text.Trim(),
                 PinnedCertificate = settings.Host.PinnedCertificate && CertificateSetting.Text.Trim() == settings.Host.CertificatePath,
+                EnableHeartbeats = HeartbeatSetting.IsChecked == true,
                 PermissionMode = PermissionModeSetting.SelectedValue as string ?? "inherit",
                 DataDirectory = DesktopSettings.DirectoryPath
             }
@@ -414,7 +416,7 @@ public partial class MainWindow : Window
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
-            UsageDisplay.Text = $"5h: {UsageText(usage.FiveHour)} · Weekly: {UsageText(usage.Weekly)}";
+            UsageDisplay.Text = $"5hr: {UsageText(usage.FiveHour, true)} | weekly: {UsageText(usage.Weekly, false)}";
             UsageDisplay.ToolTip = $"Five-hour reset: {usage.FiveHour?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}\nWeekly reset: {usage.Weekly?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}";
             var signature = JsonSerializer.Serialize(sessions);
             if (selected is not null && !sessions.Any(session => session.Id == selected))
@@ -863,7 +865,13 @@ public partial class MainWindow : Window
         if (File.Exists(file)) Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
         else ErrorDisplay.Text = "See documentation/SETUP.md in the repository or release package.";
     }
-    private static string UsageText(UsageWindow? window) => window is null ? "unavailable" : $"{window.RemainingPercent}%";
+    private static string UsageText(UsageWindow? window, bool fiveHour)
+    {
+        if (window is null) return "unavailable";
+        var reset = window.ResetsAt?.ToLocalTime();
+        var resetText = reset is null ? "reset unavailable" : reset.Value.ToString(fiveHour ? "h:mm tt" : "M/d/yy", System.Globalization.CultureInfo.CurrentCulture);
+        return $"{window.RemainingPercent}% {resetText}";
+    }
     private static string Elapsed(long milliseconds)
     {
         var time = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));

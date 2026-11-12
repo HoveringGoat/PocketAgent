@@ -54,6 +54,7 @@
           <CheckBox x:Name="CheckUpdatesOnStartupSetting" Content="Check for updates when PocketAgent starts"/>
           <CheckBox x:Name="CheckUpdatesPeriodicallySetting" Content="Check periodically while PocketAgent is running"/>
           <CheckBox x:Name="AutomaticUpdatesSetting" Content="Install updates automatically during a safe idle window"/>
+           <CheckBox x:Name="HeartbeatSetting" Content="Send a hidden progress update every five minutes while a conversation is working"/>
           <TextBlock x:Name="UpdateStatus" Foreground="#A7BAA7" Margin="0,4,0,4" TextWrapping="Wrap"/>
           <WrapPanel><Button Content="Check for updates now" Click="CheckForUpdates"/><Button Content="View release notes" x:Name="UpdateNotesButton" Visibility="Collapsed" Click="ViewReleaseNotes"/><Button Content="Download and install update" Click="InstallUpdate"/></WrapPanel>
           <TextBlock Text="Default working folder (new conversations can choose another)"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>

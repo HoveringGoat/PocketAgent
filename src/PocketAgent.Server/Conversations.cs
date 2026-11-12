@@ -143,6 +143,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     public async Task TryHeartbeat(string id)
     {
+        if (!settings.EnableHeartbeats) return;
         var state = await GetState(id).ConfigureAwait(false);
         await state.Gate.WaitAsync();
         try

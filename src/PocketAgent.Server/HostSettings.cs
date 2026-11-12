@@ -16,6 +16,7 @@ public sealed class HostSettings
     public string PublicOrigin { get; set; } = "";
     public string DirectOrigin { get; set; } = "";
     public bool PinnedCertificate { get; set; }
+    public bool EnableHeartbeats { get; set; } = true;
     public string PermissionMode { get; set; } = "inherit";
     public string[] CodexArguments { get; set; } = [];
     public bool UseHttps => CertificatePath.Length > 0;

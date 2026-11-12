@@ -84,6 +84,8 @@ The 0.2.2 release includes the direct desktop updater handoff, updater diagnosti
 
 ## Usage and scheduled messages
 
+Desktop summarizes usage compactly, for example `5hr: 80% 8:14 PM | weekly: 20% 11/17/26`; hover the line for full local reset timestamps. Android's usage details remain available from its usage control/menu.
+
 The usage line shows provider-reported five-hour/weekly percentage remaining. Tap it (or **⋮ > Usage and resets**) for local reset times. Missing or unsupported windows say unavailable. This is the same desktop account/process used for conversations. PocketAgent does not purchase credits or consume reset credits.
 
 If a known usage window is exhausted, Send acknowledges that the prompt is queued for after reset. With no reported reset time it says so and rechecks availability. A provider-reported quota failure before any known execution also queues the original prompt. Partial work and unknown delivery are not automatically repeated.

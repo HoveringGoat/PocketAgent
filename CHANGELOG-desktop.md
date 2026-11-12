@@ -2,6 +2,11 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
+## 0.3.1 - Unreleased
+
+- Added a persisted desktop toggle for five-minute hidden progress heartbeats, enabled by default.
+- Compact desktop usage summaries now show remaining percentage and the next reset in local time; hover still shows full reset timestamps.
+
 ## 0.3.0 - 2026-11-11
 
 - Added a top-level desktop Menu for Sessions, Devices, general settings, update checks, release notes, and version information.
