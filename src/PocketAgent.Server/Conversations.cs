@@ -5,7 +5,8 @@ namespace PocketAgent;
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
 public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null);
+public sealed record ConversationHistoryPage(DisplayItem[] Items, bool HasMore, string? Before);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
 public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics) : BackgroundService
@@ -13,6 +14,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     private const int MaxSnapshotItems = 200;
     private const int MaxSnapshotText = 8_000;
     private const int MaxSnapshotDetail = 16_000;
+    private const int DefaultHistoryPageSize = 50;
+    private const int MaxHistoryPageSize = 100;
     private sealed class State(ConversationReference reference)
     {
         public ConversationReference Reference { get; set; } = reference;
@@ -94,6 +97,26 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         await hydrated.Gate.WaitAsync();
         try { return Snapshot(hydrated); }
         finally { hydrated.Gate.Release(); }
+    }
+
+    public async Task<ConversationHistoryPage> History(string id, string? before, int limit)
+    {
+        var state = await GetState(id).ConfigureAwait(false);
+        await state.Gate.WaitAsync();
+        try
+        {
+            var pageSize = Math.Clamp(limit <= 0 ? DefaultHistoryPageSize : limit, 1, MaxHistoryPageSize);
+            var end = state.Items.Count;
+            if (!string.IsNullOrWhiteSpace(before))
+            {
+                end = state.Items.FindIndex(item => item.Id == before);
+                if (end < 0) throw new ApiException(400, "That history cursor is no longer valid. Refresh the conversation.");
+            }
+            var start = Math.Max(0, end - pageSize);
+            var items = state.Items.Skip(start).Take(end - start).Select(Bounded).ToArray();
+            return new(items, start > 0, start > 0 ? state.Items[start].Id : null);
+        }
+        finally { state.Gate.Release(); }
     }
 
     private async Task<State> GetState(string id)
@@ -438,15 +461,15 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     private ConversationSnapshot Snapshot(State state)
     {
-        var historyTruncated = state.Items.Count > MaxSnapshotItems;
-        var items = state.Items
-            .Skip(Math.Max(0, state.Items.Count - MaxSnapshotItems))
-            .Select(item => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) })
-            .ToArray();
+        var first = Math.Max(0, state.Items.Count - MaxSnapshotItems);
+        var historyTruncated = first > 0;
+        var items = state.Items.Skip(first).Select(Bounded).ToArray();
         return new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
             items, state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
-            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated);
+            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated, historyTruncated ? state.Items[first].Id : null);
     }
+
+    private static DisplayItem Bounded(DisplayItem item) => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) };
 
     private static string Limit(string value, int length) => value.Length <= length ? value : value[..length] + "\n[output truncated]";
 

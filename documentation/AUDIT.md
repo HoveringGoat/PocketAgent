@@ -69,7 +69,7 @@ Implementation status: mobile definite 4xx rejections now remove the correspondi
 
 `Conversations.Snapshot` includes every accumulated item and tool output. `ApiClient.java:107` rejects responses exceeding 8 MiB, while the server has no snapshot pagination or matching response bound. A sufficiently large command output or conversation permanently trips that limit for the selected history.
 
-Before that limit, Android rebuilds the entire transcript widget tree on each changed snapshot. Desktop bounds its rendered view but still receives/serializes the complete snapshot. Implementation status: snapshots are now bounded to the latest 200 items, text/detail fields are capped before serialization, and both clients show when older history is hidden. Provider hydration still walks the full provider history, so true server-side pagination/incremental rendering remains future work.
+Before that limit, Android rebuilds the entire transcript widget tree on each changed snapshot. Desktop bounds its rendered view but still receives/serializes the complete snapshot. Implementation status: snapshots are bounded to the latest 200 items, text/detail fields are capped before serialization, and `/history` provides cursor-based older pages. Both clients request those pages when the user scrolls to the top and merge them into the transcript. Provider hydration still walks the full provider history internally, and incremental widget rendering remains future work.
 
 ### A7 - Medium: one slow conversation operation blocks all conversations
 
@@ -100,7 +100,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
 2. Filter release notes to the active platform and keep independent channel changelogs visible in update prompts.
-3. Add persisted idempotency for message IDs and true paginated history/incremental rendering.
+3. Add persisted idempotency for message IDs and incremental widget rendering.
 4. Expose worker health diagnostics.
 
 This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.

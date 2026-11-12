@@ -155,6 +155,8 @@ public static class RelayHost
         api.MapGet("/usage", (ProviderUsage usage) => usage.Check());
         api.MapGet("/scheduled", (LocalStore store) => store.Scheduled());
         api.MapGet("/conversations/{id}/scheduled", (string id, LocalStore store) => store.Scheduled(id));
+        api.MapGet("/conversations/{id}/history", async (string id, string? before, int? limit, Conversations conversations) =>
+            await conversations.History(id, before, limit ?? 50));
         api.MapPost("/conversations/{id}/scheduled", (string id, ScheduleInput input, HttpContext context, ScheduledMessages messages) =>
             messages.Schedule(id, input.Text ?? "", input.DueAt, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId));
         api.MapPost("/scheduled/{id}/cancel", async (string id, ScheduledMessages messages) => { await messages.Cancel(id); return Results.NoContent(); });

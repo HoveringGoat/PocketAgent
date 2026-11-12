@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
   private SessionStore store;
   private ApiClient api;
   private String selected = "", tabSignature = "", transcriptSignature = "";
+  private String historyBefore = "";
   private JSONObject conversation;
   private LinearLayout root, tabs, transcript, metadata;
   private TextView connection, sessionLocation, error, context, usageView;
@@ -51,12 +52,14 @@ public final class MainActivity extends Activity {
   private JSONArray scheduledState = new JSONArray();
   private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
   private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> optimisticItems = new java.util.HashMap<>();
+  private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> olderHistory = new java.util.HashMap<>();
+  private final java.util.HashMap<String, String> historyCursors = new java.util.HashMap<>();
   private long usageReadAt;
   private String serverName = "PocketAgent";
   private EditText composer;
   private Button send, stop, schedule;
   private ScrollView scroll;
-  private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem;
+  private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading;
   private boolean updateCheckStarted;
   private int generation;
   private final Map<String, String> answers = new HashMap<>();
@@ -482,6 +485,10 @@ public final class MainActivity extends Activity {
     root.addView(tabRow, match());
     scroll = new ScrollView(this);
     scroll.setFillViewport(true);
+    scroll.setOnScrollChangeListener(
+        (view, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+          if (scrollY <= dp(24) && oldScrollY > scrollY && scroll.getChildCount() > 0 && scroll.getChildAt(0).getHeight() > scroll.getHeight()) loadOlderHistory();
+        });
     transcript = column();
     scroll.addView(transcript);
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -552,6 +559,9 @@ public final class MainActivity extends Activity {
     selected = id;
     store.select(api.origin, id);
     conversation = null;
+    historyBefore = "";
+    historyCursors.remove(id);
+    olderHistory.remove(id);
     transcriptSignature = "";
     answers.clear();
     loadDraft();
@@ -683,6 +693,7 @@ public final class MainActivity extends Activity {
   }
 
   private void renderConversation(JSONObject state) {
+    state = mergeOlderHistory(state);
     state = mergeOptimistic(state);
     conversation = state;
     String active = state.isNull("activeTurnId") ? "" : state.optString("activeTurnId");
@@ -800,6 +811,65 @@ public final class MainActivity extends Activity {
     else if (!state.isNull("error") && !state.optString("error").isEmpty())
       problem(state.optString("error"));
     updateSend();
+  }
+
+  private JSONObject mergeOlderHistory(JSONObject state) {
+    String id = state.optString("id");
+    if (!historyCursors.containsKey(id)) historyCursors.put(id, state.optString("historyBefore"));
+    historyBefore = historyCursors.getOrDefault(id, "");
+    java.util.ArrayList<JSONObject> older = olderHistory.get(id);
+    if (older == null || older.isEmpty()) return state;
+    try {
+      JSONArray current = state.optJSONArray("items"), merged = new JSONArray();
+      java.util.HashSet<String> known = new java.util.HashSet<>();
+      for (JSONObject item : older) {
+        if (item != null && known.add(item.optString("id"))) merged.put(item);
+      }
+      for (int i = 0; i < current.length(); i++) {
+        JSONObject item = current.optJSONObject(i);
+        if (item != null && known.add(item.optString("id"))) merged.put(item);
+      }
+      return new JSONObject(state.toString()).put("items", merged).put("historyBefore", historyBefore).put("historyTruncated", !historyBefore.isEmpty());
+    } catch (Exception ignored) {
+      return state;
+    }
+  }
+
+  private void loadOlderHistory() {
+    if (historyLoading || api == null || selected.isEmpty() || historyBefore.isEmpty()) return;
+    historyLoading = true;
+    ApiClient client = api;
+    String id = selected, cursor = historyBefore;
+    int previousHeight = transcript.getHeight(), previousOffset = scroll.getScrollY(), epoch = generation;
+    network.execute(
+        () -> {
+          try {
+            JSONObject page = (JSONObject) client.request("/conversations/" + ApiClient.segment(id) + "/history?before=" + ApiClient.segment(cursor) + "&limit=50", null);
+            JSONArray pageItems = page.optJSONArray("items");
+            java.util.ArrayList<JSONObject> older = olderHistory.computeIfAbsent(id, ignored -> new java.util.ArrayList<>());
+            java.util.HashSet<String> known = new java.util.HashSet<>();
+            for (JSONObject item : older) if (item != null) known.add(item.optString("id"));
+            java.util.ArrayList<JSONObject> prepend = new java.util.ArrayList<>();
+            for (int i = 0; i < pageItems.length(); i++) {
+              JSONObject item = pageItems.optJSONObject(i);
+              if (item != null && known.add(item.optString("id"))) prepend.add(item);
+            }
+            older.addAll(0, prepend);
+            String next = page.optString("before");
+            historyCursors.put(id, next);
+            ui.post(
+                () -> {
+                  if (epoch == generation && conversation != null && id.equals(selected)) {
+                    transcriptSignature = "";
+                    renderConversation(conversation);
+                    scroll.post(() -> scroll.scrollTo(0, Math.max(0, previousOffset + transcript.getHeight() - previousHeight)));
+                  }
+                  historyLoading = false;
+                });
+          } catch (Exception exception) {
+            ui.post(() -> { historyLoading = false; problem(safeError(exception)); });
+          }
+        });
   }
 
   private JSONObject mergeOptimistic(JSONObject state) {

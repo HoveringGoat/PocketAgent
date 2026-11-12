@@ -31,13 +31,15 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(6) };
     private readonly Dictionary<string, string> drafts = [];
     private readonly Dictionary<string, List<DisplayItem>> optimisticItems = [];
+    private readonly Dictionary<string, List<DisplayItem>> olderHistory = [];
+    private readonly Dictionary<string, string?> historyCursors = [];
     private readonly HashSet<string> expandedWorkItems = [];
     private ConversationSnapshot? conversation;
     private string? selected;
     private string rendered = "";
     private string sessionSignature = "";
     private string qrRendered = "";
-    private bool refreshing, sending, settingDraft, changingList, closing, transitioning;
+    private bool refreshing, sending, settingDraft, changingList, closing, transitioning, loadingHistory;
     private DesktopUpdate? pendingUpdate;
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
@@ -426,6 +428,14 @@ public partial class MainWindow : Window
             var expected = selected;
             var snapshot = await Conversations.Get(expected);
             if (relay != running || selected != expected) return;
+            if (!historyCursors.ContainsKey(expected)) historyCursors[expected] = snapshot.HistoryBefore;
+            var historical = olderHistory.GetValueOrDefault(expected);
+            if (historical is { Count: > 0 })
+            {
+                var currentIds = snapshot.Items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+                snapshot = snapshot with { Items = historical.Where(item => currentIds.Add(item.Id)).Concat(snapshot.Items).ToArray() };
+            }
+            snapshot = snapshot with { HistoryBefore = historyCursors[expected], HistoryTruncated = historyCursors[expected] is not null };
             snapshot = MergeOptimistic(snapshot);
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
@@ -491,9 +501,28 @@ public partial class MainWindow : Window
     private async void SessionSelected(object sender, SelectionChangedEventArgs e)
     {
         if (changingList || SessionList.SelectedItem is not SessionEntry entry) return;
-        selected = entry.Id; conversation = null; rendered = "";
+        selected = entry.Id; conversation = null; rendered = ""; historyCursors.Remove(selected); olderHistory.Remove(selected);
         settingDraft = true; Composer.Text = drafts.GetValueOrDefault(selected, ""); settingDraft = false;
         await Refresh();
+    }
+
+    private async void TranscriptScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (loadingHistory || selected is null || conversation?.HistoryBefore is null || TranscriptScroll.ScrollableHeight <= 0 || e.VerticalChange >= 0 || TranscriptScroll.VerticalOffset > 24) return;
+        loadingHistory = true;
+        var previousExtent = TranscriptScroll.ExtentHeight;
+        var previousOffset = TranscriptScroll.VerticalOffset;
+        try
+        {
+            var page = await Conversations.History(selected, conversation.HistoryBefore, 50);
+            if (!olderHistory.TryGetValue(selected, out var items)) olderHistory[selected] = items = [];
+            var known = items.Select(item => item.Id).Concat(conversation.Items.Select(item => item.Id)).ToHashSet(StringComparer.Ordinal);
+            items.InsertRange(0, page.Items.Where(item => known.Add(item.Id)));
+            historyCursors[selected] = page.Before;
+            await Refresh();
+            _ = Dispatcher.BeginInvoke(() => TranscriptScroll.ScrollToVerticalOffset(previousOffset + (TranscriptScroll.ExtentHeight - previousExtent)), DispatcherPriority.Loaded);
+        }
+        finally { loadingHistory = false; }
     }
     private async void NewConversation(object sender, RoutedEventArgs e) => await Act(async () =>
     {
