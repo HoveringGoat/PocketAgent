@@ -47,7 +47,7 @@ public final class MainActivity extends Activity {
   private String historyBefore = "";
   private JSONObject conversation;
   private LinearLayout root, tabs, transcript, metadata;
-  private TextView connection, sessionLocation, error, context, usageView;
+  private TextView connection, sessionLocation, error, context, usageView, scheduledNotice;
   private JSONObject usageState;
   private JSONArray scheduledState = new JSONArray();
   private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
@@ -69,7 +69,7 @@ public final class MainActivity extends Activity {
         @Override
         public void run() {
           if (resumed && api != null) {
-            refresh();
+                               refresh();
             ui.postDelayed(this, 1200);
           }
         }
@@ -479,9 +479,9 @@ public final class MainActivity extends Activity {
     sessionLocation.setTextColor(Color.rgb(143, 188, 143));
     identity.addView(sessionLocation, match());
     header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
-    Button menu = button("...", v -> showMenu());
-    menu.setContentDescription("Connection options");
-    header.addView(menu);
+    Button settings = button("\u2699\uFE0E", v -> showSettings());
+    settings.setContentDescription("Settings");
+    header.addView(settings);
     root.addView(header, match());
     connection.setOnClickListener(v -> showServers());
     usageView = label("5h: unavailable - Weekly: unavailable", 11);
@@ -553,6 +553,11 @@ public final class MainActivity extends Activity {
     schedule.setContentDescription("Schedule message");
     composeRow.addView(schedule);
     root.addView(composeRow, match());
+    scheduledNotice = button("", v -> showScheduled());
+    scheduledNotice.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    scheduledNotice.setContentDescription("Scheduled messages");
+    scheduledNotice.setVisibility(View.GONE);
+    root.addView(scheduledNotice, match());
     watch(
         composer,
         text -> {
@@ -560,6 +565,7 @@ public final class MainActivity extends Activity {
           updateSend();
         });
     loadDraft();
+    updateScheduledNotice();
     updateSend();
   }
 
@@ -574,6 +580,7 @@ public final class MainActivity extends Activity {
     selected = id;
     store.select(api.origin, id);
     conversation = null;
+    scheduledState = new JSONArray();
     historyBefore = "";
     historyCursors.remove(id);
     olderHistory.remove(id);
@@ -630,7 +637,10 @@ public final class MainActivity extends Activity {
                   renderTabs(sessions);
                   connection.setText(serverName);
                   connection.setContentDescription("Server " + serverName + " connected");
-                  scheduledState = pendingJobs;
+                  if (id.equals(selected)) {
+                    scheduledState = pendingJobs;
+                    updateScheduledNotice();
+                  }
                   if (usage != null) {
                     usageState = usage;
                     usageReadAt = System.currentTimeMillis();
@@ -682,24 +692,17 @@ public final class MainActivity extends Activity {
     for (int i = 0; i < sessions.length(); i++) {
       JSONObject entry = sessions.optJSONObject(i);
       String id = entry.optString("id");
+      LinearLayout tabItem = row();
       Button tab = button(entry.optString("title"), v -> select(id));
       tab.setContentDescription("Conversation " + entry.optString("title"));
       tab.setTextColor(id.equals(selected) ? Color.WHITE : ACCENT);
       tab.setTypeface(null, id.equals(selected) ? Typeface.BOLD : Typeface.NORMAL);
-      tab.setOnLongClickListener(
-          v -> {
-            new AlertDialog.Builder(this)
-                .setTitle(entry.optString("title"))
-                .setItems(
-                    new String[] {"Rename", "Archive"},
-                    (dialog, which) -> {
-                      if (which == 0) rename(id, entry.optString("title"));
-                      else archive(id);
-                    })
-                .show();
-            return true;
-          });
-      tabs.addView(tab);
+      tabItem.addView(tab, new LinearLayout.LayoutParams(-2, -2));
+      Button options = button("\u22EE", v -> showConversationMenu(id, entry.optString("title")));
+      options.setContentDescription("Conversation options for " + entry.optString("title"));
+      options.setPadding(dp(6), 0, dp(6), 0);
+      tabItem.addView(options);
+      tabs.addView(tabItem);
     }
     if (sessions.length() == 0 && selected.isEmpty()) {
       transcript.removeAllViews();
@@ -975,6 +978,18 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private void updateScheduledNotice() {
+    if (scheduledNotice == null) return;
+    int pending = 0;
+    for (int i = 0; i < scheduledState.length(); i++) {
+      JSONObject job = scheduledState.optJSONObject(i);
+      if (job != null && "pending".equals(job.optString("status"))) pending++;
+    }
+    scheduledNotice.setText(
+        pending == 1 ? "1 scheduled message" : pending + " scheduled messages");
+    scheduledNotice.setVisibility(pending == 0 ? View.GONE : View.VISIBLE);
+  }
+
   private void updateSend() {
     if (send == null) return;
     String status = conversation == null ? "" : conversation.optString("status");
@@ -1029,7 +1044,7 @@ public final class MainActivity extends Activity {
                   if (delivery) store.uncertain(client.origin, id, false);
                   done.accept(result);
                   updateSend();
-                  refresh();
+                               refresh();
                 });
           } catch (Exception ex) {
             boolean rejected = delivery
@@ -1529,79 +1544,63 @@ public final class MainActivity extends Activity {
     transcript.addView(card, match());
   }
 
-  private void showMenu() {
+  private void showSettings() {
+    LinearLayout panel = column();
+    panel.setPadding(dp(16), 0, dp(16), 0);
+    final AlertDialog[] dialog = new AlertDialog[1];
+    settingsSection(panel, "Connection");
+    settingsAction(panel, "Servers", () -> { dialog[0].dismiss(); showServers(); });
+    settingsAction(panel, "Refresh", () -> { dialog[0].dismiss(); refresh(); });
+    settingsAction(panel, "Unpair this server", () -> { dialog[0].dismiss(); unpairServer(); });
+    settingsSection(panel, "Conversations");
+    settingsAction(panel, "Archived conversations", () -> { dialog[0].dismiss(); showArchived(); });
+    settingsSection(panel, "Application");
+    settingsAction(panel, "Usage and resets", () -> { dialog[0].dismiss(); showUsage(); });
+    settingsAction(panel, "Check for updates", () -> { dialog[0].dismiss(); checkForUpdates(); });
+    settingsAction(panel, "App settings", () -> { dialog[0].dismiss(); showAppSettings(); });
+    settingsAction(panel, "About PocketAgent", () -> { dialog[0].dismiss(); showAbout(); });
+    ScrollView settingsScroll = new ScrollView(this);
+    settingsScroll.addView(panel);
+    dialog[0] =
+        new AlertDialog.Builder(this)
+            .setTitle("Settings")
+            .setView(settingsScroll)
+            .setNegativeButton("Close", null)
+            .create();
+    dialog[0].show();
+  }
+
+  private void settingsSection(LinearLayout panel, String title) {
+    TextView heading = label(title, 13);
+    heading.setTextColor(ACCENT);
+    heading.setTypeface(null, Typeface.BOLD);
+    heading.setPadding(0, dp(12), 0, dp(2));
+    panel.addView(heading, match());
+  }
+
+  private void settingsAction(LinearLayout panel, String title, Runnable action) {
+    Button actionButton = button(title, v -> action.run());
+    actionButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    panel.addView(actionButton, match());
+  }
+
+  private void showConversationMenu(String id, String title) {
+    boolean current = id.equals(selected);
+    String[] options =
+        current
+            ? new String[] {"Rename", "Choose model", "Choose reasoning", "Archive"}
+            : new String[] {"Rename", "Archive"};
     new AlertDialog.Builder(this)
-        .setTitle(serverName)
+        .setTitle(title)
         .setItems(
-            new String[] {
-              "Connection",
-              "Conversation",
-              "Scheduling",
-              "App"
-            },
-            (d, which) -> {
-              if (which == 0) showConnectionMenu();
-              else if (which == 1) showConversationMenu();
-              else if (which == 2) showSchedulingMenu();
-              else showAppMenu();
+            options,
+            (dialog, which) -> {
+              if (which == 0) rename(id, title);
+              else if (current && which == 1) showModels();
+              else if (current && which == 2) showReasoning();
+              else archive(id);
             })
         .setNegativeButton("Close", null)
-        .show();
-  }
-
-  private void showConnectionMenu() {
-    new AlertDialog.Builder(this)
-        .setTitle("Connection")
-        .setItems(
-            new String[] {"Servers", "Refresh", "Unpair this server"},
-            (dialog, which) -> {
-              if (which == 0) showServers();
-              else if (which == 1) refresh();
-              else unpairServer();
-            })
-        .setNegativeButton("Back", null)
-        .show();
-  }
-
-  private void showConversationMenu() {
-    new AlertDialog.Builder(this)
-        .setTitle("Conversation")
-        .setItems(
-            new String[] {"Choose model", "Choose reasoning", "Archive conversation", "Archived conversations"},
-            (dialog, which) -> {
-              if (which == 0) showModels();
-              else if (which == 1) showReasoning();
-              else if (which == 2) archive(selected);
-              else showArchived();
-            })
-        .setNegativeButton("Back", null)
-        .show();
-  }
-
-  private void showSchedulingMenu() {
-    new AlertDialog.Builder(this)
-        .setTitle("Scheduling")
-        .setItems(new String[] {"Schedule message", "Scheduled messages"},
-            (dialog, which) -> {
-              if (which == 0) scheduleMessage();
-              else showScheduled();
-            })
-        .setNegativeButton("Back", null)
-        .show();
-  }
-
-  private void showAppMenu() {
-    new AlertDialog.Builder(this)
-        .setTitle("App")
-        .setItems(
-            new String[] {"Usage and resets", "Check for updates", "App settings", "About PocketAgent"},
-            (dialog, which) -> {
-              if (which == 0) showUsage();
-              else if (which == 1) checkForUpdates();
-              else if (which == 2) showAppSettings();
-              else showAbout();
-            })
-        .setNegativeButton("Back", null)
         .show();
   }
 
@@ -1802,6 +1801,7 @@ public final class MainActivity extends Activity {
                                 store.draft(client.origin, id, "");
                               if (selected.equals(id) && composer.getText().toString().equals(text))
                                 composer.setText("");
+                               refresh();
                               notice(
                                   "Message scheduled. The desktop must be running at that time.");
                             },
@@ -1868,7 +1868,10 @@ public final class MainActivity extends Activity {
                                                 + ApiClient.segment(job.optString("id"))
                                                 + "/cancel",
                                             new JSONObject()),
-                                    ignored -> notice("Scheduled message canceled."),
+                                     ignored -> {
+                                       refresh();
+                                       notice("Scheduled message canceled.");
+                                     },
                                     false))
                         .show();
                   })

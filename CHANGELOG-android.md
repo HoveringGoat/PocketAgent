@@ -4,7 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.3.2 - 2026-11-11
+
 - Removed the nonessential older-history notice from the conversation status.
+- Replaced the overflow menu with a gear-based settings page and moved conversation actions onto each tab row.
+- Made the timer button the only scheduling entry point and added an in-context scheduled-message summary with review/cancel access.
 
 ## 0.3.1 - 2026-11-11
 
