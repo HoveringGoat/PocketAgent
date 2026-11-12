@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.2 - 2026-11-12
+
+- Added message-timestamp tab ordering with pinned-first tabs, one-tab left/right overflow controls, explicit server-selector chevron, and pin/unpin actions.
+- Added server-backed seven-day inactivity archiving for unpinned conversations; pinned conversations are exempt.
+
 ## 0.4.1 - 2026-11-12
 
 - Keep the Send action label stable while steering an active agent.

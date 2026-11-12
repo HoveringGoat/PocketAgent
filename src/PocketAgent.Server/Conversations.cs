@@ -6,8 +6,8 @@ namespace PocketAgent;
 public sealed record DisplayImage(string Id, string Source, string AltText, string? MimeType = null);
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null, DisplayImage[]? Images = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
-public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null);
+public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
 public sealed record ConversationHistoryPage(DisplayItem[] Items, bool HasMore, string? Before);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
@@ -18,6 +18,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     private const int MaxSnapshotDetail = 16_000;
     private const int DefaultHistoryPageSize = 50;
     private const int MaxHistoryPageSize = 100;
+    private static readonly TimeSpan InactiveConversationAge = TimeSpan.FromDays(7);
     private static readonly TimeSpan HeartbeatDelay = TimeSpan.FromMinutes(5);
     private const string HeartbeatPrompt = "update requested";
     private sealed class State(ConversationReference reference)
@@ -55,7 +56,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         try
         {
             return store.Conversations(true).Where(reference => reference.Archived == archived).Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
-                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived, reference.ReasoningEffort)).ToArray();
+                states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived, reference.ReasoningEffort, reference.Pinned, reference.LastMessageAt)).ToArray();
         }
         finally { gate.Release(); }
     }
@@ -298,6 +299,54 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
+    public async Task<int> ArchiveInactive(DateTimeOffset now)
+    {
+        var cutoff = now - InactiveConversationAge;
+        await gate.WaitAsync();
+        string[] active;
+        try
+        {
+            active = states.Values
+                .Where(state => state.ActiveTurnId is not null || state.Status is "starting" or "running" or "awaiting-input" or "uncertain")
+                .Select(state => state.Reference.Id)
+                .ToArray();
+        }
+        finally { gate.Release(); }
+
+        var archived = store.ArchiveInactive(cutoff, active);
+        foreach (var id in archived)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                if (states.TryGetValue(id, out var state))
+                {
+                    await state.Gate.WaitAsync();
+                    try { state.Reference = state.Reference with { Archived = true }; }
+                    finally { state.Gate.Release(); }
+                }
+            }
+            finally { gate.Release(); }
+            await publisher.Changed(id);
+            logger.LogInformation("Archived inactive conversation {ConversationId} after seven days without a message.", id);
+        }
+        return archived.Length;
+    }
+
+    public async Task<ConversationSnapshot> SetPinned(string id, bool pinned)
+    {
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
+        try
+        {
+            RequireUnarchived(state);
+            store.SetPinned(id, pinned);
+            state.Reference = state.Reference with { Pinned = pinned };
+            return Snapshot(state);
+        }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
+    }
+
     public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
@@ -519,6 +568,12 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         var index = state.Items.FindIndex(existing => existing.Id == item.Id);
         var existingTime = index >= 0 ? state.Items[index].Timestamp : null;
         item = item with { Timestamp = existingTime ?? store.RememberTimestamp(state.Reference.Id, item.Id, item.Timestamp ?? (state.Hydrating ? null : DateTimeOffset.UtcNow)) };
+        if (item.Type is "userMessage" or "agentMessage")
+        {
+            store.RememberMessageTimestamp(state.Reference.Id, item.Timestamp);
+            if (item.Timestamp is { } messageTime && (state.Reference.LastMessageAt is null || messageTime > state.Reference.LastMessageAt))
+                state.Reference = state.Reference with { LastMessageAt = messageTime };
+        }
         if (!state.Hydrating && item.Type == "agentMessage" && item.Text.Length > 0)
             state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
         if (!state.Hydrating && item.Type != "userMessage" && (item.Type != "agentMessage" || item.Text.Length > 0)) state.HasWork = true;
@@ -596,7 +651,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         var items = state.Items.Skip(first).Select(Bounded).ToArray();
         return new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
             items, state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
-            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated, historyTruncated ? state.Items[first].Id : null);
+            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated, historyTruncated ? state.Items[first].Id : null, state.Reference.Pinned, state.Reference.LastMessageAt);
     }
 
     private static DisplayItem Bounded(DisplayItem item) => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) };

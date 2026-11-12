@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace PocketAgent;
 
 public sealed record Device(string Id, string Name, DateTimeOffset ExpiresAt);
-public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null);
+public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
 public sealed record ScheduledMessage(string Id, string ConversationId, string Text, DateTimeOffset DueAt, DateTimeOffset NextAttemptAt,
     string Status, string Reason, string? Error, [property: System.Text.Json.Serialization.JsonIgnore] string? DeviceId);
 public sealed record MessageDelivery(string ConversationId, string ClientMessageId, string Text, string Status, string? ScheduleId, string? Error);
@@ -36,7 +36,7 @@ public sealed class LocalStore
         command.CommandText = "PRAGMA table_info(conversations)";
         var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         using (var reader = command.ExecuteReader()) while (reader.Read()) columns.Add(reader.GetString(1));
-        foreach (var (name, definition) in new[] { ("model", "TEXT"), ("archived", "INTEGER NOT NULL DEFAULT 0"), ("reasoning_effort", "TEXT") })
+        foreach (var (name, definition) in new[] { ("model", "TEXT"), ("archived", "INTEGER NOT NULL DEFAULT 0"), ("reasoning_effort", "TEXT"), ("pinned", "INTEGER NOT NULL DEFAULT 0"), ("last_message_at", "INTEGER") })
             if (!columns.Contains(name))
             {
                 command.CommandText = $"ALTER TABLE conversations ADD COLUMN {name} {definition}";
@@ -174,13 +174,43 @@ public sealed class LocalStore
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,title,created_at,repository,model,archived,reasoning_effort FROM conversations WHERE $include=1 OR archived=0 ORDER BY created_at DESC,id";
+        command.CommandText = "SELECT id,title,created_at,repository,model,archived,reasoning_effort,pinned,last_message_at FROM conversations WHERE $include=1 OR archived=0 ORDER BY created_at DESC,id";
         command.Parameters.AddWithValue("$include", includeArchived ? 1 : 0);
         using var reader = command.ExecuteReader();
         var rows = new List<ConversationReference>();
         while (reader.Read())
-            rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5) != 0, reader.IsDBNull(6) ? null : reader.GetString(6)));
+            rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5) != 0, reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7) != 0, reader.IsDBNull(8) ? null : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8))));
         return [.. rows];
+    }
+
+    public void SetPinned(string id, bool pinned)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conversations SET pinned=$pinned WHERE id=$id AND archived=0";
+        command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$pinned", pinned ? 1 : 0);
+        if (command.ExecuteNonQuery() != 1) throw new ApiException(404, "Conversation not found.");
+    }
+
+    public string[] ArchiveInactive(DateTimeOffset cutoff, IReadOnlyCollection<string> activeIds)
+    {
+        using var connection = Open(); using var transaction = connection.BeginTransaction(); using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        var excluded = activeIds.Select((id, index) => (Name: "$active" + index, Id: id)).ToArray();
+        var exclusion = excluded.Length == 0 ? "" : $" AND id NOT IN ({string.Join(',', excluded.Select(item => item.Name))})";
+        command.CommandText = $"SELECT id FROM conversations WHERE archived=0 AND pinned=0 AND COALESCE(last_message_at,created_at)<$cutoff {exclusion} AND NOT EXISTS (SELECT 1 FROM scheduled_messages WHERE conversation_id=conversations.id AND status IN ('pending','dispatching'))";
+        command.Parameters.AddWithValue("$cutoff", cutoff.ToUnixTimeMilliseconds());
+        foreach (var item in excluded) command.Parameters.AddWithValue(item.Name, item.Id);
+        var ids = new List<string>();
+        using (var reader = command.ExecuteReader()) while (reader.Read()) ids.Add(reader.GetString(0));
+        foreach (var id in ids)
+        {
+            command.CommandText = "UPDATE conversations SET archived=1 WHERE id=$id AND archived=0";
+            command.Parameters.Clear(); command.Parameters.AddWithValue("$id", id); command.ExecuteNonQuery();
+            command.CommandText = "UPDATE scheduled_messages SET status='canceled',error='Conversation archived.' WHERE conversation_id=$id AND status='pending'";
+            command.Parameters.Clear(); command.Parameters.AddWithValue("$id", id); command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+        return [.. ids];
     }
 
     public void SetModel(string id, string model)
@@ -260,6 +290,15 @@ public sealed class LocalStore
         command.CommandText = "INSERT OR IGNORE INTO message_times SELECT $conversation,$item,$time WHERE $time IS NOT NULL; SELECT timestamp FROM message_times WHERE conversation_id=$conversation AND item_id=$item";
         command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$item", itemId); command.Parameters.AddWithValue("$time", (object?)candidate?.ToUnixTimeMilliseconds() ?? DBNull.Value);
         var result = command.ExecuteScalar(); return result is long time ? DateTimeOffset.FromUnixTimeMilliseconds(time) : null;
+    }
+
+    public void RememberMessageTimestamp(string conversationId, DateTimeOffset? candidate)
+    {
+        if (candidate is null) return;
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conversations SET last_message_at=CASE WHEN last_message_at IS NULL OR last_message_at<$time THEN $time ELSE last_message_at END WHERE id=$conversation";
+        command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$time", candidate.Value.ToUnixTimeMilliseconds());
+        command.ExecuteNonQuery();
     }
 
     public (DateTimeOffset? Start, DateTimeOffset? End, long? Duration) RememberTurn(string conversationId, string turnId, DateTimeOffset? start, DateTimeOffset? end, long? duration)

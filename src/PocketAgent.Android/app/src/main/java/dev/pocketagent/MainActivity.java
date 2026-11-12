@@ -80,7 +80,8 @@ public final class MainActivity extends Activity {
   private EditText composer;
   private Button send, schedule;
   private ImageButton stop;
-  private ImageButton renameAction, modelAction, archiveAction, archivedAction;
+  private ImageButton renameAction, pinAction, modelAction, archiveAction, archivedAction;
+  private final java.util.ArrayList<JSONObject> orderedSessions = new java.util.ArrayList<>();
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
   private boolean transientMessage;
@@ -611,8 +612,16 @@ public final class MainActivity extends Activity {
                 createConversation();
               }
 
+              public void showAllConversations() {
+                MainActivity.this.showAllConversations();
+              }
+
               public void renameConversation() {
                 renameSelectedConversation();
+              }
+
+              public void togglePin() {
+                togglePinnedConversation();
               }
 
               public void selectModel() {
@@ -656,6 +665,7 @@ public final class MainActivity extends Activity {
     stop = screen.stop;
     schedule = screen.schedule;
     renameAction = screen.renameAction;
+    pinAction = screen.pinAction;
     modelAction = screen.modelAction;
     archiveAction = screen.archiveAction;
     archivedAction = screen.archivedAction;
@@ -805,13 +815,26 @@ public final class MainActivity extends Activity {
     String signature = sessions.toString() + selected;
     if (signature.equals(tabSignature)) return;
     tabSignature = signature;
-    screen.clearTabs();
+    orderedSessions.clear();
     for (int i = 0; i < sessions.length(); i++) {
       JSONObject entry = sessions.optJSONObject(i);
+      if (entry != null) orderedSessions.add(entry);
+    }
+    orderedSessions.sort(
+        (left, right) -> {
+          int pinned = Boolean.compare(right.optBoolean("pinned", false), left.optBoolean("pinned", false));
+          if (pinned != 0) return pinned;
+          int recent = Long.compare(messageTimestamp(right), messageTimestamp(left));
+          if (recent != 0) return recent;
+          return left.optString("title").compareToIgnoreCase(right.optString("title"));
+        });
+    screen.clearTabs();
+    for (JSONObject entry : orderedSessions) {
       String id = entry.optString("id");
       boolean active = id.equals(selected);
       screen.addTab(entry.optString("title"), active, v -> select(id));
     }
+    screen.updateTabOverflow();
     if (selected.isEmpty()) {
       setConversationActionsVisible(false);
     }
@@ -819,6 +842,56 @@ public final class MainActivity extends Activity {
       transcript.removeAllViews();
       transcript.addView(label("Tap + to start a conversation.", 18));
     }
+  }
+
+  private long messageTimestamp(JSONObject entry) {
+    String value = entry.optString("lastMessageAt", "");
+    try {
+      return java.time.Instant.parse(value).toEpochMilli();
+    } catch (Exception ignored) {
+      return Long.MIN_VALUE;
+    }
+  }
+
+  private void showAllConversations() {
+    if (orderedSessions.isEmpty()) {
+      notice("No active conversations.");
+      return;
+    }
+    String[] choices = new String[orderedSessions.size()];
+    for (int i = 0; i < orderedSessions.size(); i++) {
+      JSONObject entry = orderedSessions.get(i);
+      choices[i] = (entry.optBoolean("pinned", false) ? "Pinned  " : "") + entry.optString("title");
+    }
+    new AlertDialog.Builder(this)
+        .setTitle("All conversations")
+        .setItems(
+            choices,
+            (dialog, which) -> {
+              if (which >= 0 && which < orderedSessions.size())
+                select(orderedSessions.get(which).optString("id"));
+            })
+        .setNegativeButton("Close", null)
+        .show();
+  }
+
+  private void togglePinnedConversation() {
+    if (api == null || conversation == null || selected.isEmpty()) return;
+    ApiClient client = api;
+    String id = selected;
+    boolean pinned = !conversation.optBoolean("pinned", false);
+    action(
+        () ->
+            client.request(
+                "/conversations/" + ApiClient.segment(id) + "/pin",
+                new JSONObject().put("pinned", pinned)),
+        state -> {
+          tabSignature = "";
+          if (selected.equals(id)) renderConversation((JSONObject) state);
+          refresh();
+          notice(pinned ? "Conversation pinned." : "Conversation unpinned.");
+        },
+        false);
   }
 
   private void renderConversation(JSONObject state) {
@@ -850,6 +923,8 @@ public final class MainActivity extends Activity {
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(workingDirectory);
     setConversationActionsVisible(true);
+    boolean pinned = state.optBoolean("pinned", false);
+    pinAction.setContentDescription(pinned ? "Unpin conversation" : "Pin conversation");
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(R.string.send_label);
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
@@ -1126,6 +1201,7 @@ public final class MainActivity extends Activity {
     }
     int visibility = visible ? View.VISIBLE : View.GONE;
     if (renameAction != null) renameAction.setVisibility(visibility);
+    if (pinAction != null) pinAction.setVisibility(visibility);
     if (modelAction != null) modelAction.setVisibility(visibility);
     if (archiveAction != null) archiveAction.setVisibility(visibility);
   }

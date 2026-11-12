@@ -4,6 +4,7 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+- Server now persists conversation pin state/message activity and automatically archives unpinned conversations after seven days without a user or agent message.
 - Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.
 - Moved conversation actions into the selected conversation pane title strip and replaced text-heavy controls with compact rename, robot/model, archive, and archived-history actions.
 

@@ -21,7 +21,11 @@ public final class PreviewActivity extends Activity {
 
               public void newConversation() {}
 
+              public void showAllConversations() {}
+
               public void renameConversation() {}
+
+              public void togglePin() {}
 
               public void selectModel() {}
 
@@ -41,6 +45,13 @@ public final class PreviewActivity extends Activity {
     screen.addTab("Fix updater", true, v -> {});
     screen.addTab("UI polish", false, v -> {});
     screen.addTab("Release prep", false, v -> {});
+    screen.addTab("History sync", false, v -> {});
+    screen.addTab("Network setup", false, v -> {});
+    screen.addTab("Settings cleanup", false, v -> {});
+    screen.addTab("Release notes", false, v -> {});
+    screen.addTab("Model review", false, v -> {});
+    screen.addTab("Regression tests", false, v -> {});
+    screen.addTab("Final polish", false, v -> {});
     screen.sessionLocation.setText(getString(R.string.preview_directory));
     screen.setConversationActionsVisible(true);
     screen.addMessage("Can you make the conversation pane match the mockup?", true, "8:14 PM");

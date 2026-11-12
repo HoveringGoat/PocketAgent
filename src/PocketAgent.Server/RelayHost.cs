@@ -55,6 +55,7 @@ public static class RelayHost
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<Conversations>());
         builder.Services.AddSingleton<ScheduledMessages>();
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ScheduledMessages>());
+        builder.Services.AddHostedService<ConversationMaintenance>();
         builder.Services.AddHostedService<HeartbeatService>();
         builder.Services.AddSignalR(options => options.MaximumReceiveMessageSize = 16 * 1024);
         builder.Services.AddAuthentication(DeviceAuthentication.SchemeName)
@@ -178,6 +179,7 @@ public static class RelayHost
         api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, Conversations conversations) => conversations.Rename(id, input.Title ?? ""));
         api.MapPost("/conversations/{id}/model", (string id, ModelInput input, Conversations conversations) => conversations.SetModel(id, input.Model ?? ""));
         api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, Conversations conversations) => conversations.SetReasoning(id, input.Effort));
+        api.MapPost("/conversations/{id}/pin", (string id, PinInput input, Conversations conversations) => conversations.SetPinned(id, input.Pinned));
         api.MapPost("/conversations/{id}/archive", (string id, Conversations conversations) => conversations.Archive(id, true));
         api.MapPost("/conversations/{id}/restore", (string id, Conversations conversations) => conversations.Archive(id, false));
         api.MapGet("/conversations/{id}", (string id, Conversations conversations) => conversations.Get(id));
@@ -206,5 +208,6 @@ public sealed record PairInput(string? Code, string? DeviceName);
 public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null, string? ReasoningEffort = null);
 public sealed record ModelInput(string? Model);
 public sealed record ReasoningInput(string? Effort);
+public sealed record PinInput(bool Pinned);
 public sealed record MessageInput(string? Text, string? ExpectedTurnId = null, string? ClientMessageId = null);
 public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt, string? ClientMessageId = null);

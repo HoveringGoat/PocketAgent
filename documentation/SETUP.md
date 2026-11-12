@@ -2,7 +2,7 @@
 
 ## Use the packaged native apps
 
-Current release: **0.2.2**. Install the 0.2.2 Android app and desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
+Current release: **Android 0.4.2 / desktop-server 0.3.5**. Install the 0.4.2 Android app and desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
 
 Release files are grouped together:
 
@@ -126,8 +126,8 @@ native Android renderer intended for the client; it is not a browser or
 TypeScript clone and is not included in release APKs.
 
 Live conversation tabs use this same shared renderer. The preview is therefore
-also a regression check for the active-tab divider and the centered composer
-actions, not only a static mockup.
+also a regression check for the active-tab divider, overflow chevrons, server
+selector, pin action, and centered composer actions, not only a static mockup.
 
 From PowerShell, run:
 

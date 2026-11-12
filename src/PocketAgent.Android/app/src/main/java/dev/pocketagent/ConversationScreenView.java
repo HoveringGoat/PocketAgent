@@ -54,12 +54,15 @@ public final class ConversationScreenView {
   public final TextView context;
   public final TextView error;
   public final Button serverSelector;
+  public final ImageButton tabBack;
   public final ImageButton newConversation;
+  public final ImageButton tabOverflow;
   public final Button send;
   public final ImageButton stop;
   public final Button schedule;
   public final EditText composer;
   public final ImageButton renameAction;
+  public final ImageButton pinAction;
   public final ImageButton modelAction;
   public final ImageButton archiveAction;
   public final ImageButton archivedAction;
@@ -72,7 +75,11 @@ public final class ConversationScreenView {
 
     void newConversation();
 
+    void showAllConversations();
+
     void renameConversation();
+
+    void togglePin();
 
     void selectModel();
 
@@ -101,7 +108,9 @@ public final class ConversationScreenView {
     brand.setPadding(dp(4), dp(2), dp(4), dp(2));
     brandIdentity.addView(brand, match());
     header.addView(brandIdentity, new LinearLayout.LayoutParams(0, -2, 1));
-    serverSelector = chip(serverName + "  ▾", v -> actions.selectServer(), "Current server");
+    serverSelector = chip(serverName, v -> actions.selectServer(), "Current server");
+    serverSelector.setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_chevron_down, 0);
+    serverSelector.setCompoundDrawablePadding(dp(4));
     serverSelector.setMinHeight(dp(36));
     serverSelector.setMinimumHeight(dp(36));
     header.addView(serverSelector);
@@ -119,11 +128,34 @@ public final class ConversationScreenView {
     tabRowLayout.setMargins(dp(12), 0, dp(12), 0);
     tabScroll = new HorizontalScrollView(host);
     tabScroll.setHorizontalScrollBarEnabled(false);
-    tabScroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> tabRow.invalidate());
+    tabScroll.setHorizontalFadingEdgeEnabled(true);
+    tabScroll.setFadingEdgeLength(dp(28));
+    tabScroll.setOnScrollChangeListener(
+        (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+          tabRow.invalidate();
+          updateTabOverflow();
+        });
+    tabBack = iconButton(R.drawable.ic_chevron_left, v -> shiftTabs(-1), "Earlier conversations");
+    tabBack.setVisibility(View.GONE);
+    tabBack.setMinimumWidth(dp(34));
+    tabBack.setMinimumHeight(dp(34));
+    tabRow.addView(tabBack, new LinearLayout.LayoutParams(-2, -2));
     tabs = row();
     tabs.setPadding(dp(3), dp(2), dp(3), 0);
     tabScroll.addView(tabs);
     tabRow.addView(tabScroll, new LinearLayout.LayoutParams(0, -2, 1));
+    tabOverflow = iconButton(R.drawable.ic_chevron_right, v -> shiftTabs(1), "More conversations");
+    tabOverflow.setOnLongClickListener(
+        v -> {
+          actions.showAllConversations();
+          return true;
+        });
+    tabOverflow.setVisibility(View.GONE);
+    tabOverflow.setMinimumWidth(dp(34));
+    tabOverflow.setMinimumHeight(dp(34));
+    LinearLayout.LayoutParams overflowLayout = new LinearLayout.LayoutParams(-2, -2);
+    overflowLayout.setMargins(dp(2), 0, 0, 0);
+    tabRow.addView(tabOverflow, overflowLayout);
     newConversation = iconButton(R.drawable.ic_add, v -> actions.newConversation(), "New conversation");
     newConversation.setMinimumWidth(dp(34));
     newConversation.setMinimumHeight(dp(34));
@@ -152,10 +184,12 @@ public final class ConversationScreenView {
     sessionLocation.setEllipsize(TextUtils.TruncateAt.MIDDLE);
     metadata.addView(sessionLocation, new LinearLayout.LayoutParams(0, -2, 1));
     renameAction = iconButton(R.drawable.ic_edit, v -> actions.renameConversation(), "Rename conversation");
+    pinAction = iconButton(R.drawable.ic_pin, v -> actions.togglePin(), "Pin conversation");
     modelAction = iconButton(R.drawable.ic_robot, v -> actions.selectModel(), "Model and reasoning");
     archiveAction = iconButton(R.drawable.ic_archive, v -> actions.archiveConversation(), "Archive conversation");
     archivedAction = iconButton(R.drawable.ic_unarchive, v -> actions.showArchived(), "View archived conversations");
     metadata.addView(renameAction);
+    metadata.addView(pinAction);
     metadata.addView(modelAction);
     metadata.addView(archiveAction);
     metadata.addView(archivedAction);
@@ -262,12 +296,66 @@ public final class ConversationScreenView {
     if (active) activeTab = tab;
     tabRow.invalidate();
     tabRow.post(() -> tabRow.invalidate());
+    tabRow.post(this::updateTabOverflow);
   }
 
   public void clearTabs() {
     tabs.removeAllViews();
     activeTab = null;
+    tabBack.setVisibility(View.GONE);
+    tabOverflow.setVisibility(View.GONE);
     tabRow.invalidate();
+  }
+
+  public void updateTabOverflow() {
+    if (tabScroll == null || tabBack == null || tabOverflow == null) return;
+    if (tabs == null || tabs.getChildCount() == 0 || tabScroll.getWidth() <= 0) {
+      tabBack.setVisibility(View.GONE);
+      tabOverflow.setVisibility(View.GONE);
+      return;
+    }
+
+    View lastTab = tabs.getChildAt(tabs.getChildCount() - 1);
+    LinearLayout.LayoutParams lastLayout = (LinearLayout.LayoutParams) lastTab.getLayoutParams();
+    int childContentWidth = lastTab.getRight() + lastLayout.rightMargin + tabs.getPaddingRight();
+    int contentWidth = Math.max(tabs.getWidth(), childContentWidth);
+    int scrollX = tabScroll.getScrollX();
+    boolean earlier = scrollX > 0;
+    boolean later = scrollX + tabScroll.getWidth() < contentWidth;
+    tabBack.setVisibility(earlier ? View.VISIBLE : View.GONE);
+    tabOverflow.setVisibility(later ? View.VISIBLE : View.GONE);
+    tabRow.post(() -> tabRow.invalidate());
+  }
+
+  private void shiftTabs(int direction) {
+    if (tabScroll == null || tabs == null || tabs.getChildCount() == 0) return;
+    int current = tabScroll.getScrollX();
+    View lastTab = tabs.getChildAt(tabs.getChildCount() - 1);
+    LinearLayout.LayoutParams lastLayout = (LinearLayout.LayoutParams) lastTab.getLayoutParams();
+    int childContentWidth = lastTab.getRight() + lastLayout.rightMargin + tabs.getPaddingRight();
+    int contentWidth = Math.max(tabs.getWidth(), childContentWidth);
+    int target = direction > 0 ? contentWidth : 0;
+    if (direction > 0) {
+      for (int i = 0; i < tabs.getChildCount(); i++) {
+        View child = tabs.getChildAt(i);
+        int left = Math.max(0, child.getLeft() - tabs.getPaddingLeft());
+        if (left > current + 1) {
+          target = left;
+          break;
+        }
+      }
+      target = Math.min(target, Math.max(0, contentWidth - tabScroll.getWidth()));
+    } else {
+      for (int i = tabs.getChildCount() - 1; i >= 0; i--) {
+        View child = tabs.getChildAt(i);
+        int left = Math.max(0, child.getLeft() - tabs.getPaddingLeft());
+        if (left < current - 1) {
+          target = left;
+          break;
+        }
+      }
+    }
+    tabScroll.smoothScrollTo(target, 0);
   }
 
   private Drawable tabSurface(final boolean active) {
@@ -403,6 +491,7 @@ public final class ConversationScreenView {
     int state = visible ? View.VISIBLE : View.GONE;
     metadata.setVisibility(state);
     renameAction.setVisibility(state);
+    pinAction.setVisibility(state);
     modelAction.setVisibility(state);
     archiveAction.setVisibility(state);
     archivedAction.setVisibility(state);
