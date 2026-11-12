@@ -119,6 +119,7 @@ public final class ConversationScreenView {
     tabRowLayout.setMargins(dp(12), 0, dp(12), 0);
     tabScroll = new HorizontalScrollView(host);
     tabScroll.setHorizontalScrollBarEnabled(false);
+    tabScroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> tabRow.invalidate());
     tabs = row();
     tabs.setPadding(dp(3), dp(2), dp(3), 0);
     tabScroll.addView(tabs);
@@ -201,7 +202,9 @@ public final class ConversationScreenView {
 
     LinearLayout composeRow = row();
     composeRow.setGravity(Gravity.CENTER_VERTICAL);
-    composeRow.setPadding(dp(12), 0, dp(12), 0);
+    // Leave visible, symmetric breathing room around the action stack so it is
+    // centered in the composer area instead of visually touching the status row.
+    composeRow.setPadding(dp(12), dp(6), dp(12), dp(6));
     composer = input("Message Codex");
     composer.setContentDescription("Message Codex");
     composer.setMinLines(3);
@@ -227,7 +230,9 @@ public final class ConversationScreenView {
     FrameLayout.LayoutParams sendColumnLayout =
         new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
     sendHost.addView(sendColumn, sendColumnLayout);
-    LinearLayout.LayoutParams sendHostLayout = new LinearLayout.LayoutParams(-2, -1);
+    sendHost.setForegroundGravity(Gravity.CENTER);
+    LinearLayout.LayoutParams sendHostLayout = new LinearLayout.LayoutParams(-2, -2);
+    sendHostLayout.gravity = Gravity.CENTER_VERTICAL;
     sendHostLayout.setMargins(0, dp(2), 0, dp(2));
     composeRow.addView(sendHost, sendHostLayout);
     controlPanel = column();
@@ -255,6 +260,8 @@ public final class ConversationScreenView {
     layout.setMargins(0, 0, dp(3), 0);
     tabs.addView(tab, layout);
     if (active) activeTab = tab;
+    tabRow.invalidate();
+    tabRow.post(() -> tabRow.invalidate());
   }
 
   public void clearTabs() {

@@ -4,6 +4,13 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.1 - 2026-11-12
+
+- Keep the Send action label stable while steering an active agent.
+- Auto-dismiss transient warnings after seven seconds, with tap-to-dismiss support.
+- Fixed the live conversation screen using a stale tab renderer instead of the shared active-tab/divider treatment used by the visual preview.
+- Added symmetric composer padding so the Send and scheduled-message controls stay visibly centered beside the input instead of crowding the running-status row.
+
 ## 0.4.0 - 2026-11-12
 
 - Added a persisted Appearance setting with Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) font/UI scale presets.

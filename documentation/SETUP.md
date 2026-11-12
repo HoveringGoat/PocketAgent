@@ -125,6 +125,10 @@ tabs, messages, running status, usage, and scheduled messages. It uses the same
 native Android renderer intended for the client; it is not a browser or
 TypeScript clone and is not included in release APKs.
 
+Live conversation tabs use this same shared renderer. The preview is therefore
+also a regression check for the active-tab divider and the centered composer
+actions, not only a static mockup.
+
 From PowerShell, run:
 
 ```powershell

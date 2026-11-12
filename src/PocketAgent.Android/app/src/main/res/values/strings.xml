@@ -6,4 +6,5 @@
     <string name="check_updates_on_startup">Check for updates on startup</string>
     <string name="usage_placeholder" formatted="false">5hr: 80%  8:14 PM  &#183;  weekly: 20%  11/17/26</string>
     <string name="schedule_symbol" formatted="false">&#9201;&#65038;</string>
+    <string name="send_label">Send</string>
 </resources>

@@ -83,9 +83,19 @@ public final class MainActivity extends Activity {
   private ImageButton renameAction, modelAction, archiveAction, archivedAction;
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
+  private boolean transientMessage;
   private boolean updateCheckStarted;
   private int generation;
   private final Map<String, String> answers = new HashMap<>();
+  private final Runnable dismissTransientMessage =
+      () -> {
+        if (!transientMessage) return;
+        transientMessage = false;
+        if (error != null) {
+          error.setText("");
+          error.setVisibility(View.GONE);
+        }
+      };
   private final Runnable poll =
       new Runnable() {
         @Override
@@ -412,22 +422,37 @@ public final class MainActivity extends Activity {
   }
 
   private void problem(String message) {
-    if (error != null) {
-      error.setTextColor(Color.rgb(245, 184, 165));
-      error.setText(message);
-      error.setVisibility(message.isEmpty() ? View.GONE : View.VISIBLE);
-    }
+    setMessage(message, Color.rgb(245, 184, 165), false);
   }
 
   private void notice(String message) {
-    problem(message);
-    if (error != null) error.setTextColor(ACCENT);
+    setMessage(message, ACCENT, true);
+  }
+
+  private void setMessage(String message, int color, boolean transientWarning) {
+    ui.removeCallbacks(dismissTransientMessage);
+    transientMessage = transientWarning && message != null && !message.isEmpty();
+    if (error == null) return;
+    error.setTextColor(color);
+    error.setText(message == null ? "" : message);
+    error.setVisibility(message == null || message.isEmpty() ? View.GONE : View.VISIBLE);
+    if (transientMessage) ui.postDelayed(dismissTransientMessage, 7000);
+  }
+
+  private void clearMessage() {
+    ui.removeCallbacks(dismissTransientMessage);
+    transientMessage = false;
+    if (error != null) {
+      error.setText("");
+      error.setVisibility(View.GONE);
+    }
   }
 
   private TextView errorLabel() {
     TextView view = label("", 14);
     view.setTextColor(Color.rgb(245, 184, 165));
     view.setVisibility(View.GONE);
+    view.setOnClickListener(v -> clearMessage());
     return view;
   }
 
@@ -784,21 +809,8 @@ public final class MainActivity extends Activity {
     for (int i = 0; i < sessions.length(); i++) {
       JSONObject entry = sessions.optJSONObject(i);
       String id = entry.optString("id");
-      Button tab = button(entry.optString("title"), v -> select(id));
-      tab.setContentDescription("Conversation " + entry.optString("title"));
       boolean active = id.equals(selected);
-      tab.setTextColor(active ? Color.WHITE : ACCENT);
-      tab.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
-      GradientDrawable tabBackground = new GradientDrawable();
-      tabBackground.setColor(active ? CARD : BG);
-      tabBackground.setCornerRadii(
-          active
-              ? new float[] {dp(8), dp(8), dp(8), dp(8), 0, 0, 0, 0}
-              : new float[] {dp(8), dp(8), dp(8), dp(8), dp(8), dp(8), dp(8), dp(8)});
-      if (active) tabBackground.setStroke(dp(1), Color.rgb(167, 186, 167));
-      tab.setBackground(tabBackground);
-      tab.setPadding(dp(16), dp(8), dp(16), dp(8));
-      tabs.addView(tab);
+      screen.addTab(entry.optString("title"), active, v -> select(id));
     }
     if (selected.isEmpty()) {
       setConversationActionsVisible(false);
@@ -839,7 +851,7 @@ public final class MainActivity extends Activity {
     sessionLocation.setText(workingDirectory);
     setConversationActionsVisible(true);
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
-    send.setText(active.isEmpty() ? "Send" : "Steer");
+    send.setText(R.string.send_label);
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
     String signature = items.toString() + requests.toString() + state.optString("error");
     if (!signature.equals(transcriptSignature)) {
@@ -1417,7 +1429,7 @@ public final class MainActivity extends Activity {
     ApiClient client = api;
     String id = selected;
     if (!conversation.isNull("activeTurnId")) {
-      problem("Finish or stop work before changing the model.");
+      notice("Finish or stop work before changing the model.");
       return;
     }
     action(
