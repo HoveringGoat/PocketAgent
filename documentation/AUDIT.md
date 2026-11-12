@@ -75,7 +75,7 @@ Before that limit, Android rebuilds the entire transcript widget tree on each ch
 
 `Conversations` uses one semaphore for every conversation, provider event handling, list/read operations, and mutations. It holds that semaphore while awaiting provider requests and all hydration pages. A stalled request can hold it for the provider timeout (60 seconds per request), preventing unrelated reads, steering and interruption from advancing.
 
-This is a responsiveness risk demonstrated by lock scope, not a reproduced diagnosis of the earlier desktop lockups. Implementation status: uncached conversation reads now hydrate provider history outside the host-wide state gate and deduplicate concurrent reads; the mutation/event paths still use the shared gate and need a fuller per-conversation serialization refactor.
+This is a responsiveness risk demonstrated by lock scope, not a reproduced diagnosis of the earlier desktop lockups. Implementation status: uncached conversation reads now hydrate provider history outside the host-wide state gate and deduplicate concurrent reads. Conversation mutations and provider events now serialize on a per-conversation gate, while the host-wide gate protects only the state registry and event dispatch bookkeeping. Conversation creation and some list bookkeeping still perform small host-wide database work; slow provider calls are no longer held under that gate.
 
 ### A8 - Medium: manual update checks are disabled with periodic checks
 

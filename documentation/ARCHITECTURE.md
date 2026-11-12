@@ -50,7 +50,7 @@ On Windows, the desktop can create one explicitly approved inbound TCP port rule
 
 ## Conversations, steering and recovery
 
-`Conversations` serializes state mutations. Exactly one provider turn runs per conversation. Idle input starts a new turn; additional active input uses `turn/steer` with the sender's expected turn ID. A stale ID is rejected and never silently converted into a new turn. An unscoped second turn is rejected. Steering does not answer an approval, modify policy, or cancel work.
+`Conversations` serializes state mutations per conversation; the host-wide gate only protects the state registry and event dispatch bookkeeping. Exactly one provider turn runs per conversation. Idle input starts a new turn; additional active input uses `turn/steer` with the sender's expected turn ID. A stale ID is rejected and never silently converted into a new turn. An unscoped second turn is rejected. Steering does not answer an approval, modify policy, or cancel work. Initial history hydration for reads runs outside the host-wide gate and concurrent reads of one conversation are deduplicated.
 
 Both native clients leave the composer editable during submission and clear only the exact acknowledged draft. Typing after Send is preserved. Neither prompts nor approval decisions are automatically replayed. Uncertain native delivery is persisted per origin/conversation and requires the user to review before resubmitting. Reconnection refreshes authoritative state; phone disconnection does not stop desktop execution. Provider disconnect clears pending controls and requires a host restart.
 

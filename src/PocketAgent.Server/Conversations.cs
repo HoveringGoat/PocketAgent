@@ -29,6 +29,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         public string? ActivePrompt { get; set; }
         public string? SourceDeviceId { get; set; }
         public string? ScheduledMessageId { get; set; }
+        public SemaphoreSlim Gate { get; } = new(1, 1);
         public List<DisplayItem> Items { get; } = [];
         public Dictionary<string, (JsonElement RpcId, PendingRequest Request)> Requests { get; } = [];
     }
@@ -88,33 +89,37 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     public async Task<ConversationSnapshot> Get(string id)
     {
+        var hydrated = await GetState(id).ConfigureAwait(false);
+        await hydrated.Gate.WaitAsync();
+        try { return Snapshot(hydrated); }
+        finally { hydrated.Gate.Release(); }
+    }
+
+    private async Task<State> GetState(string id)
+    {
         await gate.WaitAsync();
         try
         {
-            if (states.TryGetValue(id, out var existing)) return Snapshot(existing);
+            if (states.TryGetValue(id, out var existing)) return existing;
         }
         finally { gate.Release(); }
-
-        var hydrated = await readHydrations.GetOrAdd(id, HydrateForRead).ConfigureAwait(false);
-        await gate.WaitAsync();
-        try { return Snapshot(hydrated); }
-        finally { gate.Release(); }
+        return await readHydrations.GetOrAdd(id, HydrateForRead).ConfigureAwait(false);
     }
 
     public async Task<ConversationSnapshot> Rename(string id, string title)
     {
         if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
             throw new ApiException(400, "Use a name of 1–100 characters.");
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id);
             RequireUnarchived(state);
             store.RenameConversation(id, title.Trim());
             state.Reference = state.Reference with { Title = title.Trim() };
             return Snapshot(state);
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     private async Task<ModelOption> ValidateModel(string model)
@@ -146,10 +151,11 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     public async Task<ConversationSnapshot> SetModel(string id, string model)
     {
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id); RequireUnarchived(state); RequireIdle(state);
+            RequireUnarchived(state); RequireIdle(state);
             await ValidateModel(model);
             store.SetModel(id, model);
             var supported = (await diagnostics.Models()).First(option => option.Model == model).SupportedReasoningEfforts;
@@ -158,44 +164,46 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             state.Reference = state.Reference with { Model = model, ReasoningEffort = reasoning };
             return Snapshot(state);
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     public async Task<ConversationSnapshot> SetReasoning(string id, string? effort)
     {
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id); RequireUnarchived(state); RequireIdle(state);
+            RequireUnarchived(state); RequireIdle(state);
             if (effort is not null) await ValidateReasoning(state.Reference.Model, effort);
             store.SetReasoningEffort(id, effort);
             state.Reference = state.Reference with { ReasoningEffort = effort };
             return Snapshot(state);
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     public async Task<ConversationSnapshot> Archive(string id, bool archived)
     {
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id); RequireIdle(state);
+            RequireIdle(state);
             store.SetArchived(id, archived);
             state.Reference = state.Reference with { Archived = archived };
             return Snapshot(state);
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
             throw new ApiException(400, "Messages must contain 1–32,000 characters.");
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id);
             RequireUnarchived(state);
             if (expectedTurnId is not null)
             {
@@ -259,29 +267,29 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 throw;
             }
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     public async Task Interrupt(string id)
     {
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id);
             if (state.ActiveTurnId is null)
                 throw new ApiException(409, "There is no confirmed active turn to interrupt.");
             await codex.Request("turn/interrupt", new { threadId = id, turnId = state.ActiveTurnId });
             // Keep the turn and requests until Codex confirms completion/resolution.
         }
-        finally { gate.Release(); await publisher.Changed(id); }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     public async Task Answer(string id, string requestId, AnswerRequest answer)
     {
-        await gate.WaitAsync();
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
         try
         {
-            var state = await Load(id);
             if (!state.Requests.TryGetValue(requestId, out var entry) || !entry.Request.Supported)
                 throw new ApiException(409, "This request was resolved, is stale, or is unsupported.");
             object response;
@@ -303,20 +311,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             state.Requests.Remove(requestId);
             state.Status = state.Requests.Count > 0 ? "awaiting-input" : "running";
         }
-        finally { gate.Release(); await publisher.Changed(id); }
-    }
-
-    private async Task<State> Load(string id)
-    {
-        if (states.TryGetValue(id, out var state))
-            return state;
-        var reference = store.Conversations(true).FirstOrDefault(row => row.Id == id) ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
-        await codex.EnsureStarted();
-        state = new(reference);
-        var result = await codex.Request("thread/read", new { threadId = id, includeTurns = false });
-        await Hydrate(state, result.GetProperty("thread"));
-        states[id] = state;
-        return state;
+        finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
     private async Task<State> HydrateForRead(string id)
@@ -480,82 +475,96 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 {
                     foreach (var state in states.Values)
                     {
-                        state.Status = "disconnected";
-                        state.Error = "The desktop lost its connection to Codex. Restart the relay; unfinished work will not be automatically resubmitted.";
-                        state.ActiveTurnId = null;
-                        state.Requests.Clear();
+                        await state.Gate.WaitAsync(stoppingToken);
+                        try
+                        {
+                            state.Status = "disconnected";
+                            state.Error = "The desktop lost its connection to Codex. Restart the relay; unfinished work will not be automatically resubmitted.";
+                            state.ActiveTurnId = null;
+                            state.Requests.Clear();
+                        }
+                        finally { state.Gate.Release(); }
                     }
                     id = null;
                 }
                 else if (states.TryGetValue(id, out var state))
                 {
-                    if (message.TryGetProperty("id", out var requestId))
+                    await state.Gate.WaitAsync(stoppingToken);
+                    try
                     {
-                        var key = requestId.GetRawText();
-                        var supported = method is "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" or "item/tool/requestUserInput";
-                        // A grantRoot can broaden access beyond this file action; defer that host interaction.
-                        if (method == "item/fileChange/requestApproval" && parameters.Text("grantRoot").Length > 0)
-                            supported = false;
-                        string[] decisions = method == "item/tool/requestUserInput" ? [] : ["accept", "decline", "cancel"];
-                        if (parameters.Field("availableDecisions") is { ValueKind: JsonValueKind.Array } choices)
-                            decisions = decisions.Where(decision => choices.EnumerateArray().Any(choice => choice.ValueKind == JsonValueKind.String && choice.GetString() == decision)).ToArray();
-                        var request = new PendingRequest(key, method, PublicRequestParameters(parameters), decisions, supported);
-                        state.Requests[key] = (requestId.Clone(), request);
-                        state.Status = "awaiting-input";
-                    }
-                    else
-                    {
-                        switch (method)
+                        if (message.TryGetProperty("id", out var requestId))
                         {
-                            case "turn/started":
-                                state.ActiveTurnId = parameters.Field("turn").Text("id");
-                                state.Status = state.Requests.Count > 0 ? "awaiting-input" : "running";
-                                break;
-                            case "turn/completed":
-                                var turn = parameters.GetProperty("turn");
-                                var completedItems = turn.Field("items");
-                                var finalHasWork = completedItems.ValueKind == JsonValueKind.Array && completedItems.EnumerateArray().Any(item =>
-                                    item.Text("type") != "userMessage" && (item.Text("type") != "agentMessage" || item.Text("text").Length > 0));
-                                if (turn.Field("error").Text("codexErrorInfo") == "usageLimitExceeded" && !state.HasWork && !finalHasWork && state.ActivePrompt is not null)
-                                    deferred = (state.Reference.Id, state.ActivePrompt, state.SourceDeviceId, state.ScheduledMessageId ?? $"usage-{state.Reference.Id}-{turn.Text("id")}");
-                                AddTurn(state, turn);
-                                state.Status = turn.Text("status", "failed");
-                                state.Error = turn.Field("error").Text("message") is { Length: > 0 } error ? error : null;
-                                state.ActiveTurnId = null;
-                                state.Requests.Clear();
-                                break;
-                            case "item/started":
-                            case "item/completed":
-                                Upsert(state, Render(parameters.GetProperty("item")));
-                                break;
-                            case "item/agentMessage/delta":
-                                var itemId = parameters.Text("itemId");
-                                var existing = state.Items.FirstOrDefault(item => item.Id == itemId) ?? new(itemId, "agentMessage", "", "", "inProgress");
-                                Upsert(state, existing with { Text = existing.Text + parameters.Text("delta") });
-                                urgent = false;
-                                break;
-                            case "item/commandExecution/outputDelta":
-                                var commandId = parameters.Text("itemId");
-                                var command = state.Items.FirstOrDefault(item => item.Id == commandId) ?? new(commandId, "commandExecution", "", "", "inProgress");
-                                Upsert(state, command with { Detail = command.Detail + parameters.Text("delta") });
-                                urgent = false;
-                                break;
-                            case "serverRequest/resolved":
-                                if (parameters.TryGetProperty("requestId", out var resolved))
-                                    state.Requests.Remove(resolved.GetRawText());
-                                if (state.Requests.Count == 0 && state.ActiveTurnId is not null)
-                                    state.Status = "running";
-                                break;
-                            case "error":
-                                state.Error = parameters.Field("error").Text("message", "Codex reported an error.");
-                                break;
+                            var key = requestId.GetRawText();
+                            var supported = method is "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" or "item/tool/requestUserInput";
+                            // A grantRoot can broaden access beyond this file action; defer that host interaction.
+                            if (method == "item/fileChange/requestApproval" && parameters.Text("grantRoot").Length > 0)
+                                supported = false;
+                            string[] decisions = method == "item/tool/requestUserInput" ? [] : ["accept", "decline", "cancel"];
+                            if (parameters.Field("availableDecisions") is { ValueKind: JsonValueKind.Array } choices)
+                                decisions = decisions.Where(decision => choices.EnumerateArray().Any(choice => choice.ValueKind == JsonValueKind.String && choice.GetString() == decision)).ToArray();
+                            var request = new PendingRequest(key, method, PublicRequestParameters(parameters), decisions, supported);
+                            state.Requests[key] = (requestId.Clone(), request);
+                            state.Status = "awaiting-input";
+                        }
+                        else
+                        {
+                            switch (method)
+                            {
+                                case "turn/started":
+                                    state.ActiveTurnId = parameters.Field("turn").Text("id");
+                                    state.Status = state.Requests.Count > 0 ? "awaiting-input" : "running";
+                                    break;
+                                case "turn/completed":
+                                    var turn = parameters.GetProperty("turn");
+                                    var completedItems = turn.Field("items");
+                                    var finalHasWork = completedItems.ValueKind == JsonValueKind.Array && completedItems.EnumerateArray().Any(item =>
+                                        item.Text("type") != "userMessage" && (item.Text("type") != "agentMessage" || item.Text("text").Length > 0));
+                                    if (turn.Field("error").Text("codexErrorInfo") == "usageLimitExceeded" && !state.HasWork && !finalHasWork && state.ActivePrompt is not null)
+                                        deferred = (state.Reference.Id, state.ActivePrompt, state.SourceDeviceId, state.ScheduledMessageId ?? $"usage-{state.Reference.Id}-{turn.Text("id")}");
+                                    AddTurn(state, turn);
+                                    state.Status = turn.Text("status", "failed");
+                                    state.Error = turn.Field("error").Text("message") is { Length: > 0 } error ? error : null;
+                                    state.ActiveTurnId = null;
+                                    state.Requests.Clear();
+                                    break;
+                                case "item/started":
+                                case "item/completed":
+                                    Upsert(state, Render(parameters.GetProperty("item")));
+                                    break;
+                                case "item/agentMessage/delta":
+                                    var itemId = parameters.Text("itemId");
+                                    var existing = state.Items.FirstOrDefault(item => item.Id == itemId) ?? new(itemId, "agentMessage", "", "", "inProgress");
+                                    Upsert(state, existing with { Text = existing.Text + parameters.Text("delta") });
+                                    urgent = false;
+                                    break;
+                                case "item/commandExecution/outputDelta":
+                                    var commandId = parameters.Text("itemId");
+                                    var command = state.Items.FirstOrDefault(item => item.Id == commandId) ?? new(commandId, "commandExecution", "", "", "inProgress");
+                                    Upsert(state, command with { Detail = command.Detail + parameters.Text("delta") });
+                                    urgent = false;
+                                    break;
+                                case "serverRequest/resolved":
+                                    if (parameters.TryGetProperty("requestId", out var resolved))
+                                        state.Requests.Remove(resolved.GetRawText());
+                                    if (state.Requests.Count == 0 && state.ActiveTurnId is not null)
+                                        state.Status = "running";
+                                    break;
+                                case "error":
+                                    state.Error = parameters.Field("error").Text("message", "Codex reported an error.");
+                                    break;
+                            }
                         }
                     }
+                    finally { state.Gate.Release(); }
                 }
                 else if (message.TryGetProperty("id", out _))
                 {
                     foreach (var active in states.Values.Where(state => state.ActiveTurnId is not null))
-                        active.Error = "Codex requested an unsupported host interaction. Interrupt this turn and complete the setup on the desktop.";
+                    {
+                        await active.Gate.WaitAsync(stoppingToken);
+                        try { active.Error = "Codex requested an unsupported host interaction. Interrupt this turn and complete the setup on the desktop."; }
+                        finally { active.Gate.Release(); }
+                    }
                     id = null;
                 }
             }
