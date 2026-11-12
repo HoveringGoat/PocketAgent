@@ -2,6 +2,11 @@
 
 This file covers the Android companion application.
 
+## 0.3.1 - 2026-11-11
+
+- Restored the selected model and reasoning effort to the conversation status line.
+- Decluttered the overflow menu into Connection, Conversation, Scheduling, and App submenus.
+
 ## 0.3.0 - 2026-11-11
 
 - Added app settings with a persisted startup update-check preference, manual update checks, and version information.

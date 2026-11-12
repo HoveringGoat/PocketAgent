@@ -733,9 +733,13 @@ public final class MainActivity extends Activity {
       status += " - worked " + elapsed(state.optLong("lastWorkDurationMs"));
     String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
-    context.setText(state.optBoolean("historyTruncated")
-        ? getString(R.string.session_context_history, status)
-        : getString(R.string.session_context_v2, status));
+    String model = state.isNull("model") ? "Codex" : state.optString("model");
+    String reasoning =
+        state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
+    context.setText(
+        state.optBoolean("historyTruncated")
+            ? getString(R.string.session_context_history, status, model, reasoning)
+            : getString(R.string.session_context_v2, status, model, reasoning));
     sessionLocation.setMaxLines(2);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
@@ -861,9 +865,14 @@ public final class MainActivity extends Activity {
       } catch (Exception ignored) {
       }
     } else if (!conversation.isNull("lastWorkDurationMs")) status += " - worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
+    String model = conversation.isNull("model") ? "Codex" : conversation.optString("model");
+    String reasoning =
+        conversation.isNull("reasoningEffort")
+            ? "default"
+            : conversation.optString("reasoningEffort");
     context.setText(conversation.optBoolean("historyTruncated")
-        ? getString(R.string.session_context_history, status)
-        : getString(R.string.session_context_v2, status));
+        ? getString(R.string.session_context_history, status, model, reasoning)
+        : getString(R.string.session_context_v2, status, model, reasoning));
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {
@@ -1530,53 +1539,93 @@ public final class MainActivity extends Activity {
         .setTitle(serverName)
         .setItems(
             new String[] {
-              "Servers",
-              "Schedule message",
-              "Scheduled messages",
-              "Usage and resets",
-              "Refresh",
-              "Check for updates",
-              "App settings",
-              "About PocketAgent",
-              "Choose model",
-              "Choose reasoning",
-              "Archive conversation",
-              "Archived conversations",
-              "Unpair this server"
+              "Connection",
+              "Conversation",
+              "Scheduling",
+              "App"
             },
             (d, which) -> {
-              if (which == 0) showServers();
-              else if (which == 1) scheduleMessage();
-              else if (which == 2) showScheduled();
-              else if (which == 3) showUsage();
-              else if (which == 4) refresh();
-              else if (which == 5) checkForUpdates();
-              else if (which == 6) showAppSettings();
-              else if (which == 7) showAbout();
-              else if (which == 8) showModels();
-              else if (which == 9) showReasoning();
-              else if (which == 10) archive(selected);
-              else if (which == 11) showArchived();
-              else {
-                ApiClient client = api;
-                action(
-                    () -> client.request("/logout", new JSONObject()),
-                    ignored -> {
-                      try {
-                        store.remove(client.origin);
-                      } catch (Exception ignoredError) {
-                      }
-                      api = null;
-                      conversation = null;
-                      selected = "";
-                      send = null;
-                      showPairing();
-                    },
-                    false);
-              }
+              if (which == 0) showConnectionMenu();
+              else if (which == 1) showConversationMenu();
+              else if (which == 2) showSchedulingMenu();
+              else showAppMenu();
             })
         .setNegativeButton("Close", null)
         .show();
+  }
+
+  private void showConnectionMenu() {
+    new AlertDialog.Builder(this)
+        .setTitle("Connection")
+        .setItems(
+            new String[] {"Servers", "Refresh", "Unpair this server"},
+            (dialog, which) -> {
+              if (which == 0) showServers();
+              else if (which == 1) refresh();
+              else unpairServer();
+            })
+        .setNegativeButton("Back", null)
+        .show();
+  }
+
+  private void showConversationMenu() {
+    new AlertDialog.Builder(this)
+        .setTitle("Conversation")
+        .setItems(
+            new String[] {"Choose model", "Choose reasoning", "Archive conversation", "Archived conversations"},
+            (dialog, which) -> {
+              if (which == 0) showModels();
+              else if (which == 1) showReasoning();
+              else if (which == 2) archive(selected);
+              else showArchived();
+            })
+        .setNegativeButton("Back", null)
+        .show();
+  }
+
+  private void showSchedulingMenu() {
+    new AlertDialog.Builder(this)
+        .setTitle("Scheduling")
+        .setItems(new String[] {"Schedule message", "Scheduled messages"},
+            (dialog, which) -> {
+              if (which == 0) scheduleMessage();
+              else showScheduled();
+            })
+        .setNegativeButton("Back", null)
+        .show();
+  }
+
+  private void showAppMenu() {
+    new AlertDialog.Builder(this)
+        .setTitle("App")
+        .setItems(
+            new String[] {"Usage and resets", "Check for updates", "App settings", "About PocketAgent"},
+            (dialog, which) -> {
+              if (which == 0) showUsage();
+              else if (which == 1) checkForUpdates();
+              else if (which == 2) showAppSettings();
+              else showAbout();
+            })
+        .setNegativeButton("Back", null)
+        .show();
+  }
+
+  private void unpairServer() {
+    ApiClient client = api;
+    action(
+        () -> client.request("/logout", new JSONObject()),
+        ignored -> {
+          try {
+            store.remove(client.origin);
+          } catch (Exception ignoredError) {
+          }
+          api = null;
+          conversation = null;
+          selected = "";
+          send = null;
+          showPairing();
+        },
+        false);
   }
 
   private void showAppSettings() {

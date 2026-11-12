@@ -136,7 +136,7 @@ steps and troubleshooting limits.
 
 ## Current packaged release
 
-The latest stable releases are **desktop/server 0.3.1** and **Android 0.3.0**.
+The latest stable releases are **desktop/server 0.3.1** and **Android 0.3.1**.
 Releases contain a per-user Windows installer, a portable desktop ZIP, the
 signed Android APK, and SHA-256 manifests. Desktop and Android release channels
 are tracked independently and may have different version numbers.
