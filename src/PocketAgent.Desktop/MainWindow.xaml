@@ -3,7 +3,7 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Margin="0,0,0,20">
       <StackPanel DockPanel.Dock="Left"><TextBlock Text="PocketAgent" FontSize="28" FontWeight="Bold"/><TextBlock x:Name="ServerStatus" Text="Server stopped" Foreground="#A7BAA7"/><TextBlock x:Name="UsageDisplay" Foreground="#C1DAA6" FontSize="12"/></StackPanel>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="StartButton" Content="Start server" Click="StartServer"/><Button x:Name="StopButton" Content="Stop server" Click="StopServer" IsEnabled="False"/></StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="Menu" Click="OpenMainMenu"/><Button x:Name="StartButton" Content="Start server" Click="StartServer"/><Button x:Name="StopButton" Content="Stop server" Click="StopServer" IsEnabled="False"/></StackPanel>
     </DockPanel>
     <TabControl x:Name="Navigation" Grid.Row="1">
       <TabItem Header="Sessions">

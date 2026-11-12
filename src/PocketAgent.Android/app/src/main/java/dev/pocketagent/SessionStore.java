@@ -172,6 +172,14 @@ final class SessionStore {
     preferences.edit().putString("selected:" + origin, id).apply();
   }
 
+  boolean checkUpdatesOnStartup() {
+    return preferences.getBoolean("checkUpdatesOnStartup", true);
+  }
+
+  void checkUpdatesOnStartup(boolean value) {
+    preferences.edit().putBoolean("checkUpdatesOnStartup", value).apply();
+  }
+
   String draft(String origin, String id) {
     return preferences.getString("draft:" + origin + ":" + id, "");
   }

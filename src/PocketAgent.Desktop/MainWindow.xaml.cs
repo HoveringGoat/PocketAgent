@@ -89,6 +89,28 @@ public partial class MainWindow : Window
         catch (Exception exception) { CodexResolved.Text = exception.Message; }
     }
 
+    private void OpenMainMenu(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var menu = new ContextMenu();
+        AddMenuItem(menu, "Sessions", () => Navigation.SelectedIndex = 0);
+        AddMenuItem(menu, "Devices", () => Navigation.SelectedIndex = 1);
+        AddMenuItem(menu, "General settings", () => Navigation.SelectedIndex = 2);
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "Check for updates", () => _ = CheckForUpdatesCore(false, true));
+        AddMenuItem(menu, "View release notes", () => ViewReleaseNotes(this, new RoutedEventArgs()), pendingUpdate is not null);
+        AddMenuItem(menu, $"Version {BuildInfo.Version}", () => AppDialogs.Show(this, $"PocketAgent desktop/server {BuildInfo.Version}\n{Environment.ProcessPath}", "About PocketAgent"));
+        menu.PlacementTarget = button;
+        menu.IsOpen = true;
+    }
+
+    private static void AddMenuItem(ContextMenu menu, string header, Action action, bool enabled = true)
+    {
+        var item = new MenuItem { Header = header, IsEnabled = enabled };
+        item.Click += (_, _) => action();
+        menu.Items.Add(item);
+    }
+
     private async Task WindowReady()
     {
         if (Environment.GetCommandLineArgs().Contains("--background", StringComparer.OrdinalIgnoreCase)) WindowState = WindowState.Minimized;

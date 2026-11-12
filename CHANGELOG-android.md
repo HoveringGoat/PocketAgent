@@ -2,6 +2,12 @@
 
 This file covers the Android companion application.
 
+## 0.3.0 - Unreleased
+
+- Added app settings with a persisted startup update-check preference, manual update checks, and version information.
+- Added the same top-level app menu affordance for server switching, scheduling, usage, model/reasoning controls, and conversation actions.
+- Replaced remaining corrupted status separators with readable ASCII separators.
+
 ## 0.2.2 - 2026-11-11
 
 - Published the signed Android APK alongside the desktop updater fix.

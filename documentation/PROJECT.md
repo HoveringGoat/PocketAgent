@@ -43,7 +43,7 @@ The desktop must support reviewing active PocketAgent sessions and interacting i
 
 Both desktop and client must support submitting additional prompts while the agent is working, with the active-turn behavior specified below.
 
-Implemented native Windows WPF navigation is **Sessions**, **Devices**, and **Settings**, with top conversation tabs and server/provider status. Settings include saved repository, executable, permissions, listener, and certificate configuration; stopping explains the impact on active work and pending schedules.
+Implemented native Windows WPF navigation is **Sessions**, **Devices**, and **Settings**, with top conversation tabs and server/provider status. The desktop top-level Menu provides direct access to those areas plus update checks, release notes, and version information. Settings include saved repository, executable, permissions, listener, and certificate configuration; stopping explains the impact on active work and pending schedules.
 
 ### Minimal client and conversation identity
 
@@ -79,7 +79,7 @@ The user approved completing and extending the native apps while away. Android m
 
 Both apps show provider-reported five-hour and weekly usage remaining and reset times, with explicit unavailable states when the account/executable does not expose them. Submissions blocked by an identifiable exhausted usage window are persisted for dispatch after reset and reported as queued. A durable server scheduler also supports user-selected dates/times from either app, list/cancel operations, restart recovery, and clear submitted/failed/uncertain states. A message already sent with an unknown outcome must never be automatically replayed. Scheduled messages wait for idle conversations and preserve the configured permissions and approval boundaries. Device revocation cancels that device's pending scheduled work. A stopped/sleeping desktop cannot dispatch until it runs again.
 
-Wi-Fi setup and a documented internet route are both required. The earlier named-tunnel implementation remains optional; the subsequent user decision selects direct IP and port with manual opening instead. No external account/domain is required for the direct path, and public exposure remains an explicit setup action. Verification distinguishes emulator/local checks from physical Android and external-network acceptance.
+Wi-Fi setup and a documented internet route are both required. The earlier named-tunnel implementation remains optional; the subsequent user decision selects direct IP and port with manual opening instead. No external account/domain is required for the direct path, and public exposure remains an explicit setup action. Verification distinguishes emulator/local checks from physical Android and external-network acceptance. Android's top-right app menu groups server switching with app settings, update checks, version information, scheduling, usage, and conversation controls; the startup update-check preference is persisted locally.
 
 ### Approved conversation controls and direct internet
 

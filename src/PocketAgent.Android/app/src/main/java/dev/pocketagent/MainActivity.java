@@ -105,7 +105,7 @@ public final class MainActivity extends Activity {
     }
     if (api == null) showPairing();
     else showChat();
-    checkForUpdates();
+    if (store.checkUpdatesOnStartup()) checkForUpdates();
   }
 
   @Override
@@ -183,6 +183,7 @@ public final class MainActivity extends Activity {
             // Update checks are best effort and must never affect pairing or chat.
           } finally {
             if (connection != null) connection.disconnect();
+            updateCheckStarted = false;
           }
         });
   }
@@ -842,7 +843,7 @@ public final class MainActivity extends Activity {
       TextView row = renderedRows.get(item.optString("id"));
       if ("userMessage".equals(type) || "agentMessage".equals(type)) row.setText(item.optString("text"));
       else {
-        String summary = type + " A� " + item.optString("status");
+        String summary = type + " - " + item.optString("status");
         row.setText(expandedItems.contains(item.optString("id")) ? summary + "\n" + item.optString("detail") : summary);
       }
     }
@@ -855,11 +856,11 @@ public final class MainActivity extends Activity {
     String status = conversation.optString("status");
     if (!conversation.isNull("activeTurnStartedAt")) {
       try {
-        status += " A� " + elapsed(java.time.Duration.between(java.time.Instant.parse(conversation.optString("activeTurnStartedAt")), java.time.Instant.now()).toMillis());
+        status += " - " + elapsed(java.time.Duration.between(java.time.Instant.parse(conversation.optString("activeTurnStartedAt")), java.time.Instant.now()).toMillis());
       } catch (Exception ignored) {
       }
-    } else if (!conversation.isNull("lastWorkDurationMs")) status += " A� worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
-    context.setText(getString(R.string.session_context_v2, status) + (conversation.optBoolean("historyTruncated") ? " A� older history is hidden" : ""));
+    } else if (!conversation.isNull("lastWorkDurationMs")) status += " - worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
+    context.setText(getString(R.string.session_context_v2, status) + (conversation.optBoolean("historyTruncated") ? " - older history is hidden" : ""));
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {
@@ -1531,6 +1532,9 @@ public final class MainActivity extends Activity {
               "Scheduled messages",
               "Usage and resets",
               "Refresh",
+              "Check for updates",
+              "App settings",
+              "About PocketAgent",
               "Choose model",
               "Choose reasoning",
               "Archive conversation",
@@ -1543,10 +1547,13 @@ public final class MainActivity extends Activity {
               else if (which == 2) showScheduled();
               else if (which == 3) showUsage();
               else if (which == 4) refresh();
-              else if (which == 5) showModels();
-              else if (which == 6) showReasoning();
-              else if (which == 7) archive(selected);
-              else if (which == 8) showArchived();
+              else if (which == 5) checkForUpdates();
+              else if (which == 6) showAppSettings();
+              else if (which == 7) showAbout();
+              else if (which == 8) showModels();
+              else if (which == 9) showReasoning();
+              else if (which == 10) archive(selected);
+              else if (which == 11) showArchived();
               else {
                 ApiClient client = api;
                 action(
@@ -1566,6 +1573,34 @@ public final class MainActivity extends Activity {
               }
             })
         .setNegativeButton("Close", null)
+        .show();
+  }
+
+  private void showAppSettings() {
+    LinearLayout panel = column();
+    panel.setPadding(dp(24), 0, dp(24), 0);
+    TextView version = label("Android " + BuildConfig.VERSION_NAME, 15);
+    version.setTextColor(ACCENT);
+    panel.addView(version, match());
+    android.widget.CheckBox updates = new android.widget.CheckBox(this);
+    updates.setText("Check for updates on startup");
+    updates.setTextColor(TEXT);
+    updates.setChecked(store.checkUpdatesOnStartup());
+    panel.addView(updates, match());
+    new AlertDialog.Builder(this)
+        .setTitle("App settings")
+        .setView(panel)
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton("Save", (dialog, which) -> store.checkUpdatesOnStartup(updates.isChecked()))
+        .setNeutralButton("Check now", (dialog, which) -> checkForUpdates())
+        .show();
+  }
+
+  private void showAbout() {
+    new AlertDialog.Builder(this)
+        .setTitle("About PocketAgent")
+        .setMessage("Android " + BuildConfig.VERSION_NAME + "\nNative client for following and directing work on a PocketAgent desktop/server.")
+        .setPositiveButton("Close", null)
         .show();
   }
 
