@@ -10,15 +10,26 @@ public sealed record DesktopUpdate(Version Version, string Tag, Uri Asset, strin
 
 public static class UpdateService
 {
-    public const string LatestReleaseEndpoint = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases/latest";
+    public const string ReleaseListEndpoint = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases?per_page=30";
     private static readonly HttpClient Client = CreateClient();
 
     public static async Task<DesktopUpdate?> CheckAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await Client.GetAsync(LatestReleaseEndpoint, cancellationToken);
+        using var response = await Client.GetAsync(ReleaseListEndpoint, cancellationToken);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
         var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Array) return null;
+        var selected = default(JsonElement);
+        var selectedVersion = new Version(0, 0, 0);
+        foreach (var release in root.EnumerateArray())
+        {
+            var candidateTag = release.TryGetProperty("tag_name", out var tagProperty) ? tagProperty.GetString() ?? "" : "";
+            if (!candidateTag.StartsWith("desktop-v", StringComparison.OrdinalIgnoreCase) || !TryVersion(candidateTag["desktop-".Length..], out var candidateVersion)) continue;
+            if (selected.ValueKind == JsonValueKind.Undefined || candidateVersion > selectedVersion) { selected = release; selectedVersion = candidateVersion; }
+        }
+        if (selected.ValueKind == JsonValueKind.Undefined) return null;
+        root = selected;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         if (!TryVersion(tag, out var version) || version <= Version.Parse(BuildInfo.Version)) return null;
         var assets = root.GetProperty("assets").EnumerateArray().ToArray();

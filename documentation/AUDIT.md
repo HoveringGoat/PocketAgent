@@ -91,7 +91,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 ## Requirements still incomplete
 
-- Desktop/server and Android versions are not independently released. Android now ignores a newer release unless that release contains the matching APK asset, but it still uses the shared latest-release endpoint and tag; fully independent release channels remain open.
+- Desktop/server and Android now have independent channel tags and update discovery (`desktop-v…` and `android-v…`). The legacy combined `v…` channel remains available for compatibility. Android release notes are still authored from the platform changelog, but the UI currently displays the channel release body as-is.
 - Android now keeps the lower context bar to status/work information and moves the server machine plus conversation working directory into the header location line. Model/reasoning remain available through the model control rather than being repeated in the status bar.
 - Android truncates combined release notes at 1,200 characters; an Android section after lengthy desktop notes can be hidden. It offers the full release page, but does not filter notes by app.
 - Documentation was corrected in this pass. Compilation/readability checks still do not establish a complete installed upgrade.
@@ -99,8 +99,8 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 ## Recommended order
 
 1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
-2. Establish independent desktop/Android release channels and filtered release notes.
+2. Filter release notes to the active platform and keep independent channel changelogs visible in update prompts.
 3. Add persisted idempotency for message IDs and true paginated history/incremental rendering.
-4. Finish the requested Android context-bar layout and expose worker health diagnostics.
+4. Expose worker health diagnostics.
 
 This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.

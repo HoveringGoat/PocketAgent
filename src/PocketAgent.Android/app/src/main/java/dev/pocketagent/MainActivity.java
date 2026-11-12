@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
       CARD = Color.rgb(31, 47, 37),
       TEXT = Color.rgb(235, 241, 234),
       ACCENT = Color.rgb(193, 218, 166);
-  private static final String LATEST_RELEASE_ENDPOINT = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases/latest";
+  private static final String RELEASE_LIST_ENDPOINT = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases?per_page=30";
   private final Handler ui = new Handler(Looper.getMainLooper());
   private final ExecutorService network = Executors.newCachedThreadPool();
   private SessionStore store;
@@ -128,7 +128,7 @@ public final class MainActivity extends Activity {
         () -> {
           HttpURLConnection connection = null;
           try {
-            connection = (HttpURLConnection) new URL(LATEST_RELEASE_ENDPOINT).openConnection();
+            connection = (HttpURLConnection) new URL(RELEASE_LIST_ENDPOINT).openConnection();
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(8000);
             connection.setRequestProperty("Accept", "application/vnd.github+json");
@@ -139,8 +139,9 @@ public final class MainActivity extends Activity {
               String line;
               while ((line = reader.readLine()) != null && body.length() < 512_000) body.append(line);
             }
-            JSONObject release = new JSONObject(body.toString());
-            String version = release.optString("tag_name").replaceFirst("^[vV]", "");
+            JSONObject release = selectChannelRelease(new JSONArray(body.toString()), "android-v");
+            if (release == null) return;
+            String version = release.optString("tag_name").substring("android-v".length());
             if (!isNewerVersion(version, BuildConfig.VERSION_NAME)) return;
             boolean hasAndroidAsset = false;
             JSONArray assets = release.optJSONArray("assets");
@@ -156,7 +157,7 @@ public final class MainActivity extends Activity {
             }
             if (!hasAndroidAsset) return;
             String releasePage = release.optString("html_url", "https://github.com/HoveringGoat/PocketAgent/releases");
-            String notes = release.optString("body", "").trim();
+            String notes = channelNotes(release.optString("body", ""));
             if (notes.length() > 1200) notes = notes.substring(0, 1200) + "…";
             String message = "PocketAgent " + version + " is available.\n\n" + (notes.isEmpty() ? "Open the GitHub release page to download the APK." : notes);
             String finalReleasePage = releasePage;
@@ -167,6 +168,49 @@ public final class MainActivity extends Activity {
             if (connection != null) connection.disconnect();
           }
         });
+  }
+
+  private static JSONObject selectChannelRelease(JSONArray releases, String prefix) {
+    JSONObject selected = null;
+    int[] selectedVersion = new int[] {0, 0, 0};
+    for (int i = 0; i < releases.length(); i++) {
+      JSONObject candidate = releases.optJSONObject(i);
+      if (candidate == null) continue;
+      String tag = candidate.optString("tag_name");
+      if (!tag.regionMatches(true, 0, prefix, 0, prefix.length())) continue;
+      int[] version = parseVersion(tag.substring(prefix.length()));
+      if (version == null || (selected == null && version != null) || compareVersion(version, selectedVersion) > 0) {
+        if (version != null) {
+          selected = candidate;
+          selectedVersion = version;
+        }
+      }
+    }
+    return selected;
+  }
+
+  private static String channelNotes(String notes) {
+    String marker = "## Android";
+    int start = notes.indexOf(marker);
+    if (start < 0) return notes.trim();
+    int end = notes.indexOf("\n## ", start + marker.length());
+    return notes.substring(start + marker.length(), end < 0 ? notes.length() : end).trim();
+  }
+
+  private static int[] parseVersion(String value) {
+    try {
+      String[] pieces = value.replaceFirst("^[vV]", "").split("\\.");
+      int[] version = new int[] {0, 0, 0};
+      for (int i = 0; i < Math.min(3, pieces.length); i++) version[i] = Integer.parseInt(pieces[i].replaceAll("[^0-9].*", ""));
+      return version;
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  private static int compareVersion(int[] left, int[] right) {
+    for (int i = 0; i < 3; i++) if (left[i] != right[i]) return Integer.compare(left[i], right[i]);
+    return 0;
   }
 
   private void showUpdatePrompt(String version, String message, String releasePage) {

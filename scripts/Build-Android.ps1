@@ -2,6 +2,7 @@ param(
     [string]$SdkDirectory = $env:ANDROID_HOME,
     [string]$JavaDirectory = $env:JAVA_HOME,
     [string]$GradleCommand,
+    [string]$Version,
     [switch]$DebugOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -14,11 +15,14 @@ $env:ANDROID_HOME = $SdkDirectory
 $env:GRADLE_USER_HOME = Join-Path $projectRoot '.local/gradle'
 if (!$GradleCommand) { $GradleCommand = Join-Path $projectRoot 'src/PocketAgent.Android/gradlew.bat' }
 $androidProject = Join-Path $projectRoot 'src/PocketAgent.Android'
+$gradleFile = Join-Path $androidProject 'app/build.gradle'
+if (!$Version) { $Version = ([regex]::Match((Get-Content $gradleFile -Raw), "versionName\s+.*\?:\s*'([^']+)'")).Groups[1].Value }
+if (!$Version) { throw 'Android versionName could not be determined.' }
 $tasks = if ($DebugOnly) { @(':app:assembleDebug', ':app:lintDebug') } else { @(':app:assembleDebug', ':app:assembleRelease', ':app:lintDebug', ':app:lintRelease') }
-& $GradleCommand -p $androidProject --no-daemon @tasks
+& $GradleCommand -p $androidProject --no-daemon "-PpocketAgentVersion=$Version" @tasks
 if ($LASTEXITCODE -ne 0) { throw 'Android build or lint failed.' }
 if ($DebugOnly) { return }
-$version = ([xml](Get-Content (Join-Path $projectRoot 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version
+$version = $Version
 $signingDirectory = Join-Path $projectRoot '.local/android-signing'
 New-Item -ItemType Directory -Force -Path $signingDirectory | Out-Null
 $keystore = Join-Path $signingDirectory 'pocketagent.jks'
