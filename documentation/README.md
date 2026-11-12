@@ -24,7 +24,7 @@ versioned artifacts to another repository.
 
 ## Documentation status
 
-Android's current UI uses a gear button for the main settings page. Conversation actions live on each conversation tab, and scheduling is created only with the timer button beside Send. Pending schedules appear as a compact notice below Send; selecting it opens the review/cancel dialog.
+Android's current UI uses a gear button for a full Settings page. The page lists all paired servers uniformly with per-server actions and add-server access; paired servers remain connected and poll independently. Application information and update controls are shown inline. Conversation actions live on each conversation tab, and scheduling is created only with the timer button beside Send. Pending schedules appear as a compact notice below Send; selecting it opens the review/cancel dialog.
 
 Current releases: desktop/server 0.3.3 and Android 0.3.1. Scan the QR or paste its complete pairing string; no second code, CA installation, Let's Encrypt, ports 80/443 or Caddy changes. Releases are grouped under artifacts/releases/<version> with separate installer, portable desktop and Android outputs. The 0.3.3 desktop patch fixes platform release-tag parsing in update checks; the Android 0.3.1 patch restores model/reasoning context and groups overflow actions. See setup for focused verification and remaining real-device acceptance.
 

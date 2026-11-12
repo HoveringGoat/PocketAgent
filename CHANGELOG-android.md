@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.3.3 - 2026-11-11
+
+- Reworked Settings into a full page with current/saved server information, per-server actions, add-server access, and inline application details.
+- Kept all paired servers connected and polling independently so work and personal machines can be used at the same time.
+
 ## 0.3.2 - 2026-11-11
 
 - Removed the nonessential older-history notice from the conversation status.

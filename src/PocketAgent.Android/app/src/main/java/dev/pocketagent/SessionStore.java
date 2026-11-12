@@ -130,6 +130,15 @@ final class SessionStore {
     return result;
   }
 
+  synchronized JSONObject connection(String origin) throws Exception {
+    org.json.JSONArray servers = readVault().getJSONArray("servers");
+    for (int i = 0; i < servers.length(); i++) {
+      JSONObject server = servers.getJSONObject(i);
+      if (origin.equals(server.optString("origin"))) return new JSONObject(server.toString());
+    }
+    throw new IllegalArgumentException("Saved server was not found.");
+  }
+
   synchronized JSONObject activate(String origin) throws Exception {
     JSONObject vault = readVault();
     vault.put("active", origin);

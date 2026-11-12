@@ -43,6 +43,11 @@ public final class MainActivity extends Activity {
   private final ExecutorService network = Executors.newCachedThreadPool();
   private SessionStore store;
   private ApiClient api;
+  private final java.util.LinkedHashMap<String, ApiClient> connections = new java.util.LinkedHashMap<>();
+  private final java.util.HashMap<String, String> connectionNames = new java.util.HashMap<>();
+  private final java.util.concurrent.ConcurrentHashMap<String, Boolean> connectionStates = new java.util.concurrent.ConcurrentHashMap<>();
+  private final java.util.concurrent.ConcurrentHashMap<String, String> connectionErrors = new java.util.concurrent.ConcurrentHashMap<>();
+  private final java.util.Set<String> backgroundPolling = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private String selected = "", tabSignature = "", transcriptSignature = "";
   private String historyBefore = "";
   private JSONObject conversation;
@@ -60,7 +65,7 @@ public final class MainActivity extends Activity {
   private EditText composer;
   private Button send, stop, schedule;
   private ScrollView scroll;
-  private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading;
+  private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
   private boolean updateCheckStarted;
   private int generation;
   private final Map<String, String> answers = new HashMap<>();
@@ -69,7 +74,8 @@ public final class MainActivity extends Activity {
         @Override
         public void run() {
           if (resumed && api != null) {
-                               refresh();
+            if (!settingsPage) refresh();
+            refreshBackgroundConnections();
             ui.postDelayed(this, 1200);
           }
         }
@@ -78,7 +84,7 @@ public final class MainActivity extends Activity {
       new Runnable() {
         @Override
         public void run() {
-          if (resumed) {
+          if (resumed && !settingsPage) {
             updateElapsedStatus();
             ui.postDelayed(this, 1000);
           }
@@ -91,13 +97,17 @@ public final class MainActivity extends Activity {
     store = new SessionStore(this);
     try {
       JSONObject session = store.load();
+      loadSavedConnections();
       if (session != null) {
-        api =
-            new ApiClient(
-                ApiClient.normalizeOrigin(session.getString("origin")),
-                session.getString("token"),
-                session.optString("pin"));
+        String origin = ApiClient.normalizeOrigin(session.getString("origin"));
+        api = connections.get(origin);
+        if (api == null) {
+          api =
+              new ApiClient(origin, session.getString("token"), session.optString("pin"));
+          connections.put(origin, api);
+        }
         serverName = session.optString("name", api.origin);
+        connectionNames.put(api.origin, serverName);
         selected = store.selected(api.origin);
       }
     } catch (Exception ignored) {
@@ -127,11 +137,56 @@ public final class MainActivity extends Activity {
   }
 
   @Override
+  public void onBackPressed() {
+    if (settingsPage) {
+      showChat();
+      return;
+    }
+    super.onBackPressed();
+  }
+
+  @Override
   protected void onDestroy() {
     generation++;
     ui.removeCallbacksAndMessages(null);
     network.shutdownNow();
     super.onDestroy();
+  }
+
+  private void loadSavedConnections() throws Exception {
+    JSONArray servers = store.connections();
+    for (int i = 0; i < servers.length(); i++) {
+      JSONObject summary = servers.optJSONObject(i);
+      if (summary == null) continue;
+      JSONObject saved = store.connection(summary.optString("origin"));
+      String origin = saved.getString("origin");
+      connections.put(
+          origin,
+          new ApiClient(origin, saved.getString("token"), saved.optString("pin")));
+      connectionNames.put(origin, saved.optString("name", origin));
+      connectionStates.put(origin, false);
+    }
+  }
+
+  private void refreshBackgroundConnections() {
+    for (java.util.Map.Entry<String, ApiClient> entry : connections.entrySet()) {
+      if (!settingsPage && api != null && api.origin.equals(entry.getKey())) continue;
+      if (!backgroundPolling.add(entry.getKey())) continue;
+      ApiClient client = entry.getValue();
+      network.execute(
+          () -> {
+            try {
+              client.request("/conversations", null);
+              connectionStates.put(client.origin, true);
+              connectionErrors.remove(client.origin);
+            } catch (Exception exception) {
+              connectionStates.put(client.origin, false);
+              connectionErrors.put(client.origin, safeError(exception));
+            } finally {
+              backgroundPolling.remove(client.origin);
+            }
+          });
+    }
   }
 
   private int dp(int value) {
@@ -355,6 +410,7 @@ public final class MainActivity extends Activity {
   private EditText pairingInput;
 
   private void showPairing() {
+    settingsPage = api != null;
     generation++;
     base();
     root.addView(label("Connect to your desktop", 26));
@@ -363,6 +419,7 @@ public final class MainActivity extends Activity {
             "Scan its pairing QR or paste the full pairing string. It expires after ten minutes and"
                 + " works once.",
             15));
+    if (api != null) root.addView(button("Back to settings", v -> showSettings()), match());
     root.addView(button("Saved servers", v -> showServers()), match());
     pairingInput = input("Paste pairing string");
     pairingInput.setContentDescription("Pairing string");
@@ -423,7 +480,11 @@ public final class MainActivity extends Activity {
                       () -> {
                         if (epoch != generation) return;
                         pairingInput.setText("");
-                        api = new ApiClient(ticket.origin, token, ticket.pin);
+                         api = new ApiClient(ticket.origin, token, ticket.pin);
+                         connections.put(ticket.origin, api);
+                         connectionNames.put(ticket.origin, label);
+                         connectionStates.put(ticket.origin, false);
+                         connected = false;
                         serverName = label;
                         selected = store.selected(api.origin);
                         conversation = null;
@@ -460,6 +521,7 @@ public final class MainActivity extends Activity {
   }
 
   private void showChat() {
+    settingsPage = false;
     generation++;
     tabSignature = "";
     transcriptSignature = "";
@@ -483,7 +545,7 @@ public final class MainActivity extends Activity {
     settings.setContentDescription("Settings");
     header.addView(settings);
     root.addView(header, match());
-    connection.setOnClickListener(v -> showServers());
+    connection.setOnClickListener(v -> showSettings());
     usageView = label("5h: unavailable - Weekly: unavailable", 11);
     usageView.setContentDescription("Usage remaining");
     usageView.setOnClickListener(v -> showUsage());
@@ -567,6 +629,12 @@ public final class MainActivity extends Activity {
     loadDraft();
     updateScheduledNotice();
     updateSend();
+    if (resumed) {
+      ui.removeCallbacks(poll);
+      ui.post(poll);
+      ui.removeCallbacks(elapsedTicker);
+      ui.post(elapsedTicker);
+    }
   }
 
   private void loadDraft() {
@@ -633,6 +701,8 @@ public final class MainActivity extends Activity {
                   if (epoch != generation || api != client) return;
                   polling = false;
                   connected = true;
+                  connectionStates.put(client.origin, true);
+                  connectionErrors.remove(client.origin);
                   connection.setText(R.string.connected);
                   renderTabs(sessions);
                   connection.setText(serverName);
@@ -663,6 +733,8 @@ public final class MainActivity extends Activity {
                   if (epoch != generation) return;
                   polling = false;
                   connected = false;
+                  connectionStates.put(client.origin, false);
+                  connectionErrors.put(client.origin, safeError(ex));
                   connectionProblem = true;
                   connection.setText(R.string.reconnecting);
                   if (ex instanceof ApiClient.ApiError && ((ApiClient.ApiError) ex).status == 401) {
@@ -1545,29 +1617,52 @@ public final class MainActivity extends Activity {
   }
 
   private void showSettings() {
+    settingsPage = true;
+    generation++;
+    ui.removeCallbacks(elapsedTicker);
+    base();
+    LinearLayout header = row();
+    header.addView(button("Back", v -> showChat()));
+    TextView title = label("Settings", 24);
+    title.setTypeface(null, Typeface.BOLD);
+    header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+    root.addView(header, match());
+
     LinearLayout panel = column();
-    panel.setPadding(dp(16), 0, dp(16), 0);
-    final AlertDialog[] dialog = new AlertDialog[1];
-    settingsSection(panel, "Connection");
-    settingsAction(panel, "Servers", () -> { dialog[0].dismiss(); showServers(); });
-    settingsAction(panel, "Refresh", () -> { dialog[0].dismiss(); refresh(); });
-    settingsAction(panel, "Unpair this server", () -> { dialog[0].dismiss(); unpairServer(); });
-    settingsSection(panel, "Conversations");
-    settingsAction(panel, "Archived conversations", () -> { dialog[0].dismiss(); showArchived(); });
+    panel.setPadding(0, dp(8), 0, dp(8));
+    settingsSection(panel, "Servers");
+    settingsAction(panel, "Add server", this::showPairing);
+    try {
+      JSONArray servers = store.connections();
+      if (servers.length() == 0) panel.addView(label("No saved servers.", 15), match());
+      for (int i = 0; i < servers.length(); i++) addServerCard(panel, servers.getJSONObject(i));
+    } catch (Exception exception) {
+      panel.addView(label("Saved servers could not be read.", 15), match());
+    }
+
     settingsSection(panel, "Application");
-    settingsAction(panel, "Usage and resets", () -> { dialog[0].dismiss(); showUsage(); });
-    settingsAction(panel, "Check for updates", () -> { dialog[0].dismiss(); checkForUpdates(); });
-    settingsAction(panel, "App settings", () -> { dialog[0].dismiss(); showAppSettings(); });
-    settingsAction(panel, "About PocketAgent", () -> { dialog[0].dismiss(); showAbout(); });
+    settingsAction(panel, "Usage and resets", this::showUsage);
+    settingsAction(panel, "Check for updates", this::checkForUpdates);
+    android.widget.CheckBox updates = new android.widget.CheckBox(this);
+    updates.setText(R.string.check_updates_on_startup);
+    updates.setTextColor(TEXT);
+    updates.setChecked(store.checkUpdatesOnStartup());
+    updates.setOnCheckedChangeListener((button, checked) -> store.checkUpdatesOnStartup(checked));
+    panel.addView(updates, match());
+    TextView about =
+        label(
+            "PocketAgent Android "
+                + BuildConfig.VERSION_NAME
+                + "\nNative client for following and directing work on a PocketAgent desktop/server.",
+            14);
+    about.setTextColor(Color.rgb(180, 198, 181));
+    panel.addView(about, match());
+    error = errorLabel();
+    panel.addView(error, match());
+
     ScrollView settingsScroll = new ScrollView(this);
     settingsScroll.addView(panel);
-    dialog[0] =
-        new AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(settingsScroll)
-            .setNegativeButton("Close", null)
-            .create();
-    dialog[0].show();
+    root.addView(settingsScroll, new LinearLayout.LayoutParams(-1, 0, 1));
   }
 
   private void settingsSection(LinearLayout panel, String title) {
@@ -1582,6 +1677,80 @@ public final class MainActivity extends Activity {
     Button actionButton = button(title, v -> action.run());
     actionButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
     panel.addView(actionButton, match());
+  }
+
+  private void addServerCard(LinearLayout panel, JSONObject server) {
+    String origin = server.optString("origin");
+    String name = connectionNames.getOrDefault(origin, server.optString("name", origin));
+    boolean active = api != null && origin.equals(api.origin);
+    boolean online = connectionStates.getOrDefault(origin, active && connected);
+    String status = online ? "Connected" : "Not connected";
+    if (connectionErrors.containsKey(origin)) status += "\n" + connectionErrors.get(origin);
+    LinearLayout card = column();
+    card.setPadding(dp(8), dp(4), dp(8), dp(4));
+    card.setBackgroundColor(CARD);
+    card.addView(label(name + "\n" + origin + "\n" + status, 14), match());
+    LinearLayout actions = row();
+    actions.addView(button("Open", v -> activateSavedServer(origin)));
+    actions.addView(
+        button(
+            "Unpair",
+            v -> {
+              if (active) unpairServer();
+              else unpairSavedServer(origin);
+            }));
+    card.addView(actions, match());
+    LinearLayout.LayoutParams layout = match();
+    layout.setMargins(0, dp(6), 0, 0);
+    panel.addView(card, layout);
+  }
+
+  private void activateSavedServer(String origin) {
+    try {
+      JSONObject saved = store.activate(origin);
+      api = connections.get(origin);
+      if (api == null) {
+        api =
+            new ApiClient(
+                saved.getString("origin"), saved.getString("token"), saved.optString("pin"));
+        connections.put(origin, api);
+      }
+      serverName = connectionNames.getOrDefault(origin, saved.optString("name", api.origin));
+      connectionNames.put(origin, serverName);
+      connected = connectionStates.getOrDefault(origin, false);
+      selected = store.selected(api.origin);
+      conversation = null;
+      answers.clear();
+      showChat();
+    } catch (Exception exception) {
+      problem("This saved server could not be opened. Pair with it again.");
+    }
+  }
+
+  private void unpairSavedServer(String origin) {
+    try {
+      JSONObject saved = store.connection(origin);
+      ApiClient client =
+          new ApiClient(
+              saved.getString("origin"), saved.getString("token"), saved.optString("pin"));
+      action(
+          () -> client.request("/logout", new JSONObject()),
+          ignored -> {
+            try {
+              store.remove(origin);
+              connections.remove(origin);
+              connectionNames.remove(origin);
+              connectionStates.remove(origin);
+              connectionErrors.remove(origin);
+              showSettings();
+            } catch (Exception exception) {
+              problem("The saved server could not be removed.");
+            }
+          },
+          false);
+    } catch (Exception exception) {
+      problem("The saved server could not be opened. Pair with it again.");
+    }
   }
 
   private void showConversationMenu(String id, String title) {
@@ -1613,6 +1782,10 @@ public final class MainActivity extends Activity {
             store.remove(client.origin);
           } catch (Exception ignoredError) {
           }
+          connections.remove(client.origin);
+          connectionNames.remove(client.origin);
+          connectionStates.remove(client.origin);
+          connectionErrors.remove(client.origin);
           api = null;
           conversation = null;
           selected = "";
@@ -1620,34 +1793,6 @@ public final class MainActivity extends Activity {
           showPairing();
         },
         false);
-  }
-
-  private void showAppSettings() {
-    LinearLayout panel = column();
-    panel.setPadding(dp(24), 0, dp(24), 0);
-    TextView version = label("Android " + BuildConfig.VERSION_NAME, 15);
-    version.setTextColor(ACCENT);
-    panel.addView(version, match());
-    android.widget.CheckBox updates = new android.widget.CheckBox(this);
-    updates.setText(R.string.check_updates_on_startup);
-    updates.setTextColor(TEXT);
-    updates.setChecked(store.checkUpdatesOnStartup());
-    panel.addView(updates, match());
-    new AlertDialog.Builder(this)
-        .setTitle("App settings")
-        .setView(panel)
-        .setNegativeButton("Cancel", null)
-        .setPositiveButton("Save", (dialog, which) -> store.checkUpdatesOnStartup(updates.isChecked()))
-        .setNeutralButton("Check now", (dialog, which) -> checkForUpdates())
-        .show();
-  }
-
-  private void showAbout() {
-    new AlertDialog.Builder(this)
-        .setTitle("About PocketAgent")
-        .setMessage("Android " + BuildConfig.VERSION_NAME + "\nNative client for following and directing work on a PocketAgent desktop/server.")
-        .setPositiveButton("Close", null)
-        .show();
   }
 
   private void showServers() {
@@ -1666,33 +1811,11 @@ public final class MainActivity extends Activity {
               choices,
               (dialog, index) -> {
                 if (index == servers.length()) {
-                  api = null;
-                  selected = "";
-                  conversation = null;
-                  send = null;
-                  polling = false;
-                  submitting = false;
                   showPairing();
                   return;
                 }
-                try {
-                  JSONObject saved =
-                      store.activate(servers.getJSONObject(index).getString("origin"));
-                  api =
-                      new ApiClient(
-                          saved.getString("origin"),
-                          saved.getString("token"),
-                          saved.optString("pin"));
-                  serverName = saved.optString("name", api.origin);
-                  selected = store.selected(api.origin);
-                  conversation = null;
-                  answers.clear();
-                  showChat();
-                  ui.removeCallbacks(poll);
-                  ui.post(poll);
-                } catch (Exception exception) {
-                  problem("This saved server could not be opened. Pair with it again.");
-                }
+                JSONObject saved = servers.optJSONObject(index);
+                if (saved != null) activateSavedServer(saved.optString("origin"));
               })
           .setNegativeButton("Close", null)
           .show();
