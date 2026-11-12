@@ -33,6 +33,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, List<DisplayItem>> optimisticItems = [];
     private readonly Dictionary<string, List<DisplayItem>> olderHistory = [];
     private readonly Dictionary<string, string?> historyCursors = [];
+    private readonly Dictionary<string, TextBlock> renderedRows = [];
+    private readonly Dictionary<string, (string Type, string Text, string Detail, string Status)> renderedRowState = [];
     private readonly HashSet<string> expandedWorkItems = [];
     private ConversationSnapshot? conversation;
     private string? selected;
@@ -664,8 +666,11 @@ public partial class MainWindow : Window
 
     private void RenderTranscript(ConversationSnapshot snapshot)
     {
+        if (TryPatchRenderedRows(snapshot)) return;
         var atBottom = TranscriptScroll.ScrollableHeight - TranscriptScroll.VerticalOffset < 60;
         Transcript.Children.Clear();
+        renderedRows.Clear();
+        renderedRowState.Clear();
         if (snapshot.Items.Length == 0) Transcript.Children.Add(new TextBlock { Text = "Send a message to start working.", Margin = new Thickness(12) });
         var start = snapshot.Items.Length;
         var characters = 0;
@@ -689,15 +694,37 @@ public partial class MainWindow : Window
             var content = new TextBlock { Text = item.Type is "userMessage" or "agentMessage" ? item.Text : $"{item.Type} · {item.Status}\n{item.Detail}", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
             if (item.Type is not "userMessage" and not "agentMessage")
             {
+                renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
                 RenderWorkItem(item);
                 continue;
             }
+            renderedRows[item.Id] = content;
+            renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
             if (item.Type == "agentMessage") { content.Margin = new Thickness(8, 8, 8, 18); Transcript.Children.Add(content); }
             else Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), HorizontalAlignment = item.Type == "userMessage" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch, MaxWidth = item.Type == "userMessage" ? 760 : double.PositiveInfinity, Margin = new Thickness(0, 0, 0, 10) });
         }
         if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Foreground = Brushes.Salmon, Margin = new Thickness(12) });
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
         if (atBottom) TranscriptScroll.ScrollToEnd();
+    }
+
+    private bool TryPatchRenderedRows(ConversationSnapshot snapshot)
+    {
+        if (renderedRowState.Count == 0 || snapshot.Requests.Length > 0) return false;
+        var visible = snapshot.Items.Length > MaxRenderedItems ? snapshot.Items[^MaxRenderedItems..] : snapshot.Items;
+        if (visible.Length != renderedRowState.Count || visible.Any(item => !renderedRowState.ContainsKey(item.Id))) return false;
+        foreach (var item in visible)
+        {
+            if (item.Type is not ("userMessage" or "agentMessage"))
+            {
+                var previous = renderedRowState[item.Id];
+                if (previous.Detail != item.Detail || previous.Status != item.Status || previous.Text != item.Text) return false;
+                continue;
+            }
+            renderedRows[item.Id].Text = item.Text;
+            renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
+        }
+        return true;
     }
     private void RenderWorkItem(DisplayItem item)
     {

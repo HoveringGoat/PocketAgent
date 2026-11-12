@@ -100,7 +100,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
 2. Filter release notes to the active platform and keep independent channel changelogs visible in update prompts.
-3. Add persisted idempotency for message IDs and incremental widget rendering.
-4. Expose worker health diagnostics and continue the timer UX work.
+3. Incrementally render newly changed rows for larger structural updates and expose worker health diagnostics.
+4. Continue the timer/heartbeat UX work as real-device feedback arrives.
 
 This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.

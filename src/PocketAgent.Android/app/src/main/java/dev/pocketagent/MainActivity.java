@@ -54,6 +54,7 @@ public final class MainActivity extends Activity {
   private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> optimisticItems = new java.util.HashMap<>();
   private final java.util.HashMap<String, java.util.ArrayList<JSONObject>> olderHistory = new java.util.HashMap<>();
   private final java.util.HashMap<String, String> historyCursors = new java.util.HashMap<>();
+  private final java.util.HashMap<String, TextView> renderedRows = new java.util.HashMap<>();
   private long usageReadAt;
   private String serverName = "PocketAgent";
   private EditText composer;
@@ -741,12 +742,14 @@ public final class MainActivity extends Activity {
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
     String signature = items.toString() + requests.toString() + state.optString("error");
     if (!signature.equals(transcriptSignature)) {
+      if (patchRenderedRows(items, requests, signature)) return;
       transcriptSignature = signature;
       boolean bottom =
           scroll.getChildCount() == 0
               || scroll.getScrollY() + scroll.getHeight() >= transcript.getHeight() - dp(80);
       int previous = scroll.getScrollY();
       transcript.removeAllViews();
+      renderedRows.clear();
       String lastMinute = "";
       for (int i = 0; i < items.length(); i++) {
         JSONObject item = items.optJSONObject(i);
@@ -799,6 +802,7 @@ public final class MainActivity extends Activity {
         }
         margin.setMargins(0, dp(6), 0, dp(6));
         transcript.addView(text, margin);
+        renderedRows.put(item.optString("id"), text);
       }
       for (int i = 0; i < requests.length(); i++)
         renderRequest(state.optString("id"), requests.optJSONObject(i));
@@ -824,6 +828,26 @@ public final class MainActivity extends Activity {
     else if (!state.isNull("error") && !state.optString("error").isEmpty())
       problem(state.optString("error"));
     updateSend();
+  }
+
+  private boolean patchRenderedRows(JSONArray items, JSONArray requests, String signature) {
+    if (transcriptSignature.isEmpty() || requests.length() != 0 || renderedRows.size() != items.length()) return false;
+    for (int i = 0; i < items.length(); i++) {
+      JSONObject item = items.optJSONObject(i);
+      if (item == null || !renderedRows.containsKey(item.optString("id"))) return false;
+    }
+    for (int i = 0; i < items.length(); i++) {
+      JSONObject item = items.optJSONObject(i);
+      String type = item.optString("type");
+      TextView row = renderedRows.get(item.optString("id"));
+      if ("userMessage".equals(type) || "agentMessage".equals(type)) row.setText(item.optString("text"));
+      else {
+        String summary = type + " A� " + item.optString("status");
+        row.setText(expandedItems.contains(item.optString("id")) ? summary + "\n" + item.optString("detail") : summary);
+      }
+    }
+    transcriptSignature = signature;
+    return true;
   }
 
   private void updateElapsedStatus() {
