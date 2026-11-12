@@ -620,15 +620,19 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null, clientMessageId);
-            accepted = true;
-            if (optimisticItems.TryGetValue(id, out var acknowledged))
+            accepted = receipt.DeliveryStatus is "accepted" or "queued";
+            if (accepted && optimisticItems.TryGetValue(id, out var acknowledged))
             {
                 var index = acknowledged.FindIndex(item => item.ClientMessageId == clientMessageId);
                 if (index >= 0) acknowledged[index] = acknowledged[index] with { Status = receipt.Queued ? "queued" : "accepted" };
             }
             if (receipt.Queued) ErrorDisplay.Text = receipt.Message;
-            if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
-            if (selected == id && Composer.Text == text) Composer.Clear();
+            else if (!accepted) ErrorDisplay.Text = "This message's delivery is uncertain. Review the conversation before retrying.";
+            if (accepted)
+            {
+                if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
+                if (selected == id && Composer.Text == text) Composer.Clear();
+            }
         });
         if (!accepted && optimisticItems.TryGetValue(id, out var failed)) failed.Remove(optimistic);
         sending = false; await Refresh();

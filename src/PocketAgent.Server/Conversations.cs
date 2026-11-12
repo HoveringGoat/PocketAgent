@@ -9,13 +9,15 @@ public sealed record ConversationSnapshot(string Id, string Title, string Status
 public sealed record ConversationHistoryPage(DisplayItem[] Items, bool HasMore, string? Before);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
-public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics) : BackgroundService
+public sealed class Conversations(CodexConnection codex, LocalStore store, ProgressPublisher publisher, HostSettings settings, ProviderUsage usage, WorkspaceDirectories directories, ProviderDiagnostics diagnostics, ILogger<Conversations> logger) : BackgroundService
 {
     private const int MaxSnapshotItems = 200;
     private const int MaxSnapshotText = 8_000;
     private const int MaxSnapshotDetail = 16_000;
     private const int DefaultHistoryPageSize = 50;
     private const int MaxHistoryPageSize = 100;
+    private static readonly TimeSpan HeartbeatDelay = TimeSpan.FromMinutes(5);
+    private const string HeartbeatPrompt = "update requested";
     private sealed class State(ConversationReference reference)
     {
         public ConversationReference Reference { get; set; } = reference;
@@ -33,6 +35,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         public string? SourceDeviceId { get; set; }
         public string? ScheduledMessageId { get; set; }
         public Queue<(string Id, string Text)> ClientMessages { get; } = [];
+        public Queue<string> HiddenPrompts { get; } = [];
+        public DateTimeOffset? HeartbeatDueAt { get; set; }
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public List<DisplayItem> Items { get; } = [];
         public Dictionary<string, (JsonElement RpcId, PendingRequest Request)> Requests { get; } = [];
@@ -128,6 +132,47 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         }
         finally { gate.Release(); }
         return await readHydrations.GetOrAdd(id, HydrateForRead).ConfigureAwait(false);
+    }
+
+    public async Task<string[]> ActiveConversationIds()
+    {
+        await gate.WaitAsync();
+        try { return states.Values.Where(state => state.ActiveTurnId is not null).Select(state => state.Reference.Id).ToArray(); }
+        finally { gate.Release(); }
+    }
+
+    public async Task TryHeartbeat(string id)
+    {
+        var state = await GetState(id).ConfigureAwait(false);
+        await state.Gate.WaitAsync();
+        try
+        {
+            if (state.ActiveTurnId is null || state.Status is not ("running" or "awaiting-input") || state.Requests.Count > 0)
+                return;
+            var now = DateTimeOffset.UtcNow;
+            if (state.HeartbeatDueAt is null || state.HeartbeatDueAt > now) return;
+            var turnId = state.ActiveTurnId;
+            state.HeartbeatDueAt = now + HeartbeatDelay;
+            state.HiddenPrompts.Enqueue(HeartbeatPrompt);
+            try
+            {
+                var result = await codex.Request("turn/steer", new
+                {
+                    threadId = state.Reference.Id,
+                    expectedTurnId = turnId,
+                    input = new[] { new { type = "text", text = HeartbeatPrompt, text_elements = Array.Empty<object>() } }
+                });
+                if (result.Text("turnId") != turnId)
+                    throw new ApiException(504, "Codex did not confirm the heartbeat steer.");
+            }
+            catch (Exception exception)
+            {
+                if (state.HiddenPrompts.TryPeek(out var hidden) && hidden == HeartbeatPrompt) state.HiddenPrompts.Dequeue();
+                state.HeartbeatDueAt = now + TimeSpan.FromMinutes(1);
+                logger.LogWarning(exception, "Heartbeat steer failed for conversation {ConversationId}.", id);
+            }
+        }
+        finally { state.Gate.Release(); }
     }
 
     public async Task<ConversationSnapshot> Rename(string id, string title)
@@ -244,6 +289,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                     if (result.Text("turnId") != expectedTurnId)
                         throw new ApiException(504, "Codex did not confirm the expected turn. Steering delivery is unknown; do not resend automatically.");
                     if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text));
+                    state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
                 }
                 catch (ApiException exception) when (exception.Status is 503 or 504)
                 {
@@ -284,6 +330,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 if (turn.Text("id").Length == 0) throw new ApiException(504, "Codex did not confirm a turn ID. Delivery is unknown; do not resend automatically.");
                 state.ActiveTurnId = turn.Text("id");
                 state.Status = "running";
+                state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
                 AddTurn(state, turn);
             }
             catch (ApiException exception)
@@ -432,9 +479,16 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     {
         if (item.Id.Length == 0 || item.Type == "reasoning")
             return;
+        if (item.Type == "userMessage" && state.HiddenPrompts.TryPeek(out var hidden) && string.Equals(hidden, item.Text, StringComparison.Ordinal))
+        {
+            state.HiddenPrompts.Dequeue();
+            return;
+        }
         var index = state.Items.FindIndex(existing => existing.Id == item.Id);
         var existingTime = index >= 0 ? state.Items[index].Timestamp : null;
         item = item with { Timestamp = existingTime ?? store.RememberTimestamp(state.Reference.Id, item.Id, item.Timestamp ?? (state.Hydrating ? null : DateTimeOffset.UtcNow)) };
+        if (!state.Hydrating && item.Type == "agentMessage" && item.Text.Length > 0)
+            state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
         if (!state.Hydrating && item.Type != "userMessage" && (item.Type != "agentMessage" || item.Text.Length > 0)) state.HasWork = true;
         if (index < 0)
             state.Items.Add(item);
@@ -561,6 +615,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                                     state.Status = turn.Text("status", "failed");
                                     state.Error = turn.Field("error").Text("message") is { Length: > 0 } error ? error : null;
                                     state.ActiveTurnId = null;
+                                state.HeartbeatDueAt = null;
+                                state.HiddenPrompts.Clear();
                                     state.Requests.Clear();
                                     break;
                                 case "item/started":

@@ -8,6 +8,7 @@ public sealed record Device(string Id, string Name, DateTimeOffset ExpiresAt);
 public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null);
 public sealed record ScheduledMessage(string Id, string ConversationId, string Text, DateTimeOffset DueAt, DateTimeOffset NextAttemptAt,
     string Status, string Reason, string? Error, [property: System.Text.Json.Serialization.JsonIgnore] string? DeviceId);
+public sealed record MessageDelivery(string ConversationId, string ClientMessageId, string Text, string Status, string? ScheduleId, string? Error);
 
 public sealed class LocalStore
 {
@@ -27,6 +28,7 @@ public sealed class LocalStore
             CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at INTEGER NOT NULL, repository TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, text TEXT NOT NULL, due_at INTEGER NOT NULL, next_at INTEGER NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, error TEXT, device_id TEXT);
+            CREATE TABLE IF NOT EXISTS message_deliveries (conversation_id TEXT NOT NULL, client_message_id TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, schedule_id TEXT, error TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(conversation_id,client_message_id));
             CREATE TABLE IF NOT EXISTS message_times (conversation_id TEXT NOT NULL, item_id TEXT NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY(conversation_id,item_id));
             CREATE TABLE IF NOT EXISTS turn_times (conversation_id TEXT NOT NULL, turn_id TEXT NOT NULL, started INTEGER, completed INTEGER, duration INTEGER, PRIMARY KEY(conversation_id,turn_id));
             """;
@@ -47,6 +49,31 @@ public sealed class LocalStore
         var connection = new SqliteConnection(connectionString);
         connection.Open();
         return connection;
+    }
+
+    public MessageDelivery? Delivery(string conversationId, string clientMessageId)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT conversation_id,client_message_id,text,status,schedule_id,error FROM message_deliveries WHERE conversation_id=$conversation AND client_message_id=$client";
+        command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$client", clientMessageId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)) : null;
+    }
+
+    public bool BeginDelivery(string conversationId, string clientMessageId, string text)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "INSERT OR IGNORE INTO message_deliveries(conversation_id,client_message_id,text,status,created_at) VALUES($conversation,$client,$text,'pending',$created)";
+        command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$client", clientMessageId); command.Parameters.AddWithValue("$text", text); command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        return command.ExecuteNonQuery() == 1;
+    }
+
+    public void UpdateDelivery(string conversationId, string clientMessageId, string status, string? scheduleId = null, string? error = null)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE message_deliveries SET status=$status,schedule_id=COALESCE($schedule,schedule_id),error=$error WHERE conversation_id=$conversation AND client_message_id=$client";
+        command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$client", clientMessageId); command.Parameters.AddWithValue("$status", status); command.Parameters.AddWithValue("$schedule", (object?)scheduleId ?? DBNull.Value); command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+        command.ExecuteNonQuery();
     }
 
     public (Device Device, string Token) Pair(string name)

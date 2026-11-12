@@ -63,7 +63,7 @@ Implementation status: publish now requires a clean worktree whose branch is syn
 
 `mergeOptimistic` also reconciles by matching text anywhere in history. Repeating an earlier prompt can consume the new pending item immediately. Desktop uses a similar text/time heuristic. A client message ID and explicit delivery states would make acknowledgment reliable.
 
-Implementation status: mobile definite 4xx rejections now remove the corresponding optimistic item immediately, while 5xx/network failures continue to be shown as unknown delivery. Both clients now generate and submit a client message ID; receipts, scheduled jobs and canonical user items carry it, and reconciliation prefers that identity before the bounded timestamp fallback. Persisted idempotency across a host restart remains future hardening.
+Implementation status: mobile definite 4xx rejections now remove the corresponding optimistic item immediately, while 5xx/network failures continue to be shown as unknown delivery. Both clients now generate and submit a client message ID; receipts, scheduled jobs and canonical user items carry it, and reconciliation prefers that identity before the bounded timestamp fallback. The server persists delivery state and returns the prior result when a client retries the same ID/text, while conflicting text is rejected. Pending state after a crash is intentionally treated as uncertain rather than replayed.
 
 ### A6 - Medium: long conversations eventually cannot load on Android
 
@@ -93,7 +93,7 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 - Desktop/server and Android now have independent channel tags and update discovery (`desktop-v…` and `android-v…`). The legacy combined `v…` channel remains available for compatibility. Android release notes are still authored from the platform changelog, but the UI currently displays the channel release body as-is.
 - Android now keeps the lower context bar to status/work information and moves the server machine plus conversation working directory into the header location line. Model/reasoning remain available through the model control rather than being repeated in the status bar.
-- Android truncates combined release notes at 1,200 characters; an Android section after lengthy desktop notes can be hidden. It offers the full release page, but does not filter notes by app.
+- Android release notes are now filtered to the Android section and capped for the prompt; the full release page remains available.
 - Documentation was corrected in this pass. Compilation/readability checks still do not establish a complete installed upgrade.
 
 ## Recommended order
@@ -101,6 +101,6 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 1. Run an isolated packaged upgrade and failure-injection rollback; then repair the already-published `v0.2.2` provenance only with an explicit release decision.
 2. Filter release notes to the active platform and keep independent channel changelogs visible in update prompts.
 3. Add persisted idempotency for message IDs and incremental widget rendering.
-4. Expose worker health diagnostics.
+4. Expose worker health diagnostics and continue the timer UX work.
 
 This audit produced two local implementation commits after the initial report: `8f21d71` (updater, delivery, bounded snapshots, scheduler and release checks) and `21e8a42` (per-conversation serialization and read hydration). No public release, tag repair, or full test suite was run.

@@ -55,6 +55,7 @@ public static class RelayHost
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<Conversations>());
         builder.Services.AddSingleton<ScheduledMessages>();
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ScheduledMessages>());
+        builder.Services.AddHostedService<HeartbeatService>();
         builder.Services.AddSignalR(options => options.MaximumReceiveMessageSize = 16 * 1024);
         builder.Services.AddAuthentication(DeviceAuthentication.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, DeviceAuthentication>(DeviceAuthentication.SchemeName, _ => { });

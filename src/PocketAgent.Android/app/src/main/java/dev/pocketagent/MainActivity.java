@@ -969,8 +969,8 @@ public final class MainActivity extends Activity {
                 () -> {
                   if (epoch != generation || api != client) return;
                   submitting = false;
-                  done.accept(result);
                   if (delivery) store.uncertain(client.origin, id, false);
+                  done.accept(result);
                   updateSend();
                   refresh();
                 });
@@ -1030,11 +1030,19 @@ public final class MainActivity extends Activity {
           return client.request("/conversations/" + ApiClient.segment(id) + "/messages", body);
         },
         receipt -> {
-          if (store.draft(client.origin, id).equals(text)) store.draft(client.origin, id, "");
-          if (selected.equals(id) && composer.getText().toString().equals(text))
-            composer.setText("");
-          if (receipt instanceof JSONObject && ((JSONObject) receipt).optBoolean("queued"))
-            notice(((JSONObject) receipt).optString("message", "Queued until usage resets."));
+          boolean accepted = true;
+          if (receipt instanceof JSONObject) {
+            JSONObject response = (JSONObject) receipt;
+            String deliveryStatus = response.optString("deliveryStatus", "accepted");
+            accepted = "accepted".equals(deliveryStatus) || "queued".equals(deliveryStatus);
+            if (response.optBoolean("queued")) notice(response.optString("message", "Queued until usage resets."));
+          }
+          store.uncertain(client.origin, id, !accepted);
+          if (!accepted) notice("This message's delivery is uncertain. Review the conversation before retrying.");
+          if (accepted) {
+            if (store.draft(client.origin, id).equals(text)) store.draft(client.origin, id, "");
+            if (selected.equals(id) && composer.getText().toString().equals(text)) composer.setText("");
+          }
         },
         true,
         () -> removeOptimistic(id, optimisticId));
