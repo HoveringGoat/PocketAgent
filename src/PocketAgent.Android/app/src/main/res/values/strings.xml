@@ -1,8 +1,9 @@
 <resources>
-    <string name="app_brand">PocketAgent</string>
     <string name="loading">Loading&#8230;</string>
     <string name="session_context_v2">%1$s - %2$s %3$s</string>
     <string name="view_image">View image: %1$s</string>
     <string name="viewed_image">Viewed image: %1$s</string>
     <string name="check_updates_on_startup">Check for updates on startup</string>
+    <string name="usage_placeholder" formatted="false">5hr: 80%  8:14 PM  &#183;  weekly: 20%  11/17/26</string>
+    <string name="schedule_symbol" formatted="false">&#9201;&#65038;</string>
 </resources>

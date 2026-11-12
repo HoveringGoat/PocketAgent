@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
-    <application android:networkSecurityConfig="@xml/debug_network_security_config" tools:replace="android:networkSecurityConfig"/>
-    <instrumentation android:name=".SmokeInstrumentation" android:targetPackage="dev.pocketagent" android:label="PocketAgent isolated fixture check"/>
-    <instrumentation android:name=".PairingInstrumentation" android:targetPackage="dev.pocketagent" android:label="Isolated QR and pinned TLS checks"/>
+    <application android:networkSecurityConfig="@xml/debug_network_security_config" tools:replace="android:networkSecurityConfig">
+        <activity android:name=".PreviewActivity" android:exported="true" />
+    </application>
 </manifest>

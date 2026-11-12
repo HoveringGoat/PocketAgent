@@ -68,12 +68,11 @@ developer or CI runner that invokes the script.
 ## 4. Separate release channels with immutable tags
 
 Give each platform a stable tag namespace so one platform's update check cannot
-offer another platform's package:
+offer another platform's package. Do not publish a combined all-platform tag:
 
 ```text
 desktop-v0.3.1
 android-v0.3.1
-v0.3.1                 # coordinated all-platform release, if needed
 ```
 
 The updater should query only its own tag namespace. Never move an existing
@@ -110,16 +109,19 @@ gh auth login
 gh auth status
 ```
 
-Then use this sequence:
+Then publish each platform separately:
 
 ```powershell
+.\scripts\Release.ps1 -Version 0.3.1 -Target Desktop -Check
+.\scripts\Release.ps1 -Version 0.3.1 -Target Desktop -Publish -CommitChanges -Clean
 .\scripts\Release.ps1 -Version 0.3.1 -Target Android -Check
-.\scripts\Release.ps1 -Version 0.3.1 -Target Android -Publish -CommitChanges -Clean
+.\scripts\Release.ps1 -Version 0.3.1 -Target Android -Publish -Clean
 ```
 
 The script should build, sign, checksum, create the platform tag/release, and
-verify that the remote tag points at the release commit. Keep the final GitHub
-release URL in the handoff notes.
+verify that the remote tag points at the release commit. `Target All` remains
+available for local builds, but publishing it is rejected. Keep both GitHub
+release URLs in the handoff notes.
 
 ## Minimal implementation checklist
 

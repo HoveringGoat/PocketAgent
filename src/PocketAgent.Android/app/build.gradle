@@ -8,8 +8,8 @@ android {
         applicationId 'dev.pocketagent'
         minSdk 26
         targetSdk 34
-  versionCode 25
-  versionName project.findProperty('pocketAgentVersion') ?: '0.3.5'
+  versionCode 26
+  versionName project.findProperty('pocketAgentVersion') ?: '0.4.0'
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

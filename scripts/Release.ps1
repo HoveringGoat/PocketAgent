@@ -255,6 +255,9 @@ $desktopVersion = Get-ProjectVersion
 $androidVersion = Get-AndroidVersion
 if (!$Version) { $Version = if ($Target -eq 'Android') { $androidVersion } else { $desktopVersion } }
 Assert-SemanticVersion $Version
+if ($Publish -and $Target -eq 'All') {
+    throw 'Publishing Target All is disabled. Publish Desktop and Android separately so each client receives its own update-channel release.'
+}
 if ($Target -in @('All', 'Desktop') -and $Version -ne $desktopVersion) {
     throw "Requested desktop release version $Version does not match Directory.Build.props version $desktopVersion. Update the desktop version, then rerun the release script."
 }

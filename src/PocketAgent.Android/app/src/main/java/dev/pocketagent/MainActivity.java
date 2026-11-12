@@ -63,9 +63,10 @@ public final class MainActivity extends Activity {
   private String selected = "", tabSignature = "", transcriptSignature = "";
   private String historyBefore = "";
   private JSONObject conversation;
-  private LinearLayout root, tabs, transcript, metadata, contextSurface;
+  private ConversationScreenView screen;
+  private LinearLayout root, tabs, transcript, metadata, contextSurface, controlPanel;
   private Button serverSelector;
-  private TextView brand, serverMachine, sessionLocation, error, context, usageView, scheduledNotice;
+  private TextView brand, sessionLocation, error, context, usageView;
   private JSONObject usageState;
   private JSONArray scheduledState = new JSONArray();
   private final java.util.HashSet<String> expandedItems = new java.util.HashSet<>();
@@ -77,7 +78,8 @@ public final class MainActivity extends Activity {
   private long usageReadAt;
   private String serverName = "PocketAgent";
   private EditText composer;
-  private Button send, stop, schedule;
+  private Button send, schedule;
+  private ImageButton stop;
   private ImageButton renameAction, modelAction, archiveAction, archivedAction;
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
@@ -566,120 +568,77 @@ public final class MainActivity extends Activity {
     usageReadAt = 0;
     usageState = null;
     scheduledState = new JSONArray();
-    base();
-    LinearLayout header = row();
-    brand = label(getString(R.string.app_brand), 20);
-    brand.setTypeface(null, Typeface.BOLD);
-    LinearLayout identity = column();
-    identity.addView(brand, match());
-    serverSelector = button(serverName, v -> showServers());
-    serverSelector.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-    serverSelector.setContentDescription("Current server " + serverName);
-    identity.addView(serverSelector, match());
-    serverMachine = label("", 11);
-    serverMachine.setTextColor(Color.rgb(143, 188, 143));
-    header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
-    Button addServer = button("+", v -> showPairing());
-    addServer.setContentDescription("Add server");
-    header.addView(addServer);
-    Button settings = button("\u2699\uFE0E", v -> showSettings());
-    settings.setContentDescription("Settings");
-    header.addView(settings);
-    root.addView(header, match());
-    serverMachine.setContentDescription("Server machine");
-    root.addView(serverMachine, match());
-    usageView = label("5h: unavailable - Weekly: unavailable", 11);
-    usageView.setContentDescription("Usage remaining");
+    screen =
+        new ConversationScreenView(
+            this,
+            uiScale,
+            serverName,
+            new ConversationScreenView.Actions() {
+              public void selectServer() {
+                showServers();
+              }
+
+              public void openSettings() {
+                showSettings();
+              }
+
+              public void newConversation() {
+                createConversation();
+              }
+
+              public void renameConversation() {
+                renameSelectedConversation();
+              }
+
+              public void selectModel() {
+                showModels();
+              }
+
+              public void archiveConversation() {
+                archive(selected);
+              }
+
+              public void showArchived() {
+                MainActivity.this.showArchived();
+              }
+
+              public void stopWork() {
+                interrupt();
+              }
+
+              public void scheduleMessage() {
+                MainActivity.this.scheduleMessage();
+              }
+
+              public void loadOlderHistory() {
+                MainActivity.this.loadOlderHistory();
+              }
+            });
+    root = screen.root;
+    tabs = screen.tabs;
+    transcript = screen.transcript;
+    metadata = screen.metadata;
+    contextSurface = screen.contextSurface;
+    controlPanel = screen.controlPanel;
+    brand = screen.brand;
+    serverSelector = screen.serverSelector;
+    sessionLocation = screen.sessionLocation;
+    usageView = screen.usageView;
+    context = screen.context;
+    error = screen.error;
+    composer = screen.composer;
+    send = screen.send;
+    stop = screen.stop;
+    schedule = screen.schedule;
+    renameAction = screen.renameAction;
+    modelAction = screen.modelAction;
+    archiveAction = screen.archiveAction;
+    archivedAction = screen.archivedAction;
+    scroll = screen.transcriptScroll;
+    setContentView(root);
     usageView.setOnClickListener(v -> showUsage());
-    root.addView(usageView, match());
-    LinearLayout tabRow = row();
-    tabRow.setBackgroundColor(CARD);
-    HorizontalScrollView tabScroll = new HorizontalScrollView(this);
-    tabScroll.setHorizontalScrollBarEnabled(false);
-    tabs = row();
-    tabs.setBackgroundColor(CARD);
-    tabs.setPadding(dp(2), dp(2), dp(2), 0);
-    tabScroll.addView(tabs);
-    tabRow.addView(tabScroll, new LinearLayout.LayoutParams(0, -2, 1));
-    Button add = button("+", v -> createConversation());
-    add.setContentDescription("New conversation");
-    tabRow.addView(add);
-    root.addView(tabRow, match());
-
-    metadata = row();
-    metadata.setContentDescription("Conversation title, location, and actions");
-    metadata.setBackgroundColor(CARD);
-    metadata.setPadding(dp(8), 0, dp(8), dp(4));
-    LinearLayout paneIdentity = column();
-    sessionLocation = label("", 11);
-    sessionLocation.setTextColor(Color.rgb(143, 188, 143));
-    paneIdentity.addView(sessionLocation, match());
-    metadata.addView(paneIdentity, new LinearLayout.LayoutParams(0, -2, 1));
-    LinearLayout actions = row();
-    renameAction = iconButton(R.drawable.ic_edit, "Rename conversation", v -> renameSelectedConversation());
-    modelAction = iconButton(R.drawable.ic_robot, "Model and reasoning", v -> showModels());
-    archiveAction = iconButton(R.drawable.ic_archive, "Archive conversation", v -> archive(selected));
-    archivedAction = iconButton(R.drawable.ic_unarchive, "View archived conversations", v -> showArchived());
-    actions.addView(renameAction);
-    actions.addView(modelAction);
-    actions.addView(archiveAction);
-    actions.addView(archivedAction);
-    metadata.addView(actions);
+    send.setOnClickListener(v -> submit());
     setConversationActionsVisible(false);
-    root.addView(metadata, match());
-
-    scroll = new ScrollView(this);
-    scroll.setFillViewport(true);
-    scroll.setOnScrollChangeListener(
-        (view, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-          if (scrollY <= dp(24) && oldScrollY > scrollY && scroll.getChildCount() > 0 && scroll.getChildAt(0).getHeight() > scroll.getHeight()) loadOlderHistory();
-        });
-    transcript = column();
-    scroll.addView(transcript);
-    root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-    error = errorLabel();
-    root.addView(error, match());
-    contextSurface = row();
-    contextSurface.setContentDescription("Conversation status, model, reasoning, and permissions");
-    contextSurface.setPadding(dp(12), dp(8), dp(12), dp(8));
-    context = label("", 12);
-    context.setMaxLines(2);
-    context.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    context.setOnClickListener(v -> showModels());
-    contextSurface.addView(context, new LinearLayout.LayoutParams(0, -2, 1));
-    stop = button("Stop", v -> interrupt());
-    stop.setContentDescription("Stop work");
-    stop.setVisibility(View.GONE);
-    contextSurface.addView(stop);
-    root.addView(contextSurface, match());
-    LinearLayout composeRow = row();
-    composer = input("Message Codex");
-    composer.setContentDescription("Message Codex");
-    composer.setInputType(
-        InputType.TYPE_CLASS_TEXT
-            | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-    composer.setMinLines(3);
-    composer.setMaxLines(5);
-    composer.setFilters(
-        new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(32000)});
-    composeRow.addView(composer, new LinearLayout.LayoutParams(0, -2, 1));
-    send = button("Send", v -> submit());
-    send.setContentDescription("Send message");
-    schedule = button("\u23F1\uFE0E", v -> scheduleMessage());
-    schedule.setContentDescription("Schedule message");
-    LinearLayout sendColumn = column();
-    send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-    send.setTextColor(BG);
-    sendColumn.addView(send, match());
-    sendColumn.addView(schedule, match());
-    composeRow.addView(sendColumn);
-    root.addView(composeRow, match());
-    scheduledNotice = button("", v -> showScheduled());
-    scheduledNotice.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-    scheduledNotice.setContentDescription("Scheduled messages");
-    scheduledNotice.setVisibility(View.GONE);
-    root.addView(scheduledNotice, match());
     watch(
         composer,
         text -> {
@@ -687,7 +646,7 @@ public final class MainActivity extends Activity {
           updateSend();
         });
     loadDraft();
-    updateScheduledNotice();
+    updateScheduleButton();
     updateSend();
     if (resumed) {
       ui.removeCallbacks(poll);
@@ -769,7 +728,7 @@ public final class MainActivity extends Activity {
                   serverSelector.setContentDescription("Server " + serverName + " connected");
                   if (id.equals(selected)) {
                     scheduledState = pendingJobs;
-                    updateScheduledNotice();
+                    updateScheduleButton();
                   }
                   if (usage != null) {
                     usageState = usage;
@@ -821,7 +780,7 @@ public final class MainActivity extends Activity {
     String signature = sessions.toString() + selected;
     if (signature.equals(tabSignature)) return;
     tabSignature = signature;
-    tabs.removeAllViews();
+    screen.clearTabs();
     for (int i = 0; i < sessions.length(); i++) {
       JSONObject entry = sessions.optJSONObject(i);
       String id = entry.optString("id");
@@ -856,11 +815,7 @@ public final class MainActivity extends Activity {
     conversation = state;
     String active = state.isNull("activeTurnId") ? "" : state.optString("activeTurnId");
     String status = state.optString("status");
-    GradientDrawable metadataBackground = new GradientDrawable();
-    metadataBackground.setColor(CARD);
-    metadataBackground.setCornerRadius(dp(6));
-    metadataBackground.setStroke(dp(1), active.isEmpty() ? Color.rgb(71, 96, 75) : Color.rgb(167, 186, 167));
-    contextSurface.setBackground(metadataBackground);
+    controlPanel.setBackgroundColor(ConversationScreenView.BACKGROUND);
     if (!state.isNull("activeTurnStartedAt")) {
       try {
         status +=
@@ -874,14 +829,12 @@ public final class MainActivity extends Activity {
       }
     } else if (!state.isNull("lastWorkDurationMs"))
       status += " - worked " + elapsed(state.optLong("lastWorkDurationMs"));
-    String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
     String model = state.isNull("model") ? "Codex" : state.optString("model");
     String reasoning =
         state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
     context.setText(getString(R.string.session_context_v2, status, model, reasoning));
-    serverMachine.setText(hostName);
-    sessionLocation.setMaxLines(2);
+    sessionLocation.setMaxLines(1);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(workingDirectory);
     setConversationActionsVisible(true);
@@ -1139,19 +1092,26 @@ public final class MainActivity extends Activity {
     }
   }
 
-  private void updateScheduledNotice() {
-    if (scheduledNotice == null) return;
+  private void updateScheduleButton() {
+    if (schedule == null) return;
     int pending = 0;
     for (int i = 0; i < scheduledState.length(); i++) {
       JSONObject job = scheduledState.optJSONObject(i);
       if (job != null && "pending".equals(job.optString("status"))) pending++;
     }
-    scheduledNotice.setText(
-        pending == 1 ? "1 scheduled message" : pending + " scheduled messages");
-    scheduledNotice.setVisibility(pending == 0 ? View.GONE : View.VISIBLE);
+    String symbol = getString(R.string.schedule_symbol);
+    schedule.setText(pending == 0 ? symbol : symbol + " " + pending);
+    schedule.setContentDescription(
+        pending == 0
+            ? "Schedule message or view scheduled messages"
+            : pending + " scheduled messages; schedule message");
   }
 
   private void setConversationActionsVisible(boolean visible) {
+    if (screen != null) {
+      screen.setConversationActionsVisible(visible);
+      return;
+    }
     int visibility = visible ? View.VISIBLE : View.GONE;
     if (renameAction != null) renameAction.setVisibility(visibility);
     if (modelAction != null) modelAction.setVisibility(visibility);
@@ -1176,7 +1136,11 @@ public final class MainActivity extends Activity {
             && !"uncertain".equals(status)
             && !"disconnected".equals(status));
     if (schedule != null)
-      schedule.setEnabled(connected && conversation != null && !submitting && !composer.getText().toString().trim().isEmpty() && !conversation.optBoolean("archived"));
+      schedule.setEnabled(
+          connected
+              && conversation != null
+              && !submitting
+              && !conversation.optBoolean("archived"));
     stop.setEnabled(connected && !submitting);
   }
 
@@ -1950,12 +1914,39 @@ public final class MainActivity extends Activity {
   }
 
   private void renderUsage() {
-    String value =
-        "5h: "
-            + remaining(usageState == null ? null : usageState.optJSONObject("fiveHour"))
-            + " - Weekly: "
-            + remaining(usageState == null ? null : usageState.optJSONObject("weekly"));
-    usageView.setText(value);
+    JSONObject fiveHour = usageState == null ? null : usageState.optJSONObject("fiveHour");
+    JSONObject weekly = usageState == null ? null : usageState.optJSONObject("weekly");
+    String detailed =
+        "5hr: "
+            + remaining(fiveHour)
+            + "  "
+            + usageReset(fiveHour, false)
+            + "  ·  weekly: "
+            + remaining(weekly)
+            + "  "
+            + usageReset(weekly, true);
+    String compact =
+        "5hr: " + remaining(fiveHour) + "  ·  weekly: " + remaining(weekly);
+    usageView.setText(detailed);
+    usageView.post(
+        () -> {
+          if (usageView.getWidth() <= 0) return;
+          usageView.setText(
+              usageView.getPaint().measureText(detailed) > usageView.getWidth() ? compact : detailed);
+        });
+  }
+
+  private String usageReset(JSONObject window, boolean dateOnly) {
+    if (window == null || window.isNull("resetsAt")) return "—";
+    try {
+      java.time.format.DateTimeFormatter format =
+          java.time.format.DateTimeFormatter.ofPattern(dateOnly ? "M/d/yy" : "h:mm a");
+      return java.time.Instant.parse(window.optString("resetsAt"))
+          .atZone(java.time.ZoneId.systemDefault())
+          .format(format);
+    } catch (Exception ignored) {
+      return "—";
+    }
   }
 
   private String reset(JSONObject window) {
@@ -2056,10 +2047,13 @@ public final class MainActivity extends Activity {
 
   private void scheduleMessage() {
     if (submitting) return;
+    if (composer.getText().toString().trim().isEmpty()) {
+      showScheduled();
+      return;
+    }
     if (api == null
         || conversation == null
-        || !connected
-        || composer.getText().toString().trim().isEmpty()) {
+        || !connected) {
       problem("Write a message in the composer, then choose Schedule message.");
       return;
     }
@@ -2115,7 +2109,10 @@ public final class MainActivity extends Activity {
   }
 
   private void showScheduled() {
-    if (api == null || conversation == null) return;
+    if (api == null || conversation == null) {
+      problem("Select a conversation to view scheduled messages.");
+      return;
+    }
     ApiClient client = api;
     String id = selected;
     action(

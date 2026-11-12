@@ -66,7 +66,7 @@ The desktop key and server.pfx remain private. Do not export them to the phone o
 
 Appearance settings are available from the main Settings page on Android and desktop. Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) presets are stored locally and apply to fonts and primary controls without changing server or conversation data.
 
-Current navigation uses the Settings gear for a full page listing all paired servers uniformly, per-server actions, add-server access, and inline application information. Usage and reset details are opened from the relevant server card, so Personal and Work quotas remain separate. Paired servers remain connected and poll independently; switching the visible workspace does not disconnect another machine. Conversation tabs visually join the open pane; its title strip contains rename, model/reasoning, archive, and archived-history actions. Scheduling is created only with the timer button beside Send. Pending schedules appear below Send and open the review/cancel dialog when selected.
+Current navigation uses the Settings gear for a full page listing all paired servers uniformly, per-server actions, add-server access, and inline application information. Usage and reset details are opened from the relevant server card, so Personal and Work quotas remain separate. Paired servers remain connected and poll independently; switching the visible workspace does not disconnect another machine. Conversation tabs visually join the open pane; its title strip contains rename, model/reasoning, archive, and archived-history actions. The active tab has the outlined top/side boundary while inactive tabs keep a lower divider. The status/model row, composer, Send, and timer controls share one full-width bottom control panel. Scheduling is created or reviewed from the timer button beside Send; its pending count appears beside the timer, and tapping it with an empty composer opens the review/cancel dialog.
 
 Open the gear to view the full Settings page, then use the unified server list to switch saved machines or add a new one. Each origin has its own encrypted device token, tabs, draft and uncertain-delivery state. Adding a connection opens pairing; unpairing one server does not remove other saved servers. The selected conversation pane contains compact actions for Rename, Model/reasoning, Archive, and archived-history. + opens working-folder and optional model choices; it never asks for a name. **Browse folders** navigates the home machine's local drives; **Use this folder** selects the current directory. You can also enter an absolute desktop path. Paired owner devices can select existing local directories accessible to the desktop account; host permission settings remain desktop-owned. A conversation's folder stays fixed after creation. The desktop Settings repository remains the creation default. There is no sidebar or decorative footer.
 
@@ -88,13 +88,13 @@ The 0.2.2 release includes the direct desktop updater handoff, updater diagnosti
 
 ## Usage and scheduled messages
 
-Desktop summarizes usage compactly, for example `5hr: 80% 8:14 PM | weekly: 20% 11/17/26`; hover the line for full local reset timestamps. Android's usage details remain available from its usage control/menu.
+Desktop and Android summarize usage compactly, for example `5hr: 80% 8:14 PM | weekly: 20% 11/17/26`; hover or tap the line for full local reset timestamps.
 
 The usage line shows provider-reported five-hour/weekly percentage remaining. Tap it (or **⋮ > Usage and resets**) for local reset times. Missing or unsupported windows say unavailable. This is the same desktop account/process used for conversations. PocketAgent does not purchase credits or consume reset credits.
 
 If a known usage window is exhausted, Send acknowledges that the prompt is queued for after reset. With no reported reset time it says so and rechecks availability. A provider-reported quota failure before any known execution also queues the original prompt. Partial work and unknown delivery are not automatically repeated.
 
-Write a prompt, then choose **Schedule message** in Android or **Schedule** on desktop. Select the local date/time. **Scheduled messages** / **Queue** lists pending, submitted, canceled, failed and uncertain entries; pending entries can be canceled. Dispatch waits for an idle, confirmed conversation, so the chosen time is an earliest eligible time. Existing active work and approvals take priority.
+Write a prompt, then choose the timer button beside Send in Android or **Schedule** on desktop. Select the local date/time. When pending jobs exist, the Android timer shows their count; tapping it with no draft opens the review/cancel dialog. **Scheduled messages** / **Queue** lists pending, submitted, canceled, failed and uncertain entries; pending entries can be canceled. Dispatch waits for an idle, confirmed conversation, so the chosen time is an earliest eligible time. Existing active work and approvals take priority.
 
 Schedules are persisted on the desktop and survive restarts. The desktop must be awake and the server running. Missed deadlines are reconsidered when it runs again; there is no wake timer or cloud execution. Revoking/expiring a device cancels its pending schedules. Submitted means Codex acknowledged receipt, not successful task completion. An uncertain dispatch is never replayed after restart: review history and explicitly create another message if needed.
 
@@ -112,11 +112,30 @@ Use .NET SDK 10.0.404, JDK 17/21, Android SDK 34/build-tools 35.0.0 and the pinn
 
 Build-Android.ps1 accepts -GradleCommand for an existing matching installation and -DebugOnly to skip signing. Signing keys and the DPAPI-protected password stay under ignored .local/android-signing; preserve them for upgrades. The APK and ZIP are separate sibling artifacts, each with checksums. Build.ps1 -SkipAndroid remains supported for desktop iteration. Generate-Icon.ps1 regenerates the committed desktop icon asset.
 
-For a distributable release, first run `scripts/Release.ps1 -Version 0.2.2 -Check`. This validates the .NET, Android, installer and (when publishing) GitHub CLI prerequisites without compiling. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. Then run `scripts/Release.ps1 -Version 0.2.2`; the script performs the same preflight before compiling, stages the portable desktop ZIP and signed Android APK, creates a per-user Windows installer from `installer/PocketAgent.iss`, rejects private/runtime files in the desktop package, includes the nested APK in the GitHub asset/checksum set, and writes an aggregate `SHA256SUMS.txt`. Release notes come from the matching sections in `CHANGELOG-desktop.md` and `CHANGELOG-android.md`, and packaged clients show those notes when an update is available. Release directories are versioned and are not reused unless `-Clean` is supplied. `-Publish` is an explicit second step: it requires an authenticated GitHub CLI session and creates `v<version>` in the configured repository. If a release was created with missing assets, rerun with `-UpdateExisting` to upload the corrected asset set and refresh its notes. Use `-CommitChanges` only when you explicitly want the script to stage and commit outstanding changes as `Release v<version>` before building; private-looking files are rejected and commits never happen by default. The script never embeds provider credentials, pairing data, signing keys or local paths in an artifact.
+For a distributable release, run the release script separately for Desktop and Android. For example, first run `scripts/Release.ps1 -Version 0.3.5 -Target Desktop -Check` and `scripts/Release.ps1 -Version 0.3.5 -Target Android -Check`. This validates the .NET, Android, installer and (when publishing) GitHub CLI prerequisites without compiling. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. Then publish Desktop with `scripts/Release.ps1 -Version 0.3.5 -Target Desktop -Publish -CommitChanges -Clean`, followed by Android with `scripts/Release.ps1 -Version 0.3.5 -Target Android -Publish -Clean`. Each command stages its own platform assets, checksums, release notes, and immutable `desktop-v<version>` or `android-v<version>` tag. `Target All` remains valid for local builds but is rejected for publishing. Release notes come from the matching platform changelog, and packaged clients show those notes when an update is available. Release directories are versioned and are not reused unless `-Clean` is supplied. Use `-CommitChanges` only when you explicitly want the script to stage and commit outstanding changes as `Release v<version>` before building; private-looking files are rejected and commits never happen by default. The script never embeds provider credentials, pairing data, signing keys or local paths in an artifact.
 
 The desktop updater runs as a separate bundled process. If an update closes the desktop app without restarting it, inspect `%TEMP%\PocketAgent-update.log`; the updater records download, checksum, replacement, restart and rollback failures there.
 
 Organize-Artifacts.ps1 moves historical flat artifacts into release folders without deletion/overwrites. It skips running executables, checks targets remain under artifacts, and uses an atomic directory move. -WhatIf previews operations. A running old folder must remain until its application is closed. No runtime databases or keys are relocated.
+
+## Android visual preview
+
+The repository includes a debug-only conversation preview with mocked servers,
+tabs, messages, running status, usage, and scheduled messages. It uses the same
+native Android renderer intended for the client; it is not a browser or
+TypeScript clone and is not included in release APKs.
+
+From PowerShell, run:
+
+```powershell
+.\scripts\Preview-Android.ps1 -Open
+```
+
+The script builds and installs the debug APK, starts the `PuzzleApp_Pixel6_API36`
+AVD when necessary, launches the preview activity, and saves a screenshot under
+`.local/previews/android/`. Pass `-Serial emulator-5554` to use a specific
+already-running emulator. The fixture is for visual review only; network,
+pairing, provider credentials, and conversation state are not used.
 
 ## Verification commands and limits
 

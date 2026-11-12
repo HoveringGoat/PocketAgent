@@ -20,6 +20,7 @@
   - [Android servers and conversations](SETUP.md#android-servers-and-conversations)
   - [Usage and scheduled messages](SETUP.md#usage-and-scheduled-messages)
   - [Build from source](SETUP.md#build-from-source)
+  - [Android visual preview](SETUP.md#android-visual-preview)
   - [Verification and limits](SETUP.md#verification-commands-and-limits)
 - [Project brief](PROJECT.md)
   - [Intended experience](PROJECT.md#intended-experience)

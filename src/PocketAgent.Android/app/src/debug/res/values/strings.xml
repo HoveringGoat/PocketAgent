@@ -1,0 +1,7 @@
+<resources>
+    <string name="preview_usage" formatted="false">5hr: 80%  8:14 PM  &#183;  weekly: 20%  11/17/26</string>
+    <string name="preview_directory">C:\\Github\\PocketAgent</string>
+    <string name="preview_running">Running  &#183;  02:14  &#183;  sol  xhigh</string>
+    <string name="preview_composer">Keep the selected tab attached to the pane.</string>
+    <string name="preview_scheduled" formatted="false">&#9201;&#65038; 2</string>
+</resources>
