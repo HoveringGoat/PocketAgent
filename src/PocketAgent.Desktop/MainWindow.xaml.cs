@@ -38,7 +38,6 @@ public partial class MainWindow : Window
     private string sessionSignature = "";
     private string qrRendered = "";
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning;
-    private Button? scheduleButton;
     private DesktopUpdate? pendingUpdate;
     private string? updateHealthFile;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
@@ -46,16 +45,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        if (SendButton.Parent is StackPanel composerActions)
-        {
-            composerActions.Orientation = Orientation.Horizontal;
-            scheduleButton = new Button { Content = "\u23F1\uFE0E", ToolTip = "Schedule message", Margin = new Thickness(4), Foreground = Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Segoe UI Symbol") };
-            AutomationProperties.SetName(scheduleButton, "Schedule message");
-            scheduleButton.Click += ScheduleMessageImproved;
-            composerActions.Children.Insert(1, scheduleButton);
-            foreach (var button in composerActions.Children.OfType<Button>().Where(button => button != scheduleButton && button.Content?.ToString()?.StartsWith("Schedule", StringComparison.Ordinal) == true))
-                button.Visibility = Visibility.Collapsed;
-        }
         Title = $"PocketAgent Server {BuildInfo.Version}";
         BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
         try { settings = DesktopSettings.Load(); }
@@ -278,6 +267,13 @@ public partial class MainWindow : Window
 
     private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false);
 
+    private void ViewReleaseNotes(object sender, RoutedEventArgs e)
+    {
+        if (pendingUpdate is null) return;
+        var notes = string.IsNullOrWhiteSpace(pendingUpdate.Notes) ? "No release notes were published for this version." : pendingUpdate.Notes;
+        AppDialogs.Show(this, notes, $"PocketAgent {pendingUpdate.Version} release notes");
+    }
+
     private async Task CheckForUpdatesCore(bool startup)
     {
         if (startup && !settings.CheckUpdatesOnStartup) return;
@@ -286,12 +282,14 @@ public partial class MainWindow : Window
         {
             var update = await UpdateService.CheckAsync();
             pendingUpdate = update;
+            UpdateNotesButton.Visibility = update is null ? Visibility.Collapsed : Visibility.Visible;
             UpdateStatus.Text = update is null ? $"You are running the latest available desktop version ({BuildInfo.Version})." : $"Desktop update {update.Version} is available.";
             if (update is not null && settings.AutomaticUpdates)
                 await InstallUpdateCore(false);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
         {
+            UpdateNotesButton.Visibility = Visibility.Collapsed;
             UpdateStatus.Text = $"Update check unavailable: {exception.Message}";
         }
     }
@@ -348,7 +346,7 @@ public partial class MainWindow : Window
             finally { await running.DisposeAsync(); }
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
-        ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); Composer.Text = "";
+        ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         ServerStatus.Text = "Server stopped"; StartButton.IsEnabled = true; StopButton.IsEnabled = false; SaveButton.IsEnabled = true;
@@ -392,7 +390,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; Transcript.Children.Clear();
+                ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -439,8 +437,8 @@ public partial class MainWindow : Window
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
             SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
-            if (scheduleButton is not null)
-                scheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
+            ScheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
+            UpdateScheduledSummary(snapshot.Id);
             var content = JsonSerializer.Serialize(new { snapshot.Items, snapshot.Requests, snapshot.Error });
             if (content != rendered) { RenderTranscript(snapshot); rendered = content; }
         }, clearError: false);
@@ -552,6 +550,7 @@ public partial class MainWindow : Window
     private void DraftChanged(object sender, TextChangedEventArgs e)
     {
         if (!settingDraft && selected is not null) drafts[selected] = Composer.Text;
+        ScheduleButton.IsEnabled = conversation is not null && SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
     }
     private async void SendMessage(object sender, RoutedEventArgs e) => await Submit();
     private async void ComposerKeyDown(object sender, KeyEventArgs e)
@@ -756,7 +755,7 @@ public partial class MainWindow : Window
         var time = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));
         return time.TotalHours >= 1 ? $"{(int)time.TotalHours}h {time.Minutes}m" : time.TotalMinutes >= 1 ? $"{(int)time.TotalMinutes}m {time.Seconds}s" : $"{time.Seconds}s";
     }
-    private async void ScheduleMessageImproved(object? sender, RoutedEventArgs e)
+    private async void ScheduleMessage(object? sender, RoutedEventArgs e)
     {
         if (relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) { ErrorDisplay.Text = "Write a message before scheduling it."; return; }
         var id = conversation.Id;
@@ -809,45 +808,42 @@ public partial class MainWindow : Window
             await relay.Services.GetRequiredService<ScheduledMessages>().Schedule(id, text, new DateTimeOffset(local), null);
             if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
             if (selected == id && Composer.Text == text) Composer.Clear();
+            UpdateScheduledSummary(id);
             ErrorDisplay.Text = "Message scheduled. The desktop must be running at that time.";
         });
     }
-    private async void ScheduleMessage(object sender, RoutedEventArgs e)
+    private void UpdateScheduledSummary(string? conversationId)
     {
-        if (relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) { ErrorDisplay.Text = "Write a message, then choose Schedule."; return; }
-        var id = conversation.Id; var text = Composer.Text;
-        var date = new DatePicker { SelectedDate = DateTime.Today, Margin = new Thickness(16) };
-        var time = new TextBox { Text = DateTime.Now.AddMinutes(5).ToString("HH:mm"), Margin = new Thickness(16) };
-        var save = new Button { Content = "Schedule message", Margin = new Thickness(16) };
-        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Desktop local date and time (HH:mm)", Margin = new Thickness(16) }); panel.Children.Add(date); panel.Children.Add(time); panel.Children.Add(save);
-        var dialog = new Window { Title = "Schedule message", Owner = this, Content = panel, Width = 420, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        save.Click += (_, _) => dialog.DialogResult = true;
-        if (dialog.ShowDialog() != true) return;
-        await Act(async () =>
+        if (relay is null || conversationId is null)
         {
-            if (date.SelectedDate is null || !TimeSpan.TryParseExact(time.Text, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out var clock) || clock.TotalHours >= 24)
-                throw new InvalidOperationException("Choose a date and time in HH:mm format.");
-            var local = DateTime.SpecifyKind(date.SelectedDate.Value.Date + clock, DateTimeKind.Local);
-            if (TimeZoneInfo.Local.IsInvalidTime(local) || TimeZoneInfo.Local.IsAmbiguousTime(local) || local <= DateTime.Now) throw new InvalidOperationException("Choose an unambiguous future local time.");
-            await relay.Services.GetRequiredService<ScheduledMessages>().Schedule(id, text, new DateTimeOffset(local), null);
-            if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
-            if (selected == id && Composer.Text == text) Composer.Clear();
-            ErrorDisplay.Text = "Message scheduled. The desktop must be running at that time.";
-        });
+            ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var pending = relay.Services.GetRequiredService<LocalStore>().Scheduled(conversationId).Count(job => job.Status == "pending");
+        ScheduledSummaryButton.Content = pending == 1 ? "1 scheduled message" : $"{pending} scheduled messages";
+        ScheduledSummaryButton.Visibility = pending == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
+
     private void ShowScheduled(object sender, RoutedEventArgs e)
     {
         if (relay is null || selected is null) return;
+        var conversationId = selected;
         var messages = relay.Services.GetRequiredService<ScheduledMessages>();
         var panel = new StackPanel { Margin = new Thickness(16) };
-        foreach (var job in relay.Services.GetRequiredService<LocalStore>().Scheduled(selected))
+        foreach (var job in relay.Services.GetRequiredService<LocalStore>().Scheduled(conversationId))
         {
             var row = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
             row.Children.Add(new TextBlock { Text = $"{job.Status} · {job.DueAt.LocalDateTime:g}\n{job.Text}\n{job.Error}", TextWrapping = TextWrapping.Wrap });
             if (job.Status == "pending")
             {
                 var cancel = new Button { Content = "Cancel scheduled message", HorizontalAlignment = HorizontalAlignment.Left };
-                cancel.Click += async (_, _) => await Act(async () => { await messages.Cancel(job.Id); cancel.IsEnabled = false; cancel.Content = "Canceled"; });
+                cancel.Click += async (_, _) => await Act(async () =>
+                {
+                    await messages.Cancel(job.Id);
+                    cancel.IsEnabled = false;
+                    cancel.Content = "Canceled";
+                    UpdateScheduledSummary(conversationId);
+                });
                 row.Children.Add(cancel);
             }
             panel.Children.Add(row);

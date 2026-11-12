@@ -20,7 +20,13 @@
             </Border>
             <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="90" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
-              <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12"><Button x:Name="SendButton" Content="Send" Click="SendMessage"/><Button Content="Schedule…" Click="ScheduleMessage"/><Button Content="Queue" Click="ShowScheduled"/></StackPanel>
+              <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="SendButton" Content="Send" Click="SendMessage"/>
+                  <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol"/>
+                </StackPanel>
+                <Button x:Name="ScheduledSummaryButton" Visibility="Collapsed" Click="ShowScheduled"/>
+              </StackPanel>
             </Grid>
           </Grid>
         </Grid>
@@ -49,7 +55,7 @@
           <CheckBox x:Name="CheckUpdatesPeriodicallySetting" Content="Check periodically while PocketAgent is running"/>
           <CheckBox x:Name="AutomaticUpdatesSetting" Content="Install updates automatically during a safe idle window"/>
           <TextBlock x:Name="UpdateStatus" Foreground="#A7BAA7" Margin="0,4,0,4" TextWrapping="Wrap"/>
-          <WrapPanel><Button Content="Check for updates now" Click="CheckForUpdates"/><Button Content="Install downloaded update" Click="InstallUpdate"/></WrapPanel>
+          <WrapPanel><Button Content="Check for updates now" Click="CheckForUpdates"/><Button Content="View release notes" x:Name="UpdateNotesButton" Visibility="Collapsed" Click="ViewReleaseNotes"/><Button Content="Download and install update" Click="InstallUpdate"/></WrapPanel>
           <TextBlock Text="Default working folder (new conversations can choose another)"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>
           <TextBlock Text="Codex executable override (leave blank to prefer VS Code)"/><TextBox x:Name="CodexSetting"/><TextBlock x:Name="CodexResolved" Foreground="#A7BAA7" Margin="0,0,0,14"/>
           <TextBlock Text="Codex permissions"/>

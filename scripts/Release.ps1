@@ -7,6 +7,8 @@ param(
     [switch]$Clean,
     [switch]$Check,
     [switch]$InstallPrerequisites,
+    [switch]$UpdateExisting,
+    [switch]$CommitChanges,
     [string]$Repository = 'HoveringGoat/PocketAgent',
     [string]$NotesFile
 )
@@ -111,6 +113,48 @@ function Assert-SemanticVersion([string]$value) {
     }
 }
 
+function Invoke-ReleaseCommit([string]$version) {
+    $status = @(git status --short)
+    if ($LASTEXITCODE -ne 0) { throw 'Git status failed; the release commit cannot be created.' }
+    if ($status.Count -eq 0) {
+        Write-Output 'No outstanding repository changes need a release commit.'
+        return
+    }
+
+    $privatePathPattern = '(?i)(^|[\\/])(?:\.env(?:\..*)?|secrets|.*\.(?:pem|key|pfx|p12|jks|keystore)|password\.dpapi)(?:$|[\\/])'
+    $privateChanges = @($status | Where-Object {
+            $path = $_.Substring([Math]::Min(3, $_.Length)).Trim()
+            $path -match $privatePathPattern
+        })
+    if ($privateChanges.Count -gt 0) {
+        throw "Refusing to create a release commit because private-looking files are outstanding:`n$($privateChanges -join [Environment]::NewLine)"
+    }
+
+    Invoke-Checked 'git' @('add', '--all') 'Git could not stage the release changes.'
+    $staged = @(git diff --cached --name-only)
+    if ($LASTEXITCODE -ne 0 -or $staged.Count -eq 0) { throw 'Git did not stage any release changes.' }
+    Invoke-Checked 'git' @('commit', '-m', "Release v$version") "Git could not create the release commit for v$version."
+    Write-Output "Created release commit for v$version ($($staged.Count) path(s))."
+}
+
+function Get-ChangelogSection([string]$path, [string]$version, [string]$label) {
+    if (!(Test-Path -LiteralPath $path)) { throw "$label changelog was not found: $path" }
+    $content = Get-Content -LiteralPath $path -Raw
+    $pattern = '(?ms)^##\s+' + [regex]::Escape($version) + '(?:\s[^\r\n]*)?\r?\n.*?(?=^##\s|\z)'
+    $match = [regex]::Match($content, $pattern)
+    if (!$match.Success) { throw "$label changelog does not contain a section for version ${version}: $path" }
+    return $match.Value.Trim()
+}
+
+function New-ReleaseNotes([string]$version) {
+    $desktop = Get-ChangelogSection (Join-Path $projectRoot 'CHANGELOG-desktop.md') $version 'Desktop/server'
+    $android = Get-ChangelogSection (Join-Path $projectRoot 'CHANGELOG-android.md') $version 'Android'
+    $notes = "# PocketAgent $version`r`n`r`n$desktop`r`n`r`n$android`r`n"
+    $path = Join-Path ([IO.Path]::GetTempPath()) ("PocketAgent-$version-release-notes-" + [Guid]::NewGuid().ToString('N') + '.md')
+    [IO.File]::WriteAllText($path, $notes, [Text.UTF8Encoding]::new($false))
+    return $path
+}
+
 function Assert-PackageHasNoPrivateFiles([string]$directory) {
     $forbidden = '\\(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12|jks|keystore|sqlite|db)|password\.dpapi)$'
     $matches = @(Get-ChildItem -LiteralPath $directory -Recurse -File | Where-Object {
@@ -122,10 +166,13 @@ function Assert-PackageHasNoPrivateFiles([string]$directory) {
     }
 }
 
-function Write-ChecksumManifest([string]$directory) {
+function Write-ChecksumManifest([string]$directory, [IO.FileInfo[]]$additionalAssets) {
     $assets = @(Get-ChildItem -LiteralPath $directory -File | Where-Object {
             $_.Name -notlike '*.sha256' -and $_.Name -ne 'SHA256SUMS.txt'
         } | Sort-Object Name)
+    if ($additionalAssets) {
+        $assets += @($additionalAssets | Where-Object { $_.Name -notlike '*.sha256' })
+    }
     if ($assets.Count -eq 0) { throw "No release assets were found in $directory." }
 
     $lines = @(foreach ($asset in $assets) {
@@ -137,8 +184,15 @@ function Write-ChecksumManifest([string]$directory) {
 }
 
 function Invoke-Checked([string]$command, [string[]]$arguments, [string]$failureMessage) {
-    & $command @arguments
-    if ($LASTEXITCODE -ne 0) { throw $failureMessage }
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $command @arguments
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if ($exitCode -ne 0) { throw $failureMessage }
 }
 
 $projectVersion = Get-ProjectVersion
@@ -147,6 +201,7 @@ Assert-SemanticVersion $Version
 if ($Version -ne $projectVersion) {
     throw "Requested release version $Version does not match Directory.Build.props version $projectVersion. Update the version once, then rerun the release script."
 }
+if ($CommitChanges -and $Check) { throw '-CommitChanges cannot be used with -Check.' }
 
 $releaseDirectory = [IO.Path]::GetFullPath((Join-Path $projectRoot "artifacts/releases/$Version"))
 $artifactRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'artifacts'))
@@ -161,6 +216,8 @@ if ($Check) {
     Write-Output "Release prerequisites are ready for PocketAgent $Version."
     exit 0
 }
+
+if ($CommitChanges) { Invoke-ReleaseCommit $Version }
 
 if ($Clean -and (Test-Path -LiteralPath $releaseDirectory)) {
     Remove-Item -LiteralPath $releaseDirectory -Recurse -Force
@@ -180,6 +237,18 @@ if (!(Test-Path -LiteralPath $desktopDirectory)) { throw "Desktop publish direct
 if (!(Test-Path -LiteralPath $desktopArchive)) { throw "Desktop archive was not created: $desktopArchive" }
 Assert-PackageHasNoPrivateFiles $desktopDirectory
 
+$androidAssets = @()
+if (!$SkipAndroid) {
+    $androidDirectory = Join-Path $releaseDirectory 'android'
+    if (!(Test-Path -LiteralPath $androidDirectory)) { throw "Android release directory was not created: $androidDirectory" }
+    $androidAssets = @(Get-ChildItem -LiteralPath $androidDirectory -File | Where-Object {
+            $_.Name -eq "PocketAgent-$Version-android.apk" -or $_.Name -eq "PocketAgent-$Version-android.apk.sha256"
+        })
+    if (!($androidAssets | Where-Object { $_.Name -eq "PocketAgent-$Version-android.apk" })) {
+        throw "Android APK was not created under $androidDirectory."
+    }
+}
+
 if (!$SkipInstaller) {
     $iscc = Resolve-InnoSetup
     if (!$iscc) {
@@ -198,30 +267,61 @@ if (!$SkipInstaller) {
     if (!(Test-Path -LiteralPath $installer)) { throw "Installer output was not created: $installer" }
 }
 
-$manifest = Write-ChecksumManifest $releaseDirectory
+$manifest = Write-ChecksumManifest $releaseDirectory $androidAssets
 Write-Output "Release assets staged in $releaseDirectory"
-Get-ChildItem -LiteralPath $releaseDirectory -File | Sort-Object Name | ForEach-Object { Write-Output "  $($_.Name)" }
+$stagedFiles = @(
+    @(Get-ChildItem -LiteralPath $releaseDirectory -File)
+    @($androidAssets)
+)
+$stagedFiles | Sort-Object Name | ForEach-Object { Write-Output "  $($_.Name)" }
 
 if ($Publish) {
     $ghPath = Resolve-GitHubCli
 
     $tag = "v$Version"
-    & $ghPath 'release' 'view' $tag '--repo' $Repository *> $null
-    if ($LASTEXITCODE -eq 0) {
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $ghPath 'release' 'view' $tag '--repo' $Repository *> $null
+        $releaseViewExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    $releaseExists = $releaseViewExitCode -eq 0
+    if ($releaseExists -and !$UpdateExisting) {
         throw "GitHub release $tag already exists. Refusing to overwrite a published release."
     }
 
-    $assets = @(Get-ChildItem -LiteralPath $releaseDirectory -File | Sort-Object Name | ForEach-Object { $_.FullName })
-    $releaseArguments = @('release', 'create', $tag, '--repo', $Repository, '--title', "PocketAgent $Version")
+    $assets = @(
+        @(Get-ChildItem -LiteralPath $releaseDirectory -File | Sort-Object Name | ForEach-Object { $_.FullName })
+        @($androidAssets | Sort-Object Name | ForEach-Object { $_.FullName })
+    )
+    $generatedNotesFile = $null
+    $notesPath = $null
     if ($NotesFile) {
         $notesPath = [IO.Path]::GetFullPath($NotesFile)
         if (!(Test-Path -LiteralPath $notesPath)) { throw "Release notes file was not found: $notesPath" }
-        $releaseArguments += @('--notes-file', $notesPath)
     } else {
-        $releaseArguments += '--generate-notes'
+        $generatedNotesFile = New-ReleaseNotes $Version
+        $notesPath = $generatedNotesFile
+    }
+
+    if ($releaseExists) {
+        $releaseArguments = @('release', 'upload', $tag, '--repo', $Repository, '--clobber')
+    } else {
+        $releaseArguments = @('release', 'create', $tag, '--repo', $Repository, '--title', "PocketAgent $Version")
+        $releaseArguments += @('--notes-file', $notesPath)
     }
     $releaseArguments += $assets
-    Invoke-Checked $ghPath $releaseArguments "GitHub release $tag could not be created."
-    Write-Output "Published GitHub release $tag to $Repository"
+    $operation = if ($releaseExists) { 'updated' } else { 'created' }
+    try {
+        Invoke-Checked $ghPath $releaseArguments "GitHub release $tag could not be $operation."
+        if ($releaseExists) {
+            Invoke-Checked $ghPath @('release', 'edit', $tag, '--repo', $Repository, '--notes-file', $notesPath) "GitHub release $tag assets were updated, but its release notes could not be updated."
+        }
+    } finally {
+        if ($generatedNotesFile -and (Test-Path -LiteralPath $generatedNotesFile)) { Remove-Item -LiteralPath $generatedNotesFile -Force }
+    }
+    Write-Output "Published/updated GitHub release $tag on $Repository"
 }
 

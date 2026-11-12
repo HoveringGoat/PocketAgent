@@ -4,8 +4,9 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 
 var arguments = Parse(args);
+var logFile = arguments.GetValueOrDefault("log-file", Path.Combine(Path.GetTempPath(), "PocketAgent-update.log"));
 foreach (var required in new[] { "asset-url", "install-root", "restart-path", "wait-pid" })
-    if (!arguments.ContainsKey(required)) return Fail($"Missing updater argument: {required}.");
+    if (!arguments.ContainsKey(required)) return Fail($"Missing updater argument: {required}.", logFile);
 
 var installRoot = Path.GetFullPath(arguments["install-root"]);
 var restartPath = Path.GetFullPath(arguments["restart-path"]);
@@ -15,6 +16,7 @@ var extracted = Path.Combine(staging, "extracted");
 var backup = installRoot.TrimEnd(Path.DirectorySeparatorChar) + ".previous-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
 try
 {
+    WriteLog(logFile, $"Starting update to {arguments.GetValueOrDefault("version", "unknown")}.");
     Directory.CreateDirectory(staging);
     using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PocketAgent.Updater", "0.2.0"));
@@ -26,17 +28,20 @@ try
         var expected = checksumText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         var actual = Convert.ToHexString(await SHA256.HashDataAsync(File.OpenRead(archive))).ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(expected) || !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(expected), Convert.FromHexString(actual)))
-            return Fail("The downloaded desktop package failed checksum verification.");
+            return Fail("The downloaded desktop package failed checksum verification.", logFile);
     }
+    WriteLog(logFile, "Package downloaded and checksum verified.");
     await WaitForExit(int.Parse(arguments["wait-pid"], System.Globalization.CultureInfo.InvariantCulture));
+    WriteLog(logFile, "Parent application exited.");
     ZipFile.ExtractToDirectory(archive, extracted);
     var executable = Directory.EnumerateFiles(extracted, "PocketAgent.Desktop.exe", SearchOption.AllDirectories).SingleOrDefault();
-    if (executable is null) return Fail("The update package did not contain the desktop executable.");
+    if (executable is null) return Fail("The update package did not contain the desktop executable.", logFile);
     var replacement = Directory.GetParent(executable)!.FullName;
     Directory.Move(installRoot, backup);
     Directory.Move(replacement, installRoot);
     var process = Process.Start(new ProcessStartInfo(restartPath) { UseShellExecute = true });
     if (process is null) throw new InvalidOperationException("The updated desktop could not be started.");
+    WriteLog(logFile, "Updated application started; waiting for health check.");
     var healthy = await WaitForFile(arguments.GetValueOrDefault("health-file"), TimeSpan.FromSeconds(30));
     if (!healthy)
     {
@@ -44,11 +49,12 @@ try
         Directory.Move(installRoot, installRoot + ".failed-" + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss"));
         Directory.Move(backup, installRoot);
         Process.Start(new ProcessStartInfo(restartPath) { UseShellExecute = true });
-        return Fail("The update failed its startup check and was rolled back.");
+        return Fail("The update failed its startup check and was rolled back.", logFile);
     }
+    WriteLog(logFile, "Update completed successfully.");
     return 0;
 }
-catch (Exception exception) { return Fail($"Update failed: {exception.Message}"); }
+catch (Exception exception) { return Fail($"Update failed: {exception}", logFile); }
 finally { try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { } }
 
 static Dictionary<string, string> Parse(string[] args)
@@ -76,4 +82,15 @@ static async Task<bool> WaitForFile(string? path, TimeSpan timeout)
     return false;
 }
 
-static int Fail(string message) { Console.Error.WriteLine(message); return 1; }
+static int Fail(string message, string? logFile = null)
+{
+    Console.Error.WriteLine(message);
+    WriteLog(logFile, message);
+    return 1;
+}
+
+static void WriteLog(string? logFile, string message)
+{
+    if (string.IsNullOrWhiteSpace(logFile)) return;
+    try { File.AppendAllText(logFile, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}"); } catch { }
+}

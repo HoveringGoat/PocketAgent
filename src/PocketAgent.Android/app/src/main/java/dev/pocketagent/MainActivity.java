@@ -647,18 +647,12 @@ public final class MainActivity extends Activity {
       }
     } else if (!state.isNull("lastWorkDurationMs"))
       status += " · worked " + elapsed(state.optLong("lastWorkDurationMs"));
-    context.setText(
-        getString(
-            R.string.session_context,
-            status + " · " + (state.isNull("model") ? "Codex settings" : state.optString("model")),
-            state.optString("hostName"),
-            state.optString("workingDirectory")));
-    String model = state.isNull("model") ? "Codex settings" : state.optString("model");
-    String reasoning = state.isNull("reasoningEffort") ? "model default" : state.optString("reasoningEffort");
-    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
+    String model = state.isNull("model") ? "Codex" : state.optString("model");
+    String reasoning = state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
     String hostName = state.optString("hostName", "Desktop");
     String workingDirectory = state.optString("workingDirectory", "");
-    sessionLocation.setText(getString(R.string.session_location, hostName, workingDirectory));
+    context.setText(getString(R.string.session_context_v2, status, model, reasoning, workingDirectory));
+    sessionLocation.setText(getString(R.string.session_location, hostName));
     stop.setVisibility(active.isEmpty() ? View.GONE : View.VISIBLE);
     send.setText(active.isEmpty() ? "Send" : "Steer");
     JSONArray items = state.optJSONArray("items"), requests = state.optJSONArray("requests");
@@ -937,7 +931,7 @@ public final class MainActivity extends Activity {
         match());
     String[] chosen = {""};
     JSONArray models = options.optJSONArray("models");
-    Button model = button("Model: Use Codex settings", null);
+    Button model = button("Use Codex settings", null);
     model.setContentDescription("New conversation model");
     model.setOnClickListener(
         v ->
@@ -1083,7 +1077,7 @@ public final class MainActivity extends Activity {
             return;
           }
           String[] labels = new String[supported.length() + 1];
-          labels[0] = "Use model default";
+          labels[0] = "Use default";
           int checked = 0;
           for (int i = 0; i < supported.length(); i++) {
             Object value = supported.opt(i);

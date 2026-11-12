@@ -6,7 +6,7 @@ The desktop keeps provider credentials and repository execution local. Scan its 
 
 ## Run the packaged apps
 
-Version 0.1.12 is the latest stable release. The 0.2.0 development line adds the stable port-based Windows Firewall rule and monochrome schedule control, alongside the other planned feature work. No additional six-digit entry, CA installation, Let's Encrypt, ports 80/443 or Caddy edits are required.
+Version 0.2.2 is the latest stable release. It includes the desktop updater handoff fix, updater diagnostics, release-note display, and the 0.2.0/0.2.1 native release work. No additional six-digit entry, CA installation, Let's Encrypt, ports 80/443 or Caddy edits are required.
 
 Install both apps for new enrollment. Existing saved devices/conversations are retained; re-pair to adopt pinned trust on an old connection.
 
@@ -24,8 +24,10 @@ Each conversation selects its existing desktop folder and available model. Archi
 .\scripts\Start-Desktop.ps1 -Repository C:\GitHub\YourProject
 ```
 
-To check release prerequisites without building, run `scripts/Release.ps1 -Version 0.2.0 -Check`. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. To stage a complete 0.2.0 release locally, run `scripts/Release.ps1 -Version 0.2.0`; the script performs the same preflight before compiling. Add `-SkipInstaller` when only the portable/Android assets are needed. The script validates the version, refuses to reuse an existing version directory unless `-Clean` is supplied, checks the desktop package for private files, and writes `SHA256SUMS.txt`. Add `-Publish` only after authenticating `gh` with `gh auth login`; it creates the versioned GitHub release and uploads the staged assets.
+To check release prerequisites without building, run `scripts/Release.ps1 -Version 0.2.2 -Check`. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. To stage a complete 0.2.2 release locally, run `scripts/Release.ps1 -Version 0.2.2`; the script performs the same preflight before compiling. Add `-SkipInstaller` when only the portable/Android assets are needed. The script validates the version, refuses to reuse an existing version directory unless `-Clean` is supplied, checks the desktop package for private files, includes the nested Android APK in the release asset/checksum set, and writes `SHA256SUMS.txt`. Release notes are composed from the matching sections in [CHANGELOG-desktop.md](CHANGELOG-desktop.md) and [CHANGELOG-android.md](CHANGELOG-android.md). Add `-Publish` only after authenticating `gh` with `gh auth login`; it creates the versioned GitHub release and uploads the staged assets. Use `-UpdateExisting` only to repair an already-created release after a partial upload; it also refreshes that release's notes. Use `-CommitChanges` when you explicitly want the script to stage and commit outstanding repository changes as `Release v<version>` before building. The script refuses private-looking paths and never commits by default.
 
 See [build prerequisites and signing](documentation/SETUP.md#build-from-source), [focused verification](documentation/SETUP.md#verification-commands-and-limits), [architecture](documentation/ARCHITECTURE.md), [project requirements](documentation/PROJECT.md), and [complete contents](documentation/TABLEOFCONTENTS.md). Contributor instructions are in [AGENTS.md](AGENTS.md).
+
+PocketAgent is released under the [MIT License](LICENSE).
 
 Native emulator and focused local checks pass. Read-only real-provider diagnostics confirm `gpt-6.1-sol` catalog membership and both usage windows. Successful real inference, physical Android/Wi-Fi and external-network connectivity still require acceptance checks. Full suites and live model turns have not been run.

@@ -1,14 +1,14 @@
 #ifndef AppVersion
-#define AppVersion "0.2.0"
+#define AppVersion "0.2.2"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\artifacts\releases\0.2.0\desktop"
+#define SourceDir "..\artifacts\releases\0.2.2\desktop"
 #endif
 #ifndef OutputDir
-#define OutputDir "..\artifacts\releases\0.2.0"
+#define OutputDir "..\artifacts\releases\0.2.2"
 #endif
 #ifndef OutputBaseFilename
-#define OutputBaseFilename "PocketAgent-0.2.0-Setup"
+#define OutputBaseFilename "PocketAgent-0.2.2-Setup"
 #endif
 #ifndef ProjectRoot
 #define ProjectRoot ".."
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile={#ProjectRoot}\src\PocketAgent.Desktop\Assets\PocketAgent.ico
-Compression=lzma2/solid
+Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 DisableProgramGroupPage=yes
@@ -49,4 +49,4 @@ Name: "{autodesktop}\PocketAgent"; Filename: "{app}\PocketAgent.Desktop.exe"; Wo
 Filename: "{app}\PocketAgent.Desktop.exe"; Description: "Launch PocketAgent"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\reg.exe"; Parameters: "delete \"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\" /v PocketAgent /f"; Flags: runhidden; RunOnceId: "RemovePocketAgentStartup"
+Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v PocketAgent /f"; Flags: runhidden; RunOnceId: "RemovePocketAgentStartup"

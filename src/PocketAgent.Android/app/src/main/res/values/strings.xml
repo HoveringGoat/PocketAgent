@@ -2,7 +2,6 @@
     <string name="loading">Loading…</string>
     <string name="connected">PocketAgent · connected</string>
     <string name="reconnecting">Reconnecting…</string>
-    <string name="session_context">%1$s · %2$s\n%3$s</string>
-    <string name="session_context_v2">%1$s\nModel: %2$s · Reasoning: %3$s</string>
-    <string name="session_location">%1$s\n%2$s</string>
+    <string name="session_context_v2">%1$s\n%2$s · %3$s\n%4$s</string>
+    <string name="session_location">%1$s</string>
 </resources>

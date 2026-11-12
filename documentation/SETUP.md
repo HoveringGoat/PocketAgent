@@ -2,17 +2,18 @@
 
 ## Use the packaged native apps
 
-Current release: **0.1.12**. Install the 0.1.12 Android app and desktop app for QR/pairing-string enrollment. The 0.2.0 changes are development-only until a complete release build is approved. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
+Current release: **0.2.2**. Install the 0.2.2 Android app and desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
 
 Release files are grouped together:
 
 ```text
-artifacts/releases/0.1.12/
+artifacts/releases/0.2.2/
   desktop/PocketAgent.Desktop.exe
-PocketAgent-0.1.12-desktop.zip
-PocketAgent-0.1.12-desktop.zip.sha256
-android/PocketAgent-0.1.12-android.apk
-android/PocketAgent-0.1.12-android.apk.sha256
+PocketAgent-0.2.2-desktop.zip
+PocketAgent-0.2.2-desktop.zip.sha256
+PocketAgent-0.2.2-Setup.exe
+android/PocketAgent-0.2.2-android.apk
+android/PocketAgent-0.2.2-android.apk.sha256
 ```
 
 Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. This release includes a pocket/terminal icon.
@@ -77,9 +78,9 @@ Approvals/questions remain explicit. Supported one-time approvals cannot broaden
 
 The model picker is per conversation. When the installed Codex app-server advertises supported reasoning efforts, the desktop model dialog and Android connection menu expose those levels plus **Use model default**. The selected value is stored with that conversation and sent on future turns; changing models clears an unsupported override. If the provider does not advertise levels, PocketAgent reports that instead of guessing.
 
-## 0.2.0 development status
+## 0.2.1 release status
 
-The 0.2.0 development line adds desktop startup/update preferences and a separate updater process. Android also checks the latest published GitHub release once on app startup and offers to open its release page when a newer version exists. The APK installation remains user-confirmed. Current 0.1.12 users will not receive these source changes until a complete 0.2.0 release is built and published.
+The 0.2.2 release includes the direct desktop updater handoff, updater diagnostics, desktop release-note display, startup/update preferences, the fixed clickable scheduling control and the public GitHub release channel. Android checks the latest published release once on app startup and offers to open its release page when a newer version exists. APK installation remains user-confirmed.
 
 ## Usage and scheduled messages
 
@@ -105,7 +106,9 @@ Use .NET SDK 10.0.404, JDK 17/21, Android SDK 34/build-tools 35.0.0 and the pinn
 
 Build-Android.ps1 accepts -GradleCommand for an existing matching installation and -DebugOnly to skip signing. Signing keys and the DPAPI-protected password stay under ignored .local/android-signing; preserve them for upgrades. The APK and ZIP are separate sibling artifacts, each with checksums. Build.ps1 -SkipAndroid remains supported for desktop iteration. Generate-Icon.ps1 regenerates the committed desktop icon asset.
 
-For a distributable release, first run `scripts/Release.ps1 -Version 0.2.0 -Check`. This validates the .NET, Android, installer and (when publishing) GitHub CLI prerequisites without compiling. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. Then run `scripts/Release.ps1 -Version 0.2.0`; the script performs the same preflight before compiling, stages the portable desktop ZIP and signed Android APK, creates a per-user Windows installer from `installer/PocketAgent.iss`, rejects private/runtime files in the desktop package, and writes an aggregate `SHA256SUMS.txt`. Release directories are versioned and are not reused unless `-Clean` is supplied. `-Publish` is an explicit second step: it requires an authenticated GitHub CLI session and creates `v<version>` in the configured repository. The script never embeds provider credentials, pairing data, signing keys or local paths in an artifact.
+For a distributable release, first run `scripts/Release.ps1 -Version 0.2.2 -Check`. This validates the .NET, Android, installer and (when publishing) GitHub CLI prerequisites without compiling. Add `-InstallPrerequisites` to let Windows Package Manager install missing Inno Setup 6 and/or GitHub CLI. Then run `scripts/Release.ps1 -Version 0.2.2`; the script performs the same preflight before compiling, stages the portable desktop ZIP and signed Android APK, creates a per-user Windows installer from `installer/PocketAgent.iss`, rejects private/runtime files in the desktop package, includes the nested APK in the GitHub asset/checksum set, and writes an aggregate `SHA256SUMS.txt`. Release notes come from the matching sections in `CHANGELOG-desktop.md` and `CHANGELOG-android.md`, and packaged clients show those notes when an update is available. Release directories are versioned and are not reused unless `-Clean` is supplied. `-Publish` is an explicit second step: it requires an authenticated GitHub CLI session and creates `v<version>` in the configured repository. If a release was created with missing assets, rerun with `-UpdateExisting` to upload the corrected asset set and refresh its notes. Use `-CommitChanges` only when you explicitly want the script to stage and commit outstanding changes as `Release v<version>` before building; private-looking files are rejected and commits never happen by default. The script never embeds provider credentials, pairing data, signing keys or local paths in an artifact.
+
+The desktop updater runs as a separate bundled process. If an update closes the desktop app without restarting it, inspect `%TEMP%\PocketAgent-update.log`; the updater records download, checksum, replacement, restart and rollback failures there.
 
 Organize-Artifacts.ps1 moves historical flat artifacts into release folders without deletion/overwrites. It skips running executables, checks targets remain under artifacts, and uses an atomic directory move. -WhatIf previews operations. A running old folder must remain until its application is closed. No runtime databases or keys are relocated.
 
