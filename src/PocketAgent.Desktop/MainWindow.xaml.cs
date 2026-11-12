@@ -346,7 +346,7 @@ public partial class MainWindow : Window
             finally { await running.DisposeAsync(); }
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
-        ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+        ConversationPanel.IsEnabled = false; ConversationTitle.Text = "Select a conversation"; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         ServerStatus.Text = "Server stopped"; StartButton.IsEnabled = true; StopButton.IsEnabled = false; SaveButton.IsEnabled = true;
@@ -390,7 +390,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+                ConversationPanel.IsEnabled = false; ConversationTitle.Text = "Select a conversation"; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -426,13 +426,14 @@ public partial class MainWindow : Window
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
             ConversationTitle.Text = snapshot.Title;
+            ConversationLocation.Text = $"{snapshot.HostName} · {snapshot.WorkingDirectory}";
             ModelButton.Content = snapshot.Model is null ? "Model: Codex settings" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
                 $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
             var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
                 snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-            ConversationMeta.Text = $"{snapshot.Status}{work} · {snapshot.HostName}\n{snapshot.WorkingDirectory}\n{policy}";
+            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}";
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
