@@ -157,11 +157,13 @@ function Get-CurrentBranch {
 }
 
 function Get-RemoteCommit([string]$reference) {
-    $line = @(git ls-remote origin $reference | Select-Object -First 1)
+    $lines = @(git ls-remote origin $reference)
     if ($LASTEXITCODE -ne 0) { throw "Git could not resolve remote reference $reference." }
+    $line = @($lines | Select-Object -First 1)
     if ($line.Count -eq 0 -and $reference.EndsWith('^{}', [StringComparison]::Ordinal)) {
-        $line = @(git ls-remote origin $reference.Substring(0, $reference.Length - 3) | Select-Object -First 1)
+        $lines = @(git ls-remote origin $reference.Substring(0, $reference.Length - 3))
         if ($LASTEXITCODE -ne 0) { throw "Git could not resolve remote reference $reference." }
+        $line = @($lines | Select-Object -First 1)
     }
     if ($line.Count -eq 0) { return $null }
     return ($line[0] -split '\s+')[0]
