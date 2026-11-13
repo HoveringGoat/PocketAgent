@@ -56,8 +56,11 @@ public static class UpdateService
             var logFile = Path.Combine(Path.GetTempPath(), "PocketAgent-update.log");
             var info = new ProcessStartInfo(launchCopy)
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
+                // Launch through the Windows shell so the updater is not attached to
+                // the desktop process/job that is about to exit. The previous direct
+                // child launch reliably died at the handoff point on installed builds.
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = Path.GetDirectoryName(launchCopy) ?? Path.GetTempPath()
             };
             info.ArgumentList.Add("--asset-url"); info.ArgumentList.Add(update.Asset.ToString());

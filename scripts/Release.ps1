@@ -284,6 +284,17 @@ function Invoke-ReleaseTestGate([string]$dotnetCommand) {
     }
 }
 
+function Invoke-UpdaterArtifactCheck([string]$releaseDirectory, [string]$version) {
+    $script = Join-Path $projectRoot 'tests/updater-artifact-check.ps1'
+    if (!(Test-Path -LiteralPath $script)) { throw "Updater artifact check script was not found: $script" }
+    $powershellCommand = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    if (!$powershellCommand) { $powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue }
+    if (!$powershellCommand) { throw 'The disposable updater test requires a PowerShell host.' }
+    $powershell = $powershellCommand.Source
+    Invoke-Checked $powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script,
+        '-ReleaseDirectory', $releaseDirectory, '-Version', $version) 'Disposable updater install test failed.'
+}
+
 $desktopVersion = Get-ProjectVersion
 $androidVersion = Get-AndroidVersion
 if (!$Version) { $Version = if ($Target -eq 'Android') { $androidVersion } else { $desktopVersion } }
@@ -340,6 +351,8 @@ if ($buildDesktop) {
     if (!(Test-Path -LiteralPath $desktopDirectory)) { throw "Desktop publish directory was not created: $desktopDirectory" }
     if (!(Test-Path -LiteralPath $desktopArchive)) { throw "Desktop archive was not created: $desktopArchive" }
     Assert-PackageHasNoPrivateFiles $desktopDirectory
+    Write-Output 'Running disposable installed-app updater test.'
+    Invoke-UpdaterArtifactCheck $releaseDirectory $Version
 }
 
 $androidAssets = @()

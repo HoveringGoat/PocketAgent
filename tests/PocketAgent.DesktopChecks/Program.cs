@@ -62,9 +62,11 @@ internal static class Program
             var imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
             var imagePath = Path.Combine(fixtureDirectory, "fixture-image.png");
             File.WriteAllBytes(imagePath, imageBytes);
+            var spacedImagePath = Path.Combine(fixtureDirectory, "fixture image.png");
+            File.WriteAllBytes(spacedImagePath, imageBytes);
             var imageReader = typeof(MainWindow).GetMethod("ReadImageBytes", BindingFlags.NonPublic | BindingFlags.Static)!;
             var imageDecoder = typeof(MainWindow).GetMethod("DecodeImage", BindingFlags.NonPublic | BindingFlags.Static)!;
-            foreach (var source in new[] { "fixture-image.png", new Uri(imagePath).AbsoluteUri, $"data:image/png;base64,{Convert.ToBase64String(imageBytes)}" })
+            foreach (var source in new[] { "fixture-image.png", "fixture image.png", new Uri(imagePath).AbsoluteUri, $"data:image/png;base64,{Convert.ToBase64String(imageBytes)}" })
             {
                 var decoded = (byte[])imageReader.Invoke(null, [source, fixtureDirectory])!;
                 if (!decoded.SequenceEqual(imageBytes)) throw new InvalidOperationException($"Desktop image loading failed for {source}.");
@@ -72,12 +74,27 @@ internal static class Program
                 if (bitmap.PixelWidth != 1 || bitmap.PixelHeight != 1)
                     throw new InvalidOperationException($"Desktop image rendering failed for {source}.");
             }
+            var encodedTextImage = (byte[])imageReader.Invoke(null, ["data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E", fixtureDirectory])!;
+            if (!System.Text.Encoding.UTF8.GetString(encodedTextImage).Contains("<svg", StringComparison.Ordinal))
+                throw new InvalidOperationException("Percent-encoded image data must be decoded before format handling.");
             var renderItem = typeof(Conversations).GetMethod("Render", BindingFlags.NonPublic | BindingFlags.Static)!;
             using (var structuredImage = JsonDocument.Parse("{\"id\":\"image-item\",\"type\":\"agentMessage\",\"status\":\"completed\",\"content\":[{\"type\":\"image\",\"image_url\":{\"url\":\"fixture-image.png\"},\"mimeType\":\"image/png\"}]}"))
             {
                 var renderedImage = (DisplayItem)renderItem.Invoke(null, [structuredImage.RootElement])!;
                 if (renderedImage.Images is not [{ Source: "fixture-image.png", MimeType: "image/png" }])
                     throw new InvalidOperationException("Structured image URLs must survive provider payload normalization.");
+            }
+            using (var nestedStructuredImage = JsonDocument.Parse("{\"id\":\"nested-image-item\",\"type\":\"image\",\"image_url\":{\"url\":{\"uri\":\"fixture-image.png\"}}}"))
+            {
+                var renderedImage = (DisplayItem)renderItem.Invoke(null, [nestedStructuredImage.RootElement])!;
+                if (renderedImage.Images is not [{ Source: "fixture-image.png" }])
+                    throw new InvalidOperationException("Nested structured image URLs must normalize to a viewable source.");
+            }
+            using (var markdownImage = JsonDocument.Parse("{\"id\":\"markdown-image\",\"type\":\"agentMessage\",\"text\":\"![fixture](fixture image.png)\"}"))
+            {
+                var renderedImage = (DisplayItem)renderItem.Invoke(null, [markdownImage.RootElement])!;
+                if (renderedImage.Images is not [{ Source: "fixture image.png" }])
+                    throw new InvalidOperationException("Markdown image paths containing spaces must remain viewable.");
             }
             ((TabControl)window.FindName("Navigation")).SelectedIndex = 0;
             ((Grid)window.FindName("ConversationPanel")).IsEnabled = true;

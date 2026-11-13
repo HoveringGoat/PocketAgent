@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
@@ -923,9 +924,12 @@ public partial class MainWindow : Window
         if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
             var comma = source.IndexOf(',');
-            if (comma <= 5 || !source[..comma].Contains(";base64", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The image data is invalid.");
-            var payload = Uri.UnescapeDataString(source[(comma + 1)..]);
-            return Convert.FromBase64String(new string(payload.Where(character => !char.IsWhiteSpace(character)).ToArray()));
+            if (comma <= 5) throw new InvalidOperationException("The image data is invalid.");
+            var metadata = source[..comma];
+            var payload = source[(comma + 1)..];
+            if (metadata.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+                return Convert.FromBase64String(new string(Uri.UnescapeDataString(payload).Where(character => !char.IsWhiteSpace(character)).ToArray()));
+            return Encoding.UTF8.GetBytes(Uri.UnescapeDataString(payload));
         }
         if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
         {

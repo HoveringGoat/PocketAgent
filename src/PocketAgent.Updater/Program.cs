@@ -30,7 +30,8 @@ try
     {
         var checksumText = await client.GetStringAsync(checksumUrl);
         var expected = checksumText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        var actual = Convert.ToHexString(await SHA256.HashDataAsync(File.OpenRead(archive))).ToLowerInvariant();
+        await using var archiveStream = File.OpenRead(archive);
+        var actual = Convert.ToHexString(await SHA256.HashDataAsync(archiveStream)).ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(expected) || !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(expected), Convert.FromHexString(actual)))
             return Fail("The downloaded desktop package failed checksum verification.", logFile);
     }

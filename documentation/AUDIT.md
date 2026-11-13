@@ -95,7 +95,13 @@ Implementation status: unexpected per-job exceptions are now logged and containe
 
 The real `%TEMP%\PocketAgent-update.log` entries at 2026-11-11 23:23 and 2026-11-12 14:35 fail in `System.IO.FileSystem.MoveDirectory` while targeting `C:\Users\Spence\AppData\Local\Programs\PocketAgent\`. That is the pre-0.3.5 replacement implementation, which attempted to rename the live install root. The checked-in updater source and the 0.3.6 artifact instead use file-by-file backup/replacement.
 
-This was reproduced locally without touching the real installation: a freshly published updater replaced a disposable sibling directory under `%LOCALAPPDATA%\Programs` with the same inherited ACLs and exited successfully. The old log therefore does not establish a general AppData permission failure; it establishes that the updater process used by those failed attempts was stale relative to the current source. The release gate still needs an automated disposable updater run so a stale packaged binary cannot pass unnoticed.
+This was reproduced locally without touching the real installation: a freshly published updater replaced a disposable sibling directory under `%LOCALAPPDATA%\Programs` with the same inherited ACLs and exited successfully. The old log therefore does not establish a general AppData permission failure; it establishes that the updater process used by those failed attempts was stale relative to the current source. The release workflow now runs that disposable installed-app check against the freshly packaged updater and fails on replacement, restart-health, or staging-cleanup errors. The checksum stream is explicitly disposed before transaction cleanup.
+
+### A13 - High: prior image-viewer verification covered only synthetic data URIs
+
+The earlier desktop check proved that a base64 PNG could be decoded and shown, but it did not cover the markdown image references and provider payload shapes used by real conversations. In particular, paths containing spaces were discarded by the markdown extractor, nested URL objects were not normalized, and percent-encoded non-base64 data payloads were rejected before the viewer could provide its external-viewer fallback.
+
+Implemented in the working tree: markdown sources now preserve spaces and optional titles, structured image sources normalize nested `url`/`uri`/`path`/`data` objects, and non-base64 data URIs are decoded as UTF-8 bytes. DesktopChecks now cover a spaced file path, nested structured payload, and the modal viewer path. Unsupported binary formats still use the explicit external-viewer action.
 
 ### A10 - High: inactivity maintenance archives recent legacy conversations
 

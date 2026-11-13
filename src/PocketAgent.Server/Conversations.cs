@@ -608,9 +608,21 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         if (item.Field("content") is { ValueKind: JsonValueKind.Array } content)
             foreach (var part in content.EnumerateArray())
                 if (IsImageType(part.Text("type"))) AddStructuredImage(images, part, "image-" + item.Text("id") + "-" + images.Count);
-        foreach (Match match in Regex.Matches(text, "!\\[([^\\]]*)\\]\\(([^)\\s]+)"))
-            images.Add(new("markdown-" + images.Count, match.Groups[2].Value, match.Groups[1].Value));
+        foreach (Match match in Regex.Matches(text, @"!\[([^\]]*)\]\(([^)]+)\)"))
+        {
+            var source = MarkdownImageSource(match.Groups[2].Value);
+            if (source.Length > 0) images.Add(new("markdown-" + images.Count, source, match.Groups[1].Value));
+        }
         return images.Count == 0 ? null : images.ToArray();
+    }
+
+    private static string MarkdownImageSource(string value)
+    {
+        var source = value.Trim();
+        if (source.StartsWith('<') && source.EndsWith('>')) return source[1..^1].Trim();
+        // Keep spaces in ordinary local paths, but ignore an optional markdown title.
+        var title = Regex.Match(source, "\\s+[\\\"'].*[\\\"']\\s*$");
+        return (title.Success ? source[..title.Index] : source).Trim();
     }
 
     private static bool IsImageType(string type) => type.Contains("image", StringComparison.OrdinalIgnoreCase) || type.Contains("screenshot", StringComparison.OrdinalIgnoreCase);
@@ -630,10 +642,19 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     private static string ImageSource(JsonElement value, string name)
     {
-        var field = value.Field(name);
+        return ImageSourceValue(value.Field(name));
+    }
+
+    private static string ImageSourceValue(JsonElement field)
+    {
         if (field.ValueKind == JsonValueKind.String) return field.GetString() ?? "";
         if (field.ValueKind != JsonValueKind.Object) return "";
-        return field.Text("url") is { Length: > 0 } url ? url : field.Text("uri");
+        foreach (var nestedName in new[] { "url", "uri", "path", "data" })
+        {
+            var nested = field.Field(nestedName);
+            if (ImageSourceValue(nested) is { Length: > 0 } source) return source;
+        }
+        return "";
     }
 
     private static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch

@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.9 - 2026-11-12
+
+- Fixed image references with spaces, nested provider URL objects, and percent-encoded data payloads so the desktop viewer receives the actual image source.
+- Fixed updater staging cleanup by disposing the downloaded archive stream before removing its temporary transaction directory.
+- Added a mandatory disposable installed-app updater test to the desktop release workflow; it verifies replacement, restart health, and staging cleanup before packaging can publish.
+
 ## 0.3.8 - 2026-11-12
 
 - Reduced the conversation context bar to status and elapsed work only, shrinking its footprint and hiding Stop while idle.
