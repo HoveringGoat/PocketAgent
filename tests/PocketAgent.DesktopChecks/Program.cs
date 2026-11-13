@@ -26,10 +26,15 @@ internal static class Program
             if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
                 throw new InvalidOperationException("The desktop updater must parse its platform release tag.");
             var window = new MainWindow();
+            var settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+            settings.StartServerOnLaunch = false;
+            settings.CheckUpdatesOnStartup = false;
             if (window.FindName("StartButton") is not null || window.FindName("StopButton") is not null || window.FindName("Menu") is not null)
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
             if (window.FindName("PinButton") is null)
                 throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
+            if (Environment.GetCommandLineArgs().Contains("--interactive-image", StringComparer.OrdinalIgnoreCase))
+                return RunInteractiveImagePreview(window, root);
             foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
@@ -111,13 +116,15 @@ internal static class Program
                 [new("user", "userMessage", "User sample", "", "completed", now), new("agent", "agentMessage", "Assistant sample", "", "completed", now), new("tool", "commandExecution", "", "Tool sample", "completed", now)],
                 [new("approval", "item/commandExecution/requestApproval", JsonSerializer.SerializeToElement(new { reason = "Approval reason" }), ["decline"], true)],
                 "Error sample", "PocketAgent", root, "fixture", "inherit", null, null, null, null, null, false);
+            typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
             window.Show();
             var initialMeta = (TextBlock)window.FindName("ConversationMeta")!;
             if (string.IsNullOrWhiteSpace(initialMeta.Text))
                 throw new InvalidOperationException("The conversation status bar must identify the idle/no-selection state.");
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
             window.UpdateLayout();
-            var imageSource = $"data:image/png;base64,{Convert.ToBase64String(previewImageBytes)}";
+            var previewPath = Path.Combine(fixtureDirectory, "desktop-qr.png");
+            var imageSource = new Uri(previewPath).AbsoluteUri;
             var imageItem = new DisplayItem("image-item", "agentMessage", "Image output", "", "completed", now, null, [new DisplayImage("image", imageSource, "fixture image", "image/png")]);
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot with { Items = [imageItem] }]);
             window.UpdateLayout();
@@ -219,6 +226,25 @@ internal static class Program
             return 1;
         }
         finally { application.Shutdown(); }
+    }
+
+    private static int RunInteractiveImagePreview(MainWindow window, string root)
+    {
+        var imagePath = Path.Combine(root, "deadspace.png");
+        if (!File.Exists(imagePath)) throw new InvalidOperationException($"Preview image was not found: {imagePath}");
+        var now = DateTimeOffset.Now;
+        var snapshot = new ConversationSnapshot("interactive-image", "Interactive image preview", "completed", null,
+            [new DisplayItem("image-preview", "agentMessage", "This is a file-backed image from the current desktop build.", "", "completed", now, null,
+                [new DisplayImage("image-preview", imagePath, "deadspace.png", "image/png")])],
+            [], null, "PocketAgent", root, Environment.MachineName, "fixture", "inherit", null, null, null, null, false);
+        typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
+        ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
+        window.Show();
+        typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
+        window.Activate();
+        Console.WriteLine("Interactive image preview is open. Click 'View image: deadspace.png' and report what happens; close the window when done.");
+        System.Windows.Threading.Dispatcher.Run();
+        return 0;
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

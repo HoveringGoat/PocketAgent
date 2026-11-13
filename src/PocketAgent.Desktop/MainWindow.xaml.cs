@@ -859,7 +859,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var bytes = await Task.Run(() => ReadImageBytes(image.Source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
+            var bytes = await LoadImageBytes(image.Source);
             BitmapImage? bitmap;
             try { bitmap = DecodeImage(bytes); }
             catch (InvalidOperationException)
@@ -893,6 +893,18 @@ public partial class MainWindow : Window
             dialog.ShowDialog();
         }
         catch (Exception exception) { ErrorDisplay.Text = $"Image could not be viewed: {exception.Message}"; }
+    }
+
+    private async Task<byte[]> LoadImageBytes(string source)
+    {
+        if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => ReadImageBytes(source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
+        if (relay is not null && conversation is not null)
+        {
+            var image = await Conversations.ReadImage(conversation.Id, source);
+            return image.Bytes;
+        }
+        return await Task.Run(() => ReadImageBytes(source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
     }
 
     private void ShowUnsupportedImage(DisplayImage image, string imageKey, Button trigger, string label, byte[] bytes)
@@ -936,6 +948,7 @@ public partial class MainWindow : Window
             if (uri.Scheme is "http" or "https") throw new InvalidOperationException("Remote image URLs are not opened by PocketAgent.");
             if (uri.Scheme == Uri.UriSchemeFile) source = uri.LocalPath;
         }
+        source = Uri.UnescapeDataString(source);
         var full = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(workingDirectory, source));
         var root = Path.GetFullPath(workingDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Images must be inside the conversation working directory.");

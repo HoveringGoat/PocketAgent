@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.10 - 2026-11-12
+
+- Routed desktop file-backed image viewing through the same conversation image validation path used by Android, while retaining local data-URI decoding.
+- Added an interactive desktop image preview mode for manually verifying a real file-backed image through the rendered conversation button.
+- Replaced the malformed pin glyph with a recognizable pushpin silhouette.
+
 ## 0.3.9 - 2026-11-12
 
 - Fixed image references with spaces, nested provider URL objects, and percent-encoded data payloads so the desktop viewer receives the actual image source.
