@@ -35,6 +35,8 @@ internal static class Program
                 throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
             if (Environment.GetCommandLineArgs().Contains("--interactive-image", StringComparer.OrdinalIgnoreCase))
                 return RunInteractiveImagePreview(window, root);
+            if (Environment.GetCommandLineArgs().Contains("--interactive-pin", StringComparer.OrdinalIgnoreCase))
+                return RunInteractivePinPreview(window, root);
             foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
@@ -243,6 +245,29 @@ internal static class Program
         typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
         window.Activate();
         Console.WriteLine("Interactive image preview is open. Click 'View image: deadspace.png' and report what happens; close the window when done.");
+        System.Windows.Threading.Dispatcher.Run();
+        return 0;
+    }
+
+    private static int RunInteractivePinPreview(MainWindow window, string root)
+    {
+        var now = DateTimeOffset.Now;
+        var snapshot = new ConversationSnapshot("interactive-pin", "Pin icon preview", "completed", null,
+            [new DisplayItem("pin-preview", "agentMessage", "The pin button is shown in the conversation action row.", "", "completed", now)],
+            [], null, "PocketAgent", root, Environment.MachineName, "fixture", "inherit", null, null, null, null, false);
+        typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
+        ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
+        ((StackPanel)window.FindName("ConversationActions")!).IsEnabled = true;
+        ((TextBlock)window.FindName("ServerNameDisplay")!).Text = Environment.MachineName;
+        ((TextBlock)window.FindName("ConversationLocation")!).Text = root;
+        ((TextBlock)window.FindName("UsageDisplay")!).Text = "Preview";
+        ((TabControl)window.FindName("Navigation")!).SelectedIndex = 0;
+        window.Show();
+        typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
+        window.UpdateLayout();
+        CaptureWindow(window, Path.Combine(root, ".local", "previews", "desktop", "pin-preview.png"));
+        window.Activate();
+        Console.WriteLine("Interactive pin preview is open. Inspect the pushpin icon in the action row; close the window when finished.");
         System.Windows.Threading.Dispatcher.Run();
         return 0;
     }
