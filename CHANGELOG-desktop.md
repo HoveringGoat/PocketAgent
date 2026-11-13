@@ -2,7 +2,14 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
-## Unreleased
+## 0.3.7 - 2026-11-12
+
+- Compacted the Sessions header: conversation actions now sit beside New conversation, the selected directory appears beside the server machine, and the redundant conversation title strip is removed.
+- Restored the effective model and reasoning labels to the visible conversation context; Codex-configured/default model information is loaded when the server starts.
+- Added the desktop pin/unpin control for persisted conversation pin state.
+- Fixed inactive-conversation maintenance incorrectly archiving recent conversations created with legacy seconds-based timestamps.
+- Kept the Send action label stable during active turns and shortened the interruption action to Stop.
+- Added a mandatory pre-release test gate that blocks commits, packaging, and publication when focused session, network, or desktop checks fail.
 
 ## 0.3.6 - 2026-11-12
 

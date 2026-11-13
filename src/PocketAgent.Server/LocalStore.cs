@@ -197,7 +197,7 @@ public sealed class LocalStore
         command.Transaction = transaction;
         var excluded = activeIds.Select((id, index) => (Name: "$active" + index, Id: id)).ToArray();
         var exclusion = excluded.Length == 0 ? "" : $" AND id NOT IN ({string.Join(',', excluded.Select(item => item.Name))})";
-        command.CommandText = $"SELECT id FROM conversations WHERE archived=0 AND pinned=0 AND COALESCE(last_message_at,created_at)<$cutoff {exclusion} AND NOT EXISTS (SELECT 1 FROM scheduled_messages WHERE conversation_id=conversations.id AND status IN ('pending','dispatching'))";
+        command.CommandText = $"SELECT id FROM conversations WHERE archived=0 AND pinned=0 AND COALESCE(last_message_at,created_at * 1000)<$cutoff {exclusion} AND NOT EXISTS (SELECT 1 FROM scheduled_messages WHERE conversation_id=conversations.id AND status IN ('pending','dispatching'))";
         command.Parameters.AddWithValue("$cutoff", cutoff.ToUnixTimeMilliseconds());
         foreach (var item in excluded) command.Parameters.AddWithValue(item.Name, item.Id);
         var ids = new List<string>();

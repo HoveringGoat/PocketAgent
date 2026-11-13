@@ -251,6 +251,39 @@ function Invoke-Checked([string]$command, [string[]]$arguments, [string]$failure
     if ($exitCode -ne 0) { throw $failureMessage }
 }
 
+function Invoke-ReleaseTestGate([string]$dotnetCommand) {
+    $nodeTool = Get-Command node.exe -ErrorAction SilentlyContinue
+    $nodeCommand = if ($nodeTool) { $nodeTool.Source } else { $null }
+    if (!$nodeCommand) { throw 'The mandatory release test gate requires node.exe.' }
+
+    $networkChecksProject = Join-Path $projectRoot 'tests/PocketAgent.NetworkChecks/PocketAgent.NetworkChecks.csproj'
+    $desktopChecksProject = Join-Path $projectRoot 'tests/PocketAgent.DesktopChecks/PocketAgent.DesktopChecks.csproj'
+    $serverDll = Join-Path $projectRoot 'src/PocketAgent.Server/bin/Release/net10.0/PocketAgent.Server.dll'
+    $previousServerDll = $env:POCKETAGENT_TEST_SERVER_DLL
+    $previousNode = $env:POCKETAGENT_TEST_NODE
+    try {
+        Write-Output 'Running mandatory release test gate.'
+        Invoke-Checked $dotnetCommand @('restore', 'PocketAgent.slnx', '--locked-mode') 'Release test gate dependency restore failed for the solution.'
+        Invoke-Checked $dotnetCommand @('restore', $networkChecksProject, '--locked-mode') 'Release test gate dependency restore failed for NetworkChecks.'
+        Invoke-Checked $dotnetCommand @('restore', $desktopChecksProject, '--locked-mode') 'Release test gate dependency restore failed for DesktopChecks.'
+        Invoke-Checked $dotnetCommand @('build', 'PocketAgent.slnx', '--no-restore', '-c', 'Release') 'Release test gate solution build failed.'
+        Invoke-Checked $dotnetCommand @('build', $networkChecksProject, '--no-restore', '-c', 'Release') 'Release test gate NetworkChecks build failed.'
+        Invoke-Checked $dotnetCommand @('build', $desktopChecksProject, '--no-restore', '-c', 'Release') 'Release test gate DesktopChecks build failed.'
+        if (!(Test-Path -LiteralPath $serverDll)) { throw "Release test gate server assembly was not produced: $serverDll" }
+
+        $env:POCKETAGENT_TEST_SERVER_DLL = $serverDll
+        $env:POCKETAGENT_TEST_NODE = $nodeCommand
+        Invoke-Checked $nodeCommand @('--test', 'tests/conversation-options.test.mjs') 'Release test gate conversation/session tests failed.'
+        Invoke-Checked $dotnetCommand @('run', '--project', $networkChecksProject, '--no-build', '-c', 'Release') 'Release test gate NetworkChecks failed.'
+        Invoke-Checked $dotnetCommand @('run', '--project', $desktopChecksProject, '--no-build', '-c', 'Release') 'Release test gate DesktopChecks failed.'
+        Write-Output 'Mandatory release test gate passed.'
+    }
+    finally {
+        if ($null -eq $previousServerDll) { Remove-Item Env:POCKETAGENT_TEST_SERVER_DLL -ErrorAction SilentlyContinue } else { $env:POCKETAGENT_TEST_SERVER_DLL = $previousServerDll }
+        if ($null -eq $previousNode) { Remove-Item Env:POCKETAGENT_TEST_NODE -ErrorAction SilentlyContinue } else { $env:POCKETAGENT_TEST_NODE = $previousNode }
+    }
+}
+
 $desktopVersion = Get-ProjectVersion
 $androidVersion = Get-AndroidVersion
 if (!$Version) { $Version = if ($Target -eq 'Android') { $androidVersion } else { $desktopVersion } }
@@ -280,6 +313,9 @@ if ($Check) {
     exit 0
 }
 
+$bundledDotnet = Join-Path $projectRoot '.tools/dotnet/dotnet.exe'
+$dotnetCommand = if (Test-Path -LiteralPath $bundledDotnet) { (Resolve-Path $bundledDotnet).Path } else { (Get-Command dotnet).Source }
+Invoke-ReleaseTestGate $dotnetCommand
 if ($CommitChanges) { Invoke-ReleaseCommit $Version }
 $releaseCommit = Get-CurrentCommit
 Assert-ReleaseSource $releaseCommit

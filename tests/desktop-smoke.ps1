@@ -46,7 +46,7 @@ try {
     Wait-For { (Find-Id 'ConversationTitle').Current.Name -eq 'PocketAgent' } 'new conversation'
     Set-Value (Find-Id 'Composer') 'hold'
     Invoke-Element (Find-Id 'SendButton')
-    Wait-For { (Find-Id 'SendButton').Current.Name -eq 'Steer' } 'active turn'
+    Wait-For { (Find-Id 'SendButton').Current.Name -eq 'Send' } 'active turn'
     Set-Value (Find-Id 'Composer') 'Native desktop steering'
     Invoke-Element (Find-Id 'SendButton')
     Wait-For { $null -ne (Find-Name 'Native desktop steering') } 'steering acknowledgement'

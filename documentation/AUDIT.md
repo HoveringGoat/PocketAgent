@@ -4,9 +4,9 @@ Audit date: 2026-11-11. Source baseline: `83aadb0`; published desktop/Android ba
 
 ## Scope and evidence
 
-Reviewed pairing and authenticated transport, provider process lifecycle, conversation state and steering, schedules, native rendering, updater packaging/handoff/recovery, and release provenance. Reviewed source and the existing 0.2.2 package. No full test suite, live agent turn, phone test, installation replacement, public write, or new release was performed.
+Reviewed pairing and authenticated transport, provider process lifecycle, conversation state and steering, schedules, native rendering, updater packaging/handoff/recovery, and release provenance. Reviewed source and the existing 0.2.2 package. No full test suite, live agent turn, phone test, public write, or new release was performed.
 
-Implementation pass begun 2026-11-11: updater packaging/restart/rollback changes and release-source checks are now in the working tree. The focused solution build and a fresh desktop publish completed successfully; the packaged updater now launches far enough to validate its arguments. A full installed upgrade and failure-injection rollback remain to be tested on a disposable installation.
+Implementation pass begun 2026-11-11: updater packaging/restart/rollback changes and release-source checks are now in the working tree. The focused solution build and a fresh desktop publish completed successfully; the packaged updater now launches far enough to validate its arguments. A disposable installed-flow test was later run under `%LOCALAPPDATA%\Programs` with inherited install permissions.
 
 Two failures were independently verified:
 
@@ -49,7 +49,7 @@ Implementation status: the updater passes `--health-file` and `--update-version`
 
 The updater also runs from inside the installation being moved, with that folder as its working directory. Windows locks must be exercised in a packaged test. Download/checksum failures happen after the desktop has already closed and do not restart it.
 
-Implementation status: the desktop launches a temp copy, staging is created beside the install root, backup names are unique, and replacement exceptions attempt restoration. A full installed-flow test is still required. Installer-owned files remain a separate packaging concern.
+Implementation status: the desktop launches a temp copy, staging is created beside the install root, backup names are unique, and replacement exceptions attempt restoration. A freshly published updater successfully replaced a disposable install under `%LOCALAPPDATA%\Programs` without elevation; the real install was not modified. Installer-owned files remain a separate packaging concern.
 
 ### A4 - High: release tag points at unrelated source
 
@@ -88,6 +88,28 @@ Implementation status: manual checks now bypass the periodic-check preference. T
 The worker in `ScheduledMessages.ExecuteAsync` catches only `ApiException`. Database I/O errors, malformed provider payloads, or other unexpected exceptions can escape the background service. The host uses the default background-service exception behavior, which stops the application. If a job was claimed first, its outcome remains dispatching until restart converts it to uncertain.
 
 Implementation status: unexpected per-job exceptions are now logged and contained; unclaimed jobs retry, while jobs already marked dispatching become uncertain rather than being replayed. Persistence failures are logged separately. Worker health metrics/endpoint remain future work. Do not blindly retry a request whose acceptance is unknown.
+
+## Update incident findings - 2026-11-12
+
+### A12 - High: the observed failure came from an older updater binary
+
+The real `%TEMP%\PocketAgent-update.log` entries at 2026-11-11 23:23 and 2026-11-12 14:35 fail in `System.IO.FileSystem.MoveDirectory` while targeting `C:\Users\Spence\AppData\Local\Programs\PocketAgent\`. That is the pre-0.3.5 replacement implementation, which attempted to rename the live install root. The checked-in updater source and the 0.3.6 artifact instead use file-by-file backup/replacement.
+
+This was reproduced locally without touching the real installation: a freshly published updater replaced a disposable sibling directory under `%LOCALAPPDATA%\Programs` with the same inherited ACLs and exited successfully. The old log therefore does not establish a general AppData permission failure; it establishes that the updater process used by those failed attempts was stale relative to the current source. The release gate still needs an automated disposable updater run so a stale packaged binary cannot pass unnoticed.
+
+### A10 - High: inactivity maintenance archives recent legacy conversations
+
+Confirmed in the desktop/server 0.3.6 source: `LocalStore.SaveConversation` persists `created_at` as Unix seconds, while `last_message_at` and the inactivity cutoff use Unix milliseconds. `ArchiveInactive` compares `COALESCE(last_message_at,created_at)` directly against that millisecond cutoff. A conversation without the new message-activity field therefore appears old even when recently created. `ConversationMaintenance` runs once immediately after host startup, before its ten-minute timer; startup does not require loading those conversations into the in-memory active-state exclusions first.
+
+Read-only inspection of the affected local registry found seven conversation records, six archived. Five archived records had no `last_message_at` and creation times within the seven-day window, confirming the incorrect eligibility calculation. The cause of the sixth archive was not established. Existing message-time metadata remains present. A consistent SQLite backup was taken and passed `PRAGMA quick_check`; no conversation flags were changed during diagnosis. Registry retention does not independently verify every provider-owned transcript or preserve interrupted execution.
+
+Implemented in the working tree: archive eligibility now converts the seconds-based `created_at` value to milliseconds before comparing it with the millisecond cutoff. The existing restart and legacy-migration regressions now keep recent conversations visible while preserving seven-day inactivity behavior for genuinely old rows. Deliberately archived conversations are not unarchived by maintenance.
+
+### A11 - Medium: primary Send label has insufficient contrast
+
+Desktop 0.3.5 set `SendButton.Background` to pale green `#C1DAA6` and its intended foreground to dark `#111B17`. The application-wide implicit `TextBlock` style sets `Foreground` to `#C1DAA6`, overriding the inherited button foreground in the generated content text. The saved desktop switch preview visibly contains a pale green Send surface with an effectively invisible label. Existing desktop checks validate several transcript colors and reject dark labels globally, but do not assert contrast between the primary button's rendered label and surface. A valid dark label on the pale primary surface must be allowed by those checks.
+
+Implemented in the working tree: the button template now honors each button's foreground, preserves the pale primary Send surface with a dark label, and checks the rendered Send label in DesktopChecks. The shared hover state forces a light label against its darker hover surface.
 
 ## Requirements still incomplete
 

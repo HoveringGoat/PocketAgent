@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     private DesktopUpdate? pendingUpdate;
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
+    private string? providerModel;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
 
     public MainWindow()
@@ -330,6 +331,12 @@ public partial class MainWindow : Window
             ConnectionAddress.Text = settings.Host.ClientOrigin;
             SetServerToggle(true); SaveButton.IsEnabled = false;
             PermissionModeSetting.IsEnabled = false;
+            try
+            {
+                var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
+                providerModel = status.ConfiguredModel ?? status.DefaultModel;
+            }
+            catch { providerModel = null; }
             await Refresh();
         });
         transitioning = false; SetServerToggle(relay is not null);
@@ -416,7 +423,8 @@ public partial class MainWindow : Window
             finally { await running.DisposeAsync(); }
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
-        ConversationPanel.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+        providerModel = null;
+        ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         SetServerToggle(false); SaveButton.IsEnabled = true;
@@ -459,7 +467,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+                ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -502,18 +510,21 @@ public partial class MainWindow : Window
             snapshot = MergeOptimistic(snapshot);
             conversation = snapshot;
             ConversationPanel.IsEnabled = true;
+            ConversationActions.IsEnabled = true;
             ServerNameDisplay.Text = snapshot.HostName;
             ConversationLocation.Text = snapshot.WorkingDirectory;
-            ModelButton.ToolTip = snapshot.Model is null ? "Model: Codex settings\nReasoning: model default" : $"Model: {snapshot.Model}\nReasoning: {snapshot.ReasoningEffort ?? "model default"}";
+            var effectiveModel = snapshot.Model ?? providerModel;
+            var modelLabel = effectiveModel is null ? "Codex settings" : effectiveModel;
+            var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
+            ModelButton.ToolTip = $"Model: {modelLabel}\nReasoning: {reasoningLabel}";
+            PinButton.Content = snapshot.Pinned ? "★" : "☆";
+            PinButton.ToolTip = snapshot.Pinned ? "Unpin conversation" : "Pin conversation";
+            AutomationProperties.SetName(PinButton, snapshot.Pinned ? "Unpin conversation" : "Pin conversation");
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
-            var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
-                $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
-            var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
-                snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-            ConversationMeta.Text = $"{snapshot.Status}{work} · {policy}";
+            ConversationMeta.Text = FormatConversationMeta(snapshot);
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
-            SendButton.Content = snapshot.ActiveTurnId is null ? "Send" : "Steer";
+            SendButton.Content = "Send";
             SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
             ScheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
             UpdateScheduledSummary(snapshot.Id);
@@ -553,7 +564,21 @@ public partial class MainWindow : Window
         if (conversation is null) return;
         var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" : conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
         var policy = conversation.SandboxMode is null ? $"{CodexPermissions.Label(conversation.PermissionMode)} selected · provider policy checked on start/resume" : $"Provider: {conversation.SandboxMode} · approvals: {conversation.ApprovalPolicy ?? "not reported"}";
-        ConversationMeta.Text = $"{conversation.Status}{work} · {policy}";
+            var effectiveModel = conversation.Model ?? providerModel;
+            var modelLabel = effectiveModel is null ? "Codex settings" : effectiveModel;
+            var reasoningLabel = conversation.ReasoningEffort ?? "model default";
+            ConversationMeta.Text = $"{conversation.Status}{work} · model {modelLabel} · reasoning {reasoningLabel} · {policy}";
+    }
+
+    private string FormatConversationMeta(ConversationSnapshot snapshot)
+    {
+        var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
+            snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
+        var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
+            $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
+        var modelLabel = snapshot.Model ?? providerModel ?? "Codex settings";
+        var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
+        return $"{snapshot.Status}{work} · model {modelLabel} · reasoning {reasoningLabel} · {policy}";
     }
 
     private void RenderDevices()
@@ -653,6 +678,12 @@ public partial class MainWindow : Window
         var id = conversation.Id;
         if (AppDialogs.Show(this, "Archive this conversation and cancel its pending scheduled messages? You can restore it from Archived.", "Archive conversation", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         await Conversations.Archive(id, true); await Refresh();
+    });
+    private async void TogglePinned(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (conversation is null) return;
+        await Conversations.SetPinned(conversation.Id, !conversation.Pinned);
+        await Refresh();
     });
     private async void ShowArchived(object sender, RoutedEventArgs e) => await Act(async () =>
     {
@@ -799,7 +830,7 @@ public partial class MainWindow : Window
             Content = viewedImages.Contains(imageKey) ? $"Viewed image: {label}" : $"View image: {label}",
             ToolTip = image.Source,
             HorizontalAlignment = HorizontalAlignment.Left,
-            Foreground = Brushes.LightGreen,
+            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#C1DAA6")),
             Margin = new Thickness(8, 0, 8, 10)
         };
         button.Click += async (_, _) => await ShowImage(item, image, imageKey, button, label);
@@ -992,6 +1023,7 @@ public partial class MainWindow : Window
     {
         if (relay is null) throw new InvalidOperationException("Start the server first.");
         var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
+        providerModel = status.ConfiguredModel ?? status.DefaultModel;
         var binary = relay.Services.GetRequiredService<CodexConnection>().Executable;
         ProviderDisplay.Text = $"{(status.SignInAvailable ? "Desktop sign-in found" : "Desktop sign-in missing")}\nModel: {status.ConfiguredModel ?? status.DefaultModel ?? "provider default"}\n{(status.ConfiguredModelInCatalog == false ? "Configured model is absent from this executable's catalog. " : "")}Inference has not been verified.\n{binary?.Source}\n{binary?.Path}";
     });

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using PocketAgent;
@@ -26,6 +27,8 @@ internal static class Program
             var window = new MainWindow();
             if (window.FindName("StartButton") is not null || window.FindName("StopButton") is not null || window.FindName("Menu") is not null)
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
+            if (window.FindName("PinButton") is null)
+                throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
             var serverToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ServerToggle")!;
             if (serverToggle.IsChecked == true || !Equals(serverToggle.Content, "OFF"))
                 throw new InvalidOperationException("The server switch must start in the OFF state.");
@@ -69,6 +72,7 @@ internal static class Program
             sessions.SelectedIndex = 0;
             ((TextBlock)window.FindName("ServerNameDisplay")).Text = "WORK-PC";
             ((TextBlock)window.FindName("ConversationLocation")).Text = "C:\\Github\\PocketAgent";
+            ((TextBlock)window.FindName("UsageDisplay")).Text = "5hr: 63% · weekly: 8%";
             var now = DateTimeOffset.Now;
             var snapshot = new ConversationSnapshot("readability", "Readability", "completed", null,
                 [new("user", "userMessage", "User sample", "", "completed", now), new("agent", "agentMessage", "Assistant sample", "", "completed", now), new("tool", "commandExecution", "", "Tool sample", "completed", now)],
@@ -77,6 +81,19 @@ internal static class Program
             window.Show();
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
             window.UpdateLayout();
+            var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
+            if (!conversationMeta.Contains("model Codex settings", StringComparison.Ordinal) || !conversationMeta.Contains("reasoning model default", StringComparison.Ordinal))
+                throw new InvalidOperationException("The conversation context must report the effective model and reasoning default.");
+            var sendButton = (Button)window.FindName("SendButton")!;
+            if (!Equals(sendButton.Content, "Send"))
+                throw new InvalidOperationException("The send action label must remain Send.");
+            var interruptButton = (Button)window.FindName("InterruptButton")!;
+            if (!Equals(interruptButton.Content, "Stop"))
+                throw new InvalidOperationException("The interruption action label must be Stop.");
+            sendButton.ApplyTemplate(); window.UpdateLayout();
+            var sendContent = Descendants(sendButton).OfType<ContentPresenter>().Single();
+            ColorIs(TextElement.GetForeground(sendContent), "#111B17", "Primary Send label");
             if (Environment.GetCommandLineArgs().Contains("--toggle-preview"))
                 CaptureSwitch(serverToggle, root, "off");
             setServerToggle.Invoke(window, [true, null, true]);
@@ -103,7 +120,7 @@ internal static class Program
                 window.UpdateLayout();
                 CheckDarkSurface((TabControl)window.FindName("Navigation"), screen);
                 foreach (var label in Descendants(window).OfType<TextBlock>().Where(label => label.IsVisible && label.Text.Length > 0))
-                    if (label.Foreground is SolidColorBrush brush && brush.Color.R < 80 && brush.Color.G < 80 && brush.Color.B < 80)
+                    if (label.Text != "Send" && label.Foreground is SolidColorBrush brush && brush.Color.R < 80 && brush.Color.G < 80 && brush.Color.B < 80)
                         throw new InvalidOperationException($"Unreadable dark text on screen {screen}: {label.Text}");
             }
             var permissions = (ComboBox)window.FindName("PermissionModeSetting");
