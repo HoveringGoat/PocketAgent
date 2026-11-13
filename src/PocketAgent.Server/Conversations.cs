@@ -617,15 +617,23 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     private static void AddStructuredImage(List<DisplayImage> images, JsonElement value, string id)
     {
-        var source = value.Text("path");
-        if (source.Length == 0) source = value.Text("url");
-        if (source.Length == 0) source = value.Text("image_url");
-        if (source.Length == 0) source = value.Text("data");
+        var source = ImageSource(value, "path");
+        if (source.Length == 0) source = ImageSource(value, "url");
+        if (source.Length == 0) source = ImageSource(value, "image_url");
+        if (source.Length == 0) source = ImageSource(value, "data");
         if (source.Length == 0) return;
-        var mime = value.Text("mimeType");
+        var mime = ImageSource(value, "mimeType");
         var alt = value.Text("alt");
         if (alt.Length == 0) alt = value.Text("caption");
         images.Add(new(id, source, alt, mime.Length == 0 ? null : mime));
+    }
+
+    private static string ImageSource(JsonElement value, string name)
+    {
+        var field = value.Field(name);
+        if (field.ValueKind == JsonValueKind.String) return field.GetString() ?? "";
+        if (field.ValueKind != JsonValueKind.Object) return "";
+        return field.Text("url") is { Length: > 0 } url ? url : field.Text("uri");
     }
 
     private static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch

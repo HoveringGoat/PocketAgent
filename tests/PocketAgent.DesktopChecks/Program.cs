@@ -18,6 +18,7 @@ internal static class Program
         Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", Path.Combine(root, ".local", "desktop-color-" + Guid.NewGuid().ToString("N")));
         var application = new App();
         application.InitializeComponent();
+        SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
             var parser = typeof(UpdateService).GetMethod("TryDesktopVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -29,6 +30,9 @@ internal static class Program
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
             if (window.FindName("PinButton") is null)
                 throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
+            foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
+                if (((Button)window.FindName(name)!).ContentTemplate is null)
+                    throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
             var serverToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ServerToggle")!;
             if (serverToggle.IsChecked == true || !Equals(serverToggle.Content, "OFF"))
                 throw new InvalidOperationException("The server switch must start in the OFF state.");
@@ -54,14 +58,26 @@ internal static class Program
             using (var data = QRCoder.QRCodeGenerator.GenerateQrCode(fixturePayload, QRCoder.QRCodeGenerator.ECCLevel.M))
             using (var qr = new QRCoder.PngByteQRCode(data)) File.WriteAllBytes(Path.Combine(fixtureDirectory, "desktop-qr.png"), qr.GetGraphic(6));
             File.WriteAllText(Path.Combine(fixtureDirectory, "desktop-qr.txt"), fixturePayload);
+            var previewImageBytes = File.ReadAllBytes(Path.Combine(fixtureDirectory, "desktop-qr.png"));
             var imageBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
             var imagePath = Path.Combine(fixtureDirectory, "fixture-image.png");
             File.WriteAllBytes(imagePath, imageBytes);
             var imageReader = typeof(MainWindow).GetMethod("ReadImageBytes", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var imageDecoder = typeof(MainWindow).GetMethod("DecodeImage", BindingFlags.NonPublic | BindingFlags.Static)!;
             foreach (var source in new[] { "fixture-image.png", new Uri(imagePath).AbsoluteUri, $"data:image/png;base64,{Convert.ToBase64String(imageBytes)}" })
             {
                 var decoded = (byte[])imageReader.Invoke(null, [source, fixtureDirectory])!;
                 if (!decoded.SequenceEqual(imageBytes)) throw new InvalidOperationException($"Desktop image loading failed for {source}.");
+                var bitmap = (BitmapImage)imageDecoder.Invoke(null, [decoded])!;
+                if (bitmap.PixelWidth != 1 || bitmap.PixelHeight != 1)
+                    throw new InvalidOperationException($"Desktop image rendering failed for {source}.");
+            }
+            var renderItem = typeof(Conversations).GetMethod("Render", BindingFlags.NonPublic | BindingFlags.Static)!;
+            using (var structuredImage = JsonDocument.Parse("{\"id\":\"image-item\",\"type\":\"agentMessage\",\"status\":\"completed\",\"content\":[{\"type\":\"image\",\"image_url\":{\"url\":\"fixture-image.png\"},\"mimeType\":\"image/png\"}]}"))
+            {
+                var renderedImage = (DisplayItem)renderItem.Invoke(null, [structuredImage.RootElement])!;
+                if (renderedImage.Images is not [{ Source: "fixture-image.png", MimeType: "image/png" }])
+                    throw new InvalidOperationException("Structured image URLs must survive provider payload normalization.");
             }
             ((TabControl)window.FindName("Navigation")).SelectedIndex = 0;
             ((Grid)window.FindName("ConversationPanel")).IsEnabled = true;
@@ -79,18 +95,52 @@ internal static class Program
                 [new("approval", "item/commandExecution/requestApproval", JsonSerializer.SerializeToElement(new { reason = "Approval reason" }), ["decline"], true)],
                 "Error sample", "PocketAgent", root, "fixture", "inherit", null, null, null, null, null, false);
             window.Show();
+            var initialMeta = (TextBlock)window.FindName("ConversationMeta")!;
+            if (string.IsNullOrWhiteSpace(initialMeta.Text))
+                throw new InvalidOperationException("The conversation status bar must identify the idle/no-selection state.");
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
             window.UpdateLayout();
+            var imageSource = $"data:image/png;base64,{Convert.ToBase64String(previewImageBytes)}";
+            var imageItem = new DisplayItem("image-item", "agentMessage", "Image output", "", "completed", now, null, [new DisplayImage("image", imageSource, "fixture image", "image/png")]);
+            typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot with { Items = [imageItem] }]);
+            window.UpdateLayout();
+            var imageButton = Descendants(transcript).OfType<Button>().Single(button => button.Content?.ToString()?.StartsWith("View image:", StringComparison.Ordinal) == true);
+            var closeImageTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            closeImageTimer.Tick += (_, _) =>
+            {
+                var imageDialog = Application.Current.Windows.OfType<Window>().SingleOrDefault(candidate => candidate.Title == "Image");
+                if (imageDialog is null) return;
+                if (Environment.GetCommandLineArgs().Contains("--image-preview"))
+                    CaptureWindow(imageDialog, Path.Combine(root, ".local", "previews", "desktop", "desktop-image-dialog.png"));
+                closeImageTimer.Stop(); imageDialog.Close();
+            };
+            closeImageTimer.Start();
+            var showImage = typeof(MainWindow).GetMethod("ShowImage", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var showImageTask = (Task)showImage.Invoke(window, [imageItem, imageItem.Images![0], $"{imageItem.Id}:{imageSource}", imageButton, "fixture image"])!;
+            var imageFrame = new System.Windows.Threading.DispatcherFrame();
+            _ = showImageTask.ContinueWith(_ => window.Dispatcher.BeginInvoke(new Action(() => imageFrame.Continue = false)), TaskScheduler.Default);
+            System.Windows.Threading.Dispatcher.PushFrame(imageFrame);
+            if (!showImageTask.IsCompleted)
+                throw new InvalidOperationException($"Desktop image viewing did not complete. Status={showImageTask.Status}");
+            if (showImageTask.IsFaulted)
+                throw new InvalidOperationException($"Desktop image viewing faulted: {showImageTask.Exception}");
+            if (!Equals(imageButton.Content, "Viewed image: fixture image"))
+                throw new InvalidOperationException($"Desktop image viewing must open a decoded image dialog and retain viewed state. Content={imageButton.Content}; error={(window.FindName("ErrorDisplay") as TextBlock)?.Text}");
+            typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
+            window.UpdateLayout();
+            var metaSurface = (Border)window.FindName("ConversationMetaSurface")!;
+            if (metaSurface.ActualHeight > 48)
+                throw new InvalidOperationException("The conversation context bar must stay compact.");
             var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
-            if (!conversationMeta.Contains("model Codex settings", StringComparison.Ordinal) || !conversationMeta.Contains("reasoning model default", StringComparison.Ordinal))
-                throw new InvalidOperationException("The conversation context must report the effective model and reasoning default.");
+            if (!conversationMeta.Contains("completed", StringComparison.Ordinal) || conversationMeta.Contains("model", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("selected", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("provider policy", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The conversation context must stay to status and elapsed work only.");
             var sendButton = (Button)window.FindName("SendButton")!;
             if (!Equals(sendButton.Content, "Send"))
                 throw new InvalidOperationException("The send action label must remain Send.");
             var interruptButton = (Button)window.FindName("InterruptButton")!;
-            if (!Equals(interruptButton.Content, "Stop"))
-                throw new InvalidOperationException("The interruption action label must be Stop.");
+            if (interruptButton.ContentTemplate is null || interruptButton.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("The interruption action must use a hidden-when-idle vector icon.");
             sendButton.ApplyTemplate(); window.UpdateLayout();
             var sendContent = Descendants(sendButton).OfType<ContentPresenter>().Single();
             ColorIs(TextElement.GetForeground(sendContent), "#111B17", "Primary Send label");
@@ -201,6 +251,17 @@ internal static class Program
         var fullEncoder = new PngBitmapEncoder(); fullEncoder.Frames.Add(BitmapFrame.Create(full));
         using var fullOutput = File.Create(Path.Combine(directory, $"desktop-switch-{state}.png"));
         fullEncoder.Save(fullOutput);
+    }
+
+    private static void CaptureWindow(Window window, string path)
+    {
+        window.UpdateLayout();
+        var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        image.Render(window);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var output = File.Create(path);
+        encoder.Save(output);
     }
 
     private static void CheckDarkSurface(FrameworkElement element, int screen)

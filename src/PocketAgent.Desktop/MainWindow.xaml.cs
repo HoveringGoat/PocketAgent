@@ -424,7 +424,7 @@ public partial class MainWindow : Window
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
         providerModel = null;
-        ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+        ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Collapsed; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         SetServerToggle(false); SaveButton.IsEnabled = true;
@@ -467,7 +467,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; ConversationLocation.Text = ""; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+                ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Collapsed; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -524,6 +524,7 @@ public partial class MainWindow : Window
             ConversationMeta.Text = FormatConversationMeta(snapshot);
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
+            InterruptButton.Visibility = snapshot.ActiveTurnId is null ? Visibility.Collapsed : Visibility.Visible;
             SendButton.Content = "Send";
             SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
             ScheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
@@ -562,6 +563,14 @@ public partial class MainWindow : Window
     private void UpdateElapsedDisplay()
     {
         if (conversation is null) return;
+        var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
+            conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
+        ConversationMeta.Text = FormatConversationMeta(conversation);
+    }
+
+    private void UpdateElapsedDisplayLegacy()
+    {
+        if (conversation is null) return;
         var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" : conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
         var policy = conversation.SandboxMode is null ? $"{CodexPermissions.Label(conversation.PermissionMode)} selected · provider policy checked on start/resume" : $"Provider: {conversation.SandboxMode} · approvals: {conversation.ApprovalPolicy ?? "not reported"}";
             var effectiveModel = conversation.Model ?? providerModel;
@@ -571,6 +580,14 @@ public partial class MainWindow : Window
     }
 
     private string FormatConversationMeta(ConversationSnapshot snapshot)
+    {
+        var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
+            snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
+        var status = string.IsNullOrWhiteSpace(snapshot.Status) ? "idle" : snapshot.Status;
+        return $"{status}{work}";
+    }
+
+    private string FormatConversationMetaLegacy(ConversationSnapshot snapshot)
     {
         var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
             snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
@@ -597,7 +614,7 @@ public partial class MainWindow : Window
     private async void SessionSelected(object sender, SelectionChangedEventArgs e)
     {
         if (changingList || SessionList.SelectedItem is not SessionEntry entry) return;
-        selected = entry.Id; conversation = null; rendered = ""; historyCursors.Remove(selected); olderHistory.Remove(selected);
+        selected = entry.Id; conversation = null; rendered = ""; InterruptButton.Visibility = Visibility.Collapsed; ConversationMeta.Text = "Loading conversation..."; historyCursors.Remove(selected); olderHistory.Remove(selected);
         settingDraft = true; Composer.Text = drafts.GetValueOrDefault(selected, ""); settingDraft = false;
         await Refresh();
     }
@@ -842,9 +859,13 @@ public partial class MainWindow : Window
         try
         {
             var bytes = await Task.Run(() => ReadImageBytes(image.Source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
-            using var stream = new MemoryStream(bytes);
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
+            BitmapImage? bitmap;
+            try { bitmap = DecodeImage(bytes); }
+            catch (InvalidOperationException)
+            {
+                ShowUnsupportedImage(image, imageKey, trigger, label, bytes);
+                return;
+            }
             viewedImages.Add(imageKey);
             trigger.Content = $"Viewed image: {label}";
             var panel = new StackPanel { Margin = new Thickness(16) };
@@ -861,14 +882,7 @@ public partial class MainWindow : Window
                 viewer.MaxHeight = expanded ? 700 : double.PositiveInfinity;
             };
             var external = new Button { Content = "Open in external viewer", Margin = new Thickness(0, 0, 8, 10), Padding = new Thickness(12, 5, 12, 5) };
-            external.Click += (_, _) =>
-            {
-                var extension = ImageExtension(image);
-                var path = Path.Combine(Path.GetTempPath(), $"PocketAgent-image-{Guid.NewGuid():N}{extension}");
-                File.WriteAllBytes(path, bytes);
-                Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
-                external.Content = "Opened externally";
-            };
+            external.Click += (_, _) => { OpenExternalImage(image, bytes); external.Content = "Opened externally"; };
             var actions = new StackPanel { Orientation = Orientation.Horizontal };
             actions.Children.Add(expand);
             actions.Children.Add(external);
@@ -878,6 +892,29 @@ public partial class MainWindow : Window
             dialog.ShowDialog();
         }
         catch (Exception exception) { ErrorDisplay.Text = $"Image could not be viewed: {exception.Message}"; }
+    }
+
+    private void ShowUnsupportedImage(DisplayImage image, string imageKey, Button trigger, string label, byte[] bytes)
+    {
+        viewedImages.Add(imageKey);
+        trigger.Content = $"Viewed image: {label}";
+        var open = new Button { Content = "Open in external viewer", Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(12, 5, 12, 5) };
+        var dialog = new Window { Title = "Image", Owner = this, Width = 520, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        open.Click += (_, _) => { OpenExternalImage(image, bytes); open.Content = "Opened externally"; };
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = $"Viewed image: {label}", Foreground = Brushes.LightGreen });
+        panel.Children.Add(new TextBlock { Text = "This image format is not supported by the embedded desktop preview. Open it in the Windows default viewer.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) });
+        panel.Children.Add(open);
+        dialog.Content = panel;
+        dialog.ShowDialog();
+    }
+
+    private static void OpenExternalImage(DisplayImage image, byte[] bytes)
+    {
+        var extension = ImageExtension(image);
+        var path = Path.Combine(Path.GetTempPath(), $"PocketAgent-image-{Guid.NewGuid():N}{extension}");
+        File.WriteAllBytes(path, bytes);
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
     }
 
     private static byte[] ReadImageBytes(string source, string workingDirectory)
@@ -902,6 +939,20 @@ public partial class MainWindow : Window
         if (!info.Exists) throw new FileNotFoundException("The image is no longer available on the desktop.");
         if (info.Length > 16 * 1024 * 1024) throw new InvalidOperationException("That image is too large to view.");
         return File.ReadAllBytes(full);
+    }
+
+    private static BitmapImage DecodeImage(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.StreamSource = stream;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        if (bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0)
+            throw new InvalidOperationException("The image has no displayable dimensions.");
+        return bitmap;
     }
 
     private static string ImageExtension(DisplayImage image)

@@ -2,6 +2,17 @@
 
 This file covers the Windows desktop application and the local PocketAgent server.
 
+## Unreleased
+
+## 0.3.8 - 2026-11-12
+
+- Reduced the conversation context bar to status and elapsed work only, shrinking its footprint and hiding Stop while idle.
+- Made the context bar identify the idle/no-selection state instead of rendering an empty strip.
+- Replaced conversation action glyphs with the Android-style edit, robot, pin, archive, unarchive, and stop vector icons.
+- Softened the Send hover color so it stays close to the primary pale-green surface.
+- Fixed structured provider image URLs (`image_url.url`/`uri`) being dropped before the desktop viewer received them; desktop checks now exercise byte loading, WPF decoding, and the modal viewer path.
+- Unsupported embedded formats now get an explicit desktop dialog with an external-viewer action instead of failing silently.
+
 ## 0.3.7 - 2026-11-12
 
 - Compacted the Sessions header: conversation actions now sit beside New conversation, the selected directory appears beside the server machine, and the redundant conversation title strip is removed.
