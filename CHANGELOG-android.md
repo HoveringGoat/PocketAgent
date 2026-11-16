@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.4 - 2026-11-16
+
+- Allow archiving and restoring an idle conversation from PocketAgent metadata when its Codex thread is unavailable.
+- Limit Android session lists and conversation operations to conversations granted to that paired device.
+
 ## 0.4.3 - 2026-11-15
 
 - Keep sessions and usage visible when a selected Codex thread is unavailable; preserve the local conversation metadata and show the conversation as disconnected instead of aborting the entire refresh.

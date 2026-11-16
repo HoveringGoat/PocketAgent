@@ -5,6 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace PocketAgent;
 
 public sealed record Device(string Id, string Name, DateTimeOffset ExpiresAt);
+public sealed record ConversationAccess(string ConversationId, string DeviceId, DateTimeOffset GrantedAt);
 public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
 public sealed record ScheduledMessage(string Id, string ConversationId, string Text, DateTimeOffset DueAt, DateTimeOffset NextAttemptAt,
     string Status, string Reason, string? Error, [property: System.Text.Json.Serialization.JsonIgnore] string? DeviceId);
@@ -27,6 +28,7 @@ public sealed class LocalStore
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at INTEGER NOT NULL, repository TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS conversation_access (conversation_id TEXT NOT NULL, device_id TEXT NOT NULL, granted_at INTEGER NOT NULL, PRIMARY KEY(conversation_id, device_id));
             CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, text TEXT NOT NULL, due_at INTEGER NOT NULL, next_at INTEGER NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, error TEXT, device_id TEXT);
             CREATE TABLE IF NOT EXISTS message_deliveries (conversation_id TEXT NOT NULL, client_message_id TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, schedule_id TEXT, error TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(conversation_id,client_message_id));
             CREATE TABLE IF NOT EXISTS message_times (conversation_id TEXT NOT NULL, item_id TEXT NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY(conversation_id,item_id));
@@ -121,8 +123,9 @@ public sealed class LocalStore
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE scheduled_messages SET status='canceled', error='Device access revoked.' WHERE device_id IS NOT NULL AND status='pending'; DELETE FROM devices";
+        command.CommandText = "UPDATE scheduled_messages SET status='canceled', error='Device access revoked.' WHERE device_id IS NOT NULL AND status='pending'; DELETE FROM conversation_access; DELETE FROM devices";
         command.ExecuteNonQuery();
+        ServerDiagnostics.Log("access", LogLevel.Information, "all_devices_revoked");
     }
 
     public Device[] Devices()
@@ -151,15 +154,18 @@ public sealed class LocalStore
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE scheduled_messages SET status='canceled', error='Device access revoked.' WHERE device_id=$id AND status='pending'; DELETE FROM devices WHERE id=$id";
+        command.CommandText = "UPDATE scheduled_messages SET status='canceled', error='Device access revoked.' WHERE device_id=$id AND status='pending'; DELETE FROM conversation_access WHERE device_id=$id; DELETE FROM devices WHERE id=$id";
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
+        ServerDiagnostics.Log("access", LogLevel.Information, $"device_revoked device_id={id}");
     }
 
-    public void SaveConversation(string id, string title, string workingDirectory, string? model, string? reasoningEffort)
+    public void SaveConversation(string id, string title, string workingDirectory, string? model, string? reasoningEffort, string? deviceId = null)
     {
         using var connection = Open();
+        using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "INSERT INTO conversations (id,title,created_at,repository,model,reasoning_effort) VALUES ($id,$title,$created,$repository,$model,$reasoning)";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$title", title);
@@ -168,19 +174,78 @@ public sealed class LocalStore
         command.Parameters.AddWithValue("$model", (object?)model ?? DBNull.Value);
         command.Parameters.AddWithValue("$reasoning", (object?)reasoningEffort ?? DBNull.Value);
         command.ExecuteNonQuery();
+        if (deviceId is not null)
+        {
+            command.CommandText = "INSERT INTO conversation_access(conversation_id,device_id,granted_at) VALUES($conversation,$device,$granted)";
+            command.Parameters.Clear();
+            command.Parameters.AddWithValue("$conversation", id);
+            command.Parameters.AddWithValue("$device", deviceId);
+            command.Parameters.AddWithValue("$granted", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+        ServerDiagnostics.Log("conversation", LogLevel.Information, $"conversation_saved conversation_id={id} owner={(deviceId is null ? "desktop" : "device")}");
     }
 
-    public ConversationReference[] Conversations(bool includeArchived = false)
+    public ConversationReference[] Conversations(bool includeArchived = false, string? deviceId = null)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,title,created_at,repository,model,archived,reasoning_effort,pinned,last_message_at FROM conversations WHERE $include=1 OR archived=0 ORDER BY created_at DESC,id";
+        command.CommandText = "SELECT id,title,created_at,repository,model,archived,reasoning_effort,pinned,last_message_at FROM conversations WHERE ($include=1 OR archived=0) AND ($device IS NULL OR EXISTS (SELECT 1 FROM conversation_access a WHERE a.conversation_id=conversations.id AND a.device_id=$device)) ORDER BY created_at DESC,id";
         command.Parameters.AddWithValue("$include", includeArchived ? 1 : 0);
+        command.Parameters.AddWithValue("$device", (object?)deviceId ?? DBNull.Value);
         using var reader = command.ExecuteReader();
         var rows = new List<ConversationReference>();
         while (reader.Read())
             rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2)), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5) != 0, reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7) != 0, reader.IsDBNull(8) ? null : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8))));
         return [.. rows];
+    }
+
+    public bool HasConversationAccess(string conversationId, string deviceId)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS (SELECT 1 FROM conversation_access a JOIN devices d ON d.id=a.device_id WHERE a.conversation_id=$conversation AND a.device_id=$device AND d.expires_at>$now)";
+        command.Parameters.AddWithValue("$conversation", conversationId);
+        command.Parameters.AddWithValue("$device", deviceId);
+        command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0;
+    }
+
+    public void GrantConversationAccess(string conversationId, string deviceId)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "INSERT OR IGNORE INTO conversation_access(conversation_id,device_id,granted_at) SELECT $conversation,$device,$granted WHERE EXISTS (SELECT 1 FROM conversations WHERE id=$conversation) AND EXISTS (SELECT 1 FROM devices WHERE id=$device AND expires_at>$now)";
+        command.Parameters.AddWithValue("$conversation", conversationId);
+        command.Parameters.AddWithValue("$device", deviceId);
+        command.Parameters.AddWithValue("$granted", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (command.ExecuteNonQuery() != 1) throw new ApiException(404, "The conversation or device was not found.");
+        ServerDiagnostics.Log("access", LogLevel.Information, $"conversation_grant conversation_id={conversationId} device_id={deviceId}");
+    }
+
+    public void RevokeConversationAccess(string conversationId, string deviceId)
+    {
+        using var connection = Open(); using var transaction = connection.BeginTransaction(); using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM conversation_access WHERE conversation_id=$conversation AND device_id=$device";
+        command.Parameters.AddWithValue("$conversation", conversationId);
+        command.Parameters.AddWithValue("$device", deviceId);
+        command.ExecuteNonQuery();
+        command.CommandText = "UPDATE scheduled_messages SET status='canceled',error='Conversation access revoked.' WHERE conversation_id=$conversation AND device_id=$device AND status='pending'";
+        command.ExecuteNonQuery();
+        transaction.Commit();
+        ServerDiagnostics.Log("access", LogLevel.Information, $"conversation_revoke conversation_id={conversationId} device_id={deviceId}");
+    }
+
+    public ConversationAccess[] ConversationAccess(string conversationId)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT conversation_id,device_id,granted_at FROM conversation_access WHERE conversation_id=$conversation ORDER BY granted_at,device_id";
+        command.Parameters.AddWithValue("$conversation", conversationId);
+        using var reader = command.ExecuteReader();
+        var rows = new List<ConversationAccess>();
+        while (reader.Read()) rows.Add(new(reader.GetString(0), reader.GetString(1), DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(2))));
+        return rows.ToArray();
     }
 
     public void SetPinned(string id, bool pinned)
@@ -265,11 +330,12 @@ public sealed class LocalStore
         return Scheduled(conversationId).FirstOrDefault(row => row.Id == id) ?? throw new ApiException(409, "The conversation was archived before the message was scheduled.");
     }
 
-    public ScheduledMessage[] Scheduled(string? conversationId = null)
+    public ScheduledMessage[] Scheduled(string? conversationId = null, string? deviceId = null)
     {
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "SELECT s.id,s.conversation_id,s.text,s.due_at,s.next_at,s.status,s.reason,s.error,s.device_id FROM scheduled_messages s JOIN conversations c ON c.id=s.conversation_id WHERE ($conversation IS NULL OR c.id=$conversation) ORDER BY s.due_at,s.id";
+        command.CommandText = "SELECT s.id,s.conversation_id,s.text,s.due_at,s.next_at,s.status,s.reason,s.error,s.device_id FROM scheduled_messages s JOIN conversations c ON c.id=s.conversation_id WHERE ($conversation IS NULL OR c.id=$conversation) AND ($device IS NULL OR EXISTS (SELECT 1 FROM conversation_access a WHERE a.conversation_id=c.id AND a.device_id=$device)) ORDER BY s.due_at,s.id";
         command.Parameters.AddWithValue("$conversation", (object?)conversationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$device", (object?)deviceId ?? DBNull.Value);
         using var reader = command.ExecuteReader(); var rows = new List<ScheduledMessage>();
         while (reader.Read()) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(3)), DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4)), reader.GetString(5), reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7), reader.IsDBNull(8) ? null : reader.GetString(8)));
         return rows.ToArray();

@@ -14,7 +14,9 @@ public static class RelayHost
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ApplicationName = typeof(RelayHost).Assembly.FullName });
         var settings = configured ?? builder.Configuration.GetSection("PocketAgent").Get<HostSettings>() ?? new();
         settings.Validate();
+        ServerDiagnostics.Initialize();
         builder.Logging.ClearProviders();
+        builder.Logging.AddProvider(new PocketAgentLoggerProvider());
         var certificates = new PeerCertificates(settings);
 
         builder.WebHost.ConfigureKestrel(options =>
@@ -91,6 +93,7 @@ public static class RelayHost
             if ((origin.Length > 0 && !validOrigin) || (isHub && !validOrigin) ||
                 (isMutation && !isHub && context.Request.Headers["X-PocketAgent"] != "1"))
             {
+                ServerDiagnostics.Log("api", LogLevel.Warning, $"request_rejected method={context.Request.Method} path={context.Request.Path} reason={(origin.Length > 0 && !validOrigin ? "origin" : isHub && !validOrigin ? "hub_origin" : "missing_client_header")}");
                 context.Response.StatusCode = 403;
                 return;
             }
@@ -99,6 +102,7 @@ public static class RelayHost
             try { await next(); }
             catch (ApiException exception) when (!context.Response.HasStarted)
             {
+                ServerDiagnostics.Log("api", LogLevel.Warning, $"request_failed method={context.Request.Method} path={context.Request.Path} status={exception.Status}", exception);
                 context.Response.StatusCode = exception.Status;
                 await context.Response.WriteAsJsonAsync(new { error = exception.Message });
             }
@@ -107,9 +111,10 @@ public static class RelayHost
                 context.Response.StatusCode = 400;
                 await context.Response.WriteAsJsonAsync(new { error = "Invalid request." });
             }
-            catch (Exception) when (!context.Response.HasStarted)
+            catch (Exception exception) when (!context.Response.HasStarted)
             {
                 // Do not log request bodies, provider errors, session cookies, or pairing credentials.
+                ServerDiagnostics.Log("api", LogLevel.Error, $"request_failed method={context.Request.Method} path={context.Request.Path} status=500", exception);
                 context.Response.StatusCode = 500;
                 await context.Response.WriteAsJsonAsync(new { error = "The desktop relay could not complete the request. Check local configuration and restart if needed." });
             }
@@ -129,8 +134,12 @@ public static class RelayHost
         app.MapPost("/api/pair", (PairInput input, HttpContext context, PairingCode code, LocalStore store) =>
         {
             if (string.IsNullOrWhiteSpace(input.DeviceName) || input.DeviceName.Length > 80 || input.Code is null || !code.Consume(input.Code))
+            {
+                ServerDiagnostics.Log("pairing", LogLevel.Warning, $"legacy_pair_failed name_length={input.DeviceName?.Length ?? 0}");
                 return Results.Json(new { error = "The pairing code is invalid, expired, used, or temporarily rate limited. Check the desktop console." }, statusCode: 401);
+            }
             var paired = store.Pair(input.DeviceName.Trim());
+            ServerDiagnostics.Log("pairing", LogLevel.Information, $"paired device_id={paired.Device.Id} name_length={paired.Device.Name.Length} channel=legacy");
             context.Response.Cookies.Append(DeviceAuthentication.CookieName, paired.Token, new CookieOptions
             {
                 HttpOnly = true,
@@ -145,57 +154,71 @@ public static class RelayHost
         app.MapPost("/api/devices/pair", (PairInput input, PairingCode code, LocalStore store) =>
         {
             if (string.IsNullOrWhiteSpace(input.DeviceName) || input.DeviceName.Length > 80 || input.Code is null || !code.Consume(input.Code))
+            {
+                ServerDiagnostics.Log("pairing", LogLevel.Warning, $"pair_failed name_length={input.DeviceName?.Length ?? 0}");
                 return Results.Json(new { error = "Invalid, expired, used, or rate-limited pairing code. Generate another code on the desktop." }, statusCode: 401);
+            }
             var paired = store.Pair(input.DeviceName.Trim());
-            return Results.Ok(new { token = paired.Token, expiresAt = paired.Device.ExpiresAt, deviceName = paired.Device.Name });
+            ServerDiagnostics.Log("pairing", LogLevel.Information, $"paired device_id={paired.Device.Id} name_length={paired.Device.Name.Length} channel=device");
+            return Results.Ok(new { token = paired.Token, deviceId = paired.Device.Id, expiresAt = paired.Device.ExpiresAt, deviceName = paired.Device.Name });
         }).RequireRateLimiting("pairing");
+
+        app.Lifetime.ApplicationStarted.Register(() => ServerDiagnostics.Log("relay", LogLevel.Information, $"READY listen={settings.ListenAddress}:{settings.Port} https={settings.UseHttps} data_directory_configured={!string.IsNullOrWhiteSpace(settings.DataDirectory)}"));
+        app.Lifetime.ApplicationStopping.Register(() => ServerDiagnostics.Stop("application-stopping"));
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/provider/status", (ProviderDiagnostics diagnostics) => diagnostics.Check());
         api.MapGet("/models", (ProviderDiagnostics diagnostics) => diagnostics.Models());
         api.MapGet("/directories", (string? path, WorkspaceDirectories directories) => directories.Browse(path));
         api.MapGet("/usage", (ProviderUsage usage) => usage.Check());
-        api.MapGet("/scheduled", (LocalStore store) => store.Scheduled());
-        api.MapGet("/conversations/{id}/scheduled", (string id, LocalStore store) => store.Scheduled(id));
-        api.MapGet("/conversations/{id}/history", async (string id, string? before, int? limit, Conversations conversations) =>
-            await conversations.History(id, before, limit ?? 50));
-        api.MapGet("/conversations/{id}/images", async (string id, string? path, Conversations conversations) =>
+        api.MapGet("/scheduled", (HttpContext context, LocalStore store) => store.Scheduled(deviceId: context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapGet("/conversations/{id}/scheduled", (string id, HttpContext context, LocalStore store, Conversations conversations) =>
+        {
+            var deviceId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            conversations.RequireAccess(id, deviceId);
+            return store.Scheduled(id);
+        });
+        api.MapGet("/conversations/{id}/history", async (string id, string? before, int? limit, HttpContext context, Conversations conversations) =>
+            await conversations.History(id, before, limit ?? 50, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapGet("/conversations/{id}/images", async (string id, string? path, HttpContext context, Conversations conversations) =>
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ApiException(400, "An image path is required.");
-            var image = await conversations.ReadImage(id, path);
+            var image = await conversations.ReadImage(id, path, context.User.FindFirstValue(ClaimTypes.NameIdentifier));
             return Results.File(image.Bytes, image.ContentType, enableRangeProcessing: false);
         });
         api.MapPost("/conversations/{id}/scheduled", (string id, ScheduleInput input, HttpContext context, ScheduledMessages messages) =>
             messages.Schedule(id, input.Text ?? "", input.DueAt, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId));
-        api.MapPost("/scheduled/{id}/cancel", async (string id, ScheduledMessages messages) => { await messages.Cancel(id); return Results.NoContent(); });
+        api.MapPost("/scheduled/{id}/cancel", async (string id, HttpContext context, ScheduledMessages messages) => { await messages.Cancel(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier)); return Results.NoContent(); });
         api.MapPost("/logout", (HttpContext context, LocalStore store) =>
         {
-            store.Revoke(context.User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var deviceId = context.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            store.Revoke(deviceId);
+            ServerDiagnostics.Log("auth", LogLevel.Information, $"device_revoked device_id={deviceId} reason=logout");
             context.Response.Cookies.Delete(DeviceAuthentication.CookieName);
             return Results.NoContent();
         });
-        api.MapGet("/conversations", (bool? archived, Conversations conversations) => conversations.List(archived ?? false));
-        api.MapPost("/conversations", async (CreateInput input, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model, input.ReasoningEffort)));
-        api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, Conversations conversations) => conversations.Rename(id, input.Title ?? ""));
-        api.MapPost("/conversations/{id}/model", (string id, ModelInput input, Conversations conversations) => conversations.SetModel(id, input.Model ?? ""));
-        api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, Conversations conversations) => conversations.SetReasoning(id, input.Effort));
-        api.MapPost("/conversations/{id}/pin", (string id, PinInput input, Conversations conversations) => conversations.SetPinned(id, input.Pinned));
-        api.MapPost("/conversations/{id}/archive", (string id, Conversations conversations) => conversations.Archive(id, true));
-        api.MapPost("/conversations/{id}/restore", (string id, Conversations conversations) => conversations.Archive(id, false));
-        api.MapGet("/conversations/{id}", (string id, Conversations conversations) => conversations.Get(id));
+        api.MapGet("/conversations", (bool? archived, HttpContext context, Conversations conversations) => conversations.List(archived ?? false, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations", async (CreateInput input, HttpContext context, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model, input.ReasoningEffort, context.User.FindFirstValue(ClaimTypes.NameIdentifier))));
+        api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, HttpContext context, Conversations conversations) => conversations.Rename(id, input.Title ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/model", (string id, ModelInput input, HttpContext context, Conversations conversations) => conversations.SetModel(id, input.Model ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, HttpContext context, Conversations conversations) => conversations.SetReasoning(id, input.Effort, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/pin", (string id, PinInput input, HttpContext context, Conversations conversations) => conversations.SetPinned(id, input.Pinned, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/archive", (string id, HttpContext context, Conversations conversations) => conversations.Archive(id, true, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/restore", (string id, HttpContext context, Conversations conversations) => conversations.Archive(id, false, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapGet("/conversations/{id}", (string id, HttpContext context, Conversations conversations) => conversations.Get(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/messages", async (string id, MessageInput input, ScheduledMessages messages, HttpContext context) =>
         {
             var receipt = await messages.Send(id, input.Text ?? "", input.ExpectedTurnId, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId);
             return Results.Accepted(value: receipt);
         });
-        api.MapPost("/conversations/{id}/interrupt", async (string id, Conversations conversations) =>
+        api.MapPost("/conversations/{id}/interrupt", async (string id, HttpContext context, Conversations conversations) =>
         {
-            await conversations.Interrupt(id);
+            await conversations.Interrupt(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier));
             return Results.Accepted();
         });
-        api.MapPost("/conversations/{id}/requests/{requestId}", async (string id, string requestId, AnswerRequest input, Conversations conversations) =>
+        api.MapPost("/conversations/{id}/requests/{requestId}", async (string id, string requestId, AnswerRequest input, HttpContext context, Conversations conversations) =>
         {
-            await conversations.Answer(id, requestId, input);
+            await conversations.Answer(id, requestId, input, context.User.FindFirstValue(ClaimTypes.NameIdentifier));
             return Results.Accepted();
         });
         app.MapHub<ProgressHub>("/events").RequireAuthorization();

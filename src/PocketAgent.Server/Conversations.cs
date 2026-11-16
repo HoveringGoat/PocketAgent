@@ -50,18 +50,18 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<State>> readHydrations = [];
     private long lastPublished;
 
-    public async Task<ConversationSummary[]> List(bool archived = false)
+    public async Task<ConversationSummary[]> List(bool archived = false, string? deviceId = null)
     {
         await gate.WaitAsync();
         try
         {
-            return store.Conversations(true).Where(reference => reference.Archived == archived).Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
+            return store.Conversations(true, deviceId).Where(reference => reference.Archived == archived).Select(reference => new ConversationSummary(reference.Id, reference.Title, reference.CreatedAt,
                 states.TryGetValue(reference.Id, out var state) ? state.Status : "saved", Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName, reference.Model, reference.Archived, reference.ReasoningEffort, reference.Pinned, reference.LastMessageAt)).ToArray();
         }
         finally { gate.Release(); }
     }
 
-    public async Task<ConversationSnapshot> Create(string title, string? workingDirectory = null, string? model = null, string? reasoningEffort = null)
+    public async Task<ConversationSnapshot> Create(string title, string? workingDirectory = null, string? model = null, string? reasoningEffort = null, string? deviceId = null)
     {
         if (title.Length > 100)
             throw new ApiException(400, "Conversation names can contain at most 100 characters.");
@@ -89,7 +89,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             var id = thread.Text("id");
             if (id.Length == 0)
                 throw new ApiException(502, "Codex returned a thread without an ID.");
-            store.SaveConversation(id, title.Trim(), directory, model, reasoningEffort);
+            store.SaveConversation(id, title.Trim(), directory, model, reasoningEffort, deviceId);
             var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model, false, reasoningEffort)) { Resumed = true };
             CapturePermissions(state, result);
             states[id] = state;
@@ -98,8 +98,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { gate.Release(); await publisher.Changed(); }
     }
 
-    public async Task<ConversationSnapshot> Get(string id)
+    public async Task<ConversationSnapshot> Get(string id, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         try
         {
             var hydrated = await GetState(id).ConfigureAwait(false);
@@ -116,8 +117,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         }
     }
 
-    public async Task<ConversationHistoryPage> History(string id, string? before, int limit)
+    public async Task<ConversationHistoryPage> History(string id, string? before, int limit, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id).ConfigureAwait(false);
         await state.Gate.WaitAsync();
         try
@@ -136,8 +138,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); }
     }
 
-    public async Task<(byte[] Bytes, string ContentType)> ReadImage(string id, string source)
+    public async Task<(byte[] Bytes, string ContentType)> ReadImage(string id, string source, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id).ConfigureAwait(false);
         await state.Gate.WaitAsync().ConfigureAwait(false);
         string workingDirectory;
@@ -198,6 +201,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             var turnId = state.ActiveTurnId;
             state.HeartbeatDueAt = now + HeartbeatDelay;
             state.HiddenPrompts.Enqueue(HeartbeatPrompt);
+            ServerDiagnostics.Log("heartbeat", Microsoft.Extensions.Logging.LogLevel.Information,
+                $"steer_start conversation_id={id} turn_id={turnId} queued_hidden_prompts={state.HiddenPrompts.Count}");
             try
             {
                 var result = await codex.Request("turn/steer", new
@@ -208,19 +213,24 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 });
                 if (result.Text("turnId") != turnId)
                     throw new ApiException(504, "Codex did not confirm the heartbeat steer.");
+                ServerDiagnostics.Log("heartbeat", Microsoft.Extensions.Logging.LogLevel.Information,
+                    $"steer_ok conversation_id={id} turn_id={turnId}");
             }
             catch (Exception exception)
             {
                 if (state.HiddenPrompts.TryPeek(out var hidden) && hidden == HeartbeatPrompt) state.HiddenPrompts.Dequeue();
                 state.HeartbeatDueAt = now + TimeSpan.FromMinutes(1);
                 logger.LogWarning(exception, "Heartbeat steer failed for conversation {ConversationId}.", id);
+                ServerDiagnostics.Log("heartbeat", Microsoft.Extensions.Logging.LogLevel.Warning,
+                    $"steer_failed conversation_id={id} turn_id={turnId}", exception);
             }
         }
         finally { state.Gate.Release(); }
     }
 
-    public async Task<ConversationSnapshot> Rename(string id, string title)
+    public async Task<ConversationSnapshot> Rename(string id, string title, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         if (string.IsNullOrWhiteSpace(title) || title.Length > 100)
             throw new ApiException(400, "Use a name of 1–100 characters.");
         var state = await GetState(id);
@@ -256,14 +266,21 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         if (state.Reference.Archived) throw new ApiException(409, "Restore this conversation before changing it or sending messages.");
     }
 
+    public void RequireAccess(string id, string? deviceId)
+    {
+        if (deviceId is null) return;
+        if (!store.HasConversationAccess(id, deviceId)) throw new ApiException(404, "Conversation not found.");
+    }
+
     private static void RequireIdle(State state)
     {
         if (state.ActiveTurnId is not null || state.Status is "starting" or "uncertain" or "disconnected" || state.Requests.Count > 0)
             throw new ApiException(409, "Finish or stop active work and confirm its outcome before changing this conversation.");
     }
 
-    public async Task<ConversationSnapshot> SetModel(string id, string model)
+    public async Task<ConversationSnapshot> SetModel(string id, string model, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id);
         await state.Gate.WaitAsync();
         try
@@ -280,8 +297,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task<ConversationSnapshot> SetReasoning(string id, string? effort)
+    public async Task<ConversationSnapshot> SetReasoning(string id, string? effort, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id);
         await state.Gate.WaitAsync();
         try
@@ -295,18 +313,34 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task<ConversationSnapshot> Archive(string id, bool archived)
+    public async Task<ConversationSnapshot> Archive(string id, bool archived, string? deviceId = null)
     {
-        var state = await GetState(id);
-        await state.Gate.WaitAsync();
+        RequireAccess(id, deviceId);
         try
         {
-            RequireIdle(state);
-            store.SetArchived(id, archived);
-            state.Reference = state.Reference with { Archived = archived };
-            return Snapshot(state);
+            try
+            {
+                var state = await GetState(id);
+                await state.Gate.WaitAsync();
+                try
+                {
+                    RequireIdle(state);
+                    store.SetArchived(id, archived);
+                    state.Reference = state.Reference with { Archived = archived };
+                    return Snapshot(state);
+                }
+                finally { state.Gate.Release(); }
+            }
+            catch (ApiException exception) when (IsMissingThread(exception))
+            {
+                var reference = store.Conversations(true).FirstOrDefault(row => row.Id == id)
+                    ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
+                store.SetArchived(id, archived);
+                logger.LogInformation("Archived conversation {ConversationId} using local metadata because its Codex thread is unavailable.", id);
+                return UnavailableSnapshot(reference with { Archived = archived }, exception.Message);
+            }
         }
-        finally { state.Gate.Release(); await publisher.Changed(id); }
+        finally { await publisher.Changed(id); }
     }
 
     public async Task<int> ArchiveInactive(DateTimeOffset now)
@@ -343,8 +377,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         return archived.Length;
     }
 
-    public async Task<ConversationSnapshot> SetPinned(string id, bool pinned)
+    public async Task<ConversationSnapshot> SetPinned(string id, bool pinned, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id);
         await state.Gate.WaitAsync();
         try
@@ -359,6 +394,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null)
     {
+        RequireAccess(id, sourceDeviceId);
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
             throw new ApiException(400, "Messages must contain 1–32,000 characters.");
         var state = await GetState(id);
@@ -435,8 +471,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task Interrupt(string id)
+    public async Task Interrupt(string id, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id);
         await state.Gate.WaitAsync();
         try
@@ -449,8 +486,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task Answer(string id, string requestId, AnswerRequest answer)
+    public async Task Answer(string id, string requestId, AnswerRequest answer, string? deviceId = null)
     {
+        RequireAccess(id, deviceId);
         var state = await GetState(id);
         await state.Gate.WaitAsync();
         try
@@ -581,9 +619,13 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     {
         if (item.Id.Length == 0 || item.Type == "reasoning")
             return;
-        if (item.Type == "userMessage" && IsHiddenPrompt(state, item.Text))
+        if (string.Equals(item.Text.Trim(), HeartbeatPrompt, StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            var queued = state.HiddenPrompts.Count > 0;
+            var hidden = item.Type == "userMessage" && IsHiddenPrompt(state, item.Text);
+            ServerDiagnostics.Log("heartbeat", hidden ? Microsoft.Extensions.Logging.LogLevel.Information : Microsoft.Extensions.Logging.LogLevel.Warning,
+                $"item_seen conversation_id={state.Reference.Id} item_id={item.Id} item_type={item.Type} hydrating={state.Hydrating} queued={queued} hidden={hidden}");
+            if (hidden) return;
         }
         var index = state.Items.FindIndex(existing => existing.Id == item.Id);
         var existingTime = index >= 0 ? state.Items[index].Timestamp : null;

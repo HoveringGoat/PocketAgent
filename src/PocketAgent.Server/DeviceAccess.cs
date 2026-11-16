@@ -62,7 +62,10 @@ public sealed class DeviceAuthentication(
         var token = authorization.StartsWith("Bearer ", StringComparison.Ordinal) ? authorization[7..] : Request.Cookies[CookieName] ?? "";
         var device = store.FindDevice(token);
         if (device is null)
+        {
+            ServerDiagnostics.Log("auth", LogLevel.Warning, $"authenticate_failed method={Request.Method} path={Request.Path} credential_present={!string.IsNullOrWhiteSpace(token)}");
             return Task.FromResult(AuthenticateResult.NoResult());
+        }
         var identity = new ClaimsIdentity([
             new Claim(ClaimTypes.NameIdentifier, device.Id),
             new Claim(ClaimTypes.Name, device.Name)
@@ -83,7 +86,13 @@ public sealed class ProgressHub : Hub
 
 public sealed class ProgressPublisher(IHubContext<ProgressHub> hub, LocalStore store)
 {
-    public Task Changed(string? conversationId = null) => hub.Clients.Groups(store.ActiveDeviceIds()).SendAsync("changed", conversationId);
+    public async Task Changed(string? conversationId = null)
+    {
+        var devices = store.ActiveDeviceIds()
+            .Where(deviceId => conversationId is null || store.HasConversationAccess(conversationId, deviceId))
+            .ToArray();
+        if (devices.Length > 0) await hub.Clients.Groups(devices).SendAsync("changed", conversationId);
+    }
 }
 
 public sealed class ApiException(int status, string message) : Exception(message)

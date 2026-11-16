@@ -84,7 +84,7 @@ test('conversation folders and models remain independent across turns and restar
   try {
     assert.equal((await relay.request('/directories')).status, 401);
     assert.equal((await relay.request('/models')).status, 401);
-    await relay.pairNative();
+    const paired = await relay.pairNative();
     const folder = resolve(relay.directory, 'Different workspace');
     await mkdir(folder);
     const listing = await (
@@ -137,7 +137,7 @@ test('conversation folders and models remain independent across turns and restar
       dataDirectory: directory,
       extraEnv: { ...options, PocketAgent__RepositoryPath: directory },
     });
-    await relay.pairNative();
+    relay.authenticateBearer(paired.token);
     assert.equal((await (await relay.request('/conversations')).json()).length, 2);
     assert.equal((await relay.request(`${path}/messages`, { text: 'hold' })).status, 202);
     const provider = JSON.parse(await readFile(resolve(directory, 'fixture-history.json'), 'utf8'));
@@ -153,7 +153,7 @@ test('conversation folders and models remain independent across turns and restar
 test('archive hides idle conversations, cancels pending schedules and restores without replay', async () => {
   let relay = await startRelay();
   try {
-    await relay.pairNative();
+    const paired = await relay.pairNative();
     const thread = await (await relay.request('/conversations', {})).json();
     const path = `/conversations/${thread.id}`;
     const dueAt = new Date(Date.now() + 3600000).toISOString();
@@ -191,7 +191,7 @@ test('archive hides idle conversations, cancels pending schedules and restores w
     const directory = relay.directory;
     await relay.stop();
     relay = await startRelay({ dataDirectory: directory });
-    await relay.pairNative();
+    relay.authenticateBearer(paired.token);
     assert.deepEqual(await (await relay.request('/conversations')).json(), []);
     assert.equal((await relay.request(`${path}/restore`, {})).status, 200);
     assert.equal((await (await relay.request('/conversations')).json())[0].id, thread.id);
@@ -225,7 +225,12 @@ test('legacy database migration retains conversation folders and saved history',
     extraEnv: { PocketAgent__RepositoryPath: directory },
   });
   try {
-    await relay.pairNative();
+    const paired = await relay.pairNative();
+    const accessDatabase = new DatabaseSync(resolve(directory, 'pocketagent.db'));
+    accessDatabase
+      .prepare('INSERT INTO conversation_access(conversation_id,device_id,granted_at) VALUES (?,?,?)')
+      .run(id, paired.deviceId, Math.floor(Date.now() / 1000));
+    accessDatabase.close();
     const existing = await (await relay.request(`/conversations/${id}`)).json();
     assert.equal(existing.title, 'Existing conversation');
     assert.equal(existing.workingDirectory, root);

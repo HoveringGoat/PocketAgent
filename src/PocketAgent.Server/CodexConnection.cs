@@ -47,16 +47,25 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
             };
             foreach (var argument in settings.CodexArguments)
                 info.ArgumentList.Add(argument);
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Information, $"process_start executable={Path.GetFileName(Executable.Path)} arguments={settings.CodexArguments.Length} working_directory_name={Path.GetFileName(Path.TrimEndingDirectorySeparator(settings.RepositoryPath))}");
             process = Process.Start(info) ?? throw new InvalidOperationException("Unable to launch Codex.");
             reader = ReadLoop();
             stderr = DrainErrors();
             await Request("initialize", new { clientInfo = new { name = "pocketagent", title = "PocketAgent", version = BuildInfo.Version } });
             await Send(new { method = "initialized" });
             ready = true;
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Information, "process_ready");
+        }
+        catch (ApiException exception)
+        {
+            failed = true;
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Error, "process_initialize_failed", exception);
+            throw;
         }
         catch (Exception exception) when (exception is not ApiException)
         {
             failed = true;
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Error, "process_start_failed", exception);
             throw new ApiException(503, "Could not initialize Codex. Check the desktop CodexExecutable setting, CLI sign-in, and CODEX_HOME, then restart the relay.");
         }
         finally
@@ -68,16 +77,31 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
     public async Task<JsonElement> Request(string method, object parameters)
     {
         var id = Interlocked.Increment(ref sequence);
+        var stopwatch = Stopwatch.StartNew();
+        ServerDiagnostics.Log("codex-rpc", Microsoft.Extensions.Logging.LogLevel.Information, $"request_start id={id} method={method}");
         var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[id] = completion;
         try
         {
             await Send(new { id, method, @params = parameters });
-            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(60), lifetime.Token);
+            var result = await completion.Task.WaitAsync(TimeSpan.FromSeconds(60), lifetime.Token);
+            ServerDiagnostics.Log("codex-rpc", Microsoft.Extensions.Logging.LogLevel.Information, $"request_ok id={id} method={method} elapsed_ms={stopwatch.ElapsedMilliseconds}");
+            return result;
         }
         catch (TimeoutException)
         {
+            ServerDiagnostics.Log("codex-rpc", Microsoft.Extensions.Logging.LogLevel.Error, $"request_timeout id={id} method={method} elapsed_ms={stopwatch.ElapsedMilliseconds}");
             throw new ApiException(504, "Codex did not confirm the request in time. Its outcome is unknown; do not automatically resend it. Check progress or restart the relay.");
+        }
+        catch (ApiException exception)
+        {
+            ServerDiagnostics.Log("codex-rpc", Microsoft.Extensions.Logging.LogLevel.Warning, $"request_error id={id} method={method} elapsed_ms={stopwatch.ElapsedMilliseconds}", exception);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ServerDiagnostics.Log("codex-rpc", Microsoft.Extensions.Logging.LogLevel.Error, $"request_exception id={id} method={method} elapsed_ms={stopwatch.ElapsedMilliseconds}", exception);
+            throw;
         }
         finally
         {
@@ -127,9 +151,17 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
                     await events.Writer.WriteAsync(message.Clone(), lifetime.Token);
             }
         }
-        catch (Exception exception) when (exception is IOException or JsonException or OperationCanceledException) { }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Error, "output_read_failed", exception);
+        }
         finally
         {
+            ServerDiagnostics.Log("codex", lifetime.IsCancellationRequested ? Microsoft.Extensions.Logging.LogLevel.Information : Microsoft.Extensions.Logging.LogLevel.Warning,
+                $"process_disconnected exited={process?.HasExited == true} reason={(lifetime.IsCancellationRequested ? "shutdown" : "unexpected")}");
             failed = true;
             ready = false;
             foreach (var completion in pending.Values)
@@ -140,10 +172,11 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
 
     private async Task DrainErrors()
     {
-        // Provider stderr can contain sensitive context. Drain it without copying it to host logs.
+        // Provider stderr can contain sensitive context. Record only that output was received, never its contents.
         try
         {
-            while (await process!.StandardError.ReadLineAsync(lifetime.Token) is not null) { }
+            while (await process!.StandardError.ReadLineAsync(lifetime.Token) is { } line)
+                ServerDiagnostics.Log("codex-stderr", Microsoft.Extensions.Logging.LogLevel.Warning, $"line_received length={line.Length}");
         }
         catch (OperationCanceledException) { }
     }

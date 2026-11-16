@@ -603,12 +603,26 @@ public partial class MainWindow : Window
     {
         DeviceList.Children.Clear();
         var store = relay!.Services.GetRequiredService<LocalStore>();
+        var selectedConversation = selected;
+        DeviceAccessStatus.Text = selectedConversation is null
+            ? "Select a conversation on the Sessions page to manage which paired devices can access it."
+            : $"Access for selected conversation: {conversation?.Title ?? selectedConversation}";
         foreach (var device in store.Devices())
         {
             var row = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
-            var revoke = new Button { Content = "Revoke" }; DockPanel.SetDock(revoke, Dock.Right);
+            var access = new Button { Content = selectedConversation is null ? "Select a conversation" : store.HasConversationAccess(selectedConversation, device.Id) ? "Revoke session access" : "Grant session access", IsEnabled = selectedConversation is not null, Margin = new Thickness(8, 0, 0, 0) };
+            DockPanel.SetDock(access, Dock.Right);
+            access.Click += async (_, _) => await Act(() =>
+            {
+                if (selectedConversation is null) return Task.CompletedTask;
+                if (store.HasConversationAccess(selectedConversation, device.Id)) store.RevokeConversationAccess(selectedConversation, device.Id);
+                else store.GrantConversationAccess(selectedConversation, device.Id);
+                RenderDevices();
+                return Task.CompletedTask;
+            });
+            var revoke = new Button { Content = "Revoke device" }; DockPanel.SetDock(revoke, Dock.Right);
             revoke.Click += (_, _) => { store.Revoke(device.Id); RenderDevices(); };
-            row.Children.Add(revoke); row.Children.Add(new TextBlock { Text = $"{device.Name}\nExpires {device.ExpiresAt.LocalDateTime:d}", VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(access); row.Children.Add(revoke); row.Children.Add(new TextBlock { Text = $"{device.Name}\nID {device.Id}\nExpires {device.ExpiresAt.LocalDateTime:d}", VerticalAlignment = VerticalAlignment.Center });
             DeviceList.Children.Add(row);
         }
     }

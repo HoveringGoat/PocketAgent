@@ -767,6 +767,23 @@ public final class MainActivity extends Activity {
                   connectionStates.put(client.origin, true);
                   connectionErrors.remove(client.origin);
                   renderTabs(sessions);
+                   boolean selectedVisible = id.isEmpty();
+                   for (int index = 0; index < sessions.length(); index++) {
+                     if (id.equals(sessions.optJSONObject(index).optString("id"))) {
+                       selectedVisible = true;
+                       break;
+                     }
+                   }
+                   if (!id.isEmpty() && !selectedVisible) {
+                     selected = "";
+                     store.select(client.origin, "");
+                     conversation = null;
+                     scheduledState = new JSONArray();
+                     setConversationActionsVisible(false);
+                     transcript.removeAllViews();
+                     context.setText(sessions.length() == 0 ? "No conversations shared with this device." : "Select a conversation.");
+                     loadDraft();
+                   }
                   serverSelector.setText(serverName);
                   serverSelector.setContentDescription("Server " + serverName + " connected");
                   if (id.equals(selected)) {

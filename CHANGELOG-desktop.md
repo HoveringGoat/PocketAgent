@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.12 - 2026-11-16
+
+- Allow archiving and restoring an idle conversation from PocketAgent metadata when its Codex thread is unavailable.
+- Add binary per-device conversation access control and desktop grant/revoke controls.
+- Add rotating redacted server diagnostics for relay startup, authentication, API failures, Codex RPC/process state, heartbeat filtering, schedules, and access transitions.
+
 ## 0.3.11 - 2026-11-15
 
 - Kept session lists and usage available when a saved conversation points to a Codex thread that is no longer loaded; the conversation now reports a recoverable disconnected state instead of failing the whole refresh.

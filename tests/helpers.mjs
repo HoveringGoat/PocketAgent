@@ -160,6 +160,10 @@ export async function startRelay({
       bearer = paired.token;
       return paired;
     },
+    authenticateBearer(token) {
+      cookie = '';
+      bearer = token;
+    },
     async pair() {
       const response = await this.request(
         '/pair',

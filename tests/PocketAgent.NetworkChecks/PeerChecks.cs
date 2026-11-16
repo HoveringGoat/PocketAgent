@@ -65,12 +65,14 @@ internal static class PeerChecks
             using var paired = JsonDocument.Parse(await enrolled.Content.ReadAsStringAsync());
             using var reused = await client.PostAsync(settings.DirectOrigin + "/api/devices/pair", new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
             Check(reused.StatusCode == HttpStatusCode.Unauthorized, "Replayed QR ticket accepted.");
-            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", paired.RootElement.GetProperty("token").GetString());
+            var deviceAToken = paired.RootElement.GetProperty("token").GetString();
+            var deviceAId = paired.RootElement.GetProperty("deviceId").GetString();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", deviceAToken);
             using var protectedResponse = await client.GetAsync(settings.DirectOrigin + "/api/conversations");
             Check(protectedResponse.IsSuccessStatusCode, "Paired token did not authorize conversation access.");
             var store = app.Services.GetRequiredService<LocalStore>();
             var missingThreadId = "missing-thread-" + Guid.NewGuid().ToString("N");
-            store.SaveConversation(missingThreadId, "Recovered metadata", settings.RepositoryPath, "gpt-6.1-sol", "high");
+            store.SaveConversation(missingThreadId, "Recovered metadata", settings.RepositoryPath, "gpt-6.1-sol", "high", deviceAId);
             using var unavailable = await client.GetAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId);
             Check(unavailable.IsSuccessStatusCode, "A missing Codex thread must not fail the conversation endpoint.");
             using var unavailableBody = JsonDocument.Parse(await unavailable.Content.ReadAsStringAsync());
@@ -78,6 +80,41 @@ internal static class PeerChecks
                 unavailableBody.RootElement.GetProperty("error").GetString()?.Contains("thread not loaded", StringComparison.OrdinalIgnoreCase) == true &&
                 unavailableBody.RootElement.GetProperty("model").GetString() == "gpt-6.1-sol",
                 "Missing Codex threads must preserve local metadata and expose a recoverable error state.");
+            using var archive = await client.PostAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId + "/archive", null);
+            Check(archive.IsSuccessStatusCode, "A missing Codex thread must still be archivable from local metadata.");
+            using var archiveBody = JsonDocument.Parse(await archive.Content.ReadAsStringAsync());
+            Check(archiveBody.RootElement.GetProperty("archived").GetBoolean(),
+                "Archiving a missing Codex thread must update its local archived state.");
+            using var restore = await client.PostAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId + "/restore", null);
+            Check(restore.IsSuccessStatusCode, "A missing Codex thread must still be restorable from local metadata.");
+            using var restoreBody = JsonDocument.Parse(await restore.Content.ReadAsStringAsync());
+            Check(!restoreBody.RootElement.GetProperty("archived").GetBoolean(),
+                "Restoring a missing Codex thread must clear its local archived state.");
+            var createBody = JsonSerializer.Serialize(new { title = "Device-owned conversation", workingDirectory = settings.RepositoryPath });
+            using var created = await client.PostAsync(settings.DirectOrigin + "/api/conversations", new StringContent(createBody, System.Text.Encoding.UTF8, "application/json"));
+            Check(created.IsSuccessStatusCode, "A paired device must be able to create a conversation.");
+            using var createdBody = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var deviceCreatedId = createdBody.RootElement.GetProperty("id").GetString()!;
+            var second = store.Pair("Second QR check");
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", second.Token);
+            using var hiddenList = await client.GetAsync(settings.DirectOrigin + "/api/conversations");
+            using var hiddenListBody = JsonDocument.Parse(await hiddenList.Content.ReadAsStringAsync());
+            Check(!hiddenListBody.RootElement.EnumerateArray().Any(item => item.GetProperty("id").GetString() == missingThreadId || item.GetProperty("id").GetString() == deviceCreatedId),
+                "A device without a conversation grant must not see it in the session list.");
+            using var hidden = await client.GetAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId);
+            Check(hidden.StatusCode == HttpStatusCode.NotFound, "A device without a conversation grant must not read it.");
+            using var unauthorizedArchive = await client.PostAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId + "/archive", null);
+            Check(unauthorizedArchive.StatusCode == HttpStatusCode.NotFound, "A device without a conversation grant must not mutate it.");
+            store.GrantConversationAccess(missingThreadId, second.Device.Id);
+            using var shared = await client.GetAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId);
+            Check(shared.IsSuccessStatusCode, "A server-granted device must read the conversation.");
+            using var sharedList = await client.GetAsync(settings.DirectOrigin + "/api/conversations");
+            using var sharedListBody = JsonDocument.Parse(await sharedList.Content.ReadAsStringAsync());
+            Check(sharedListBody.RootElement.EnumerateArray().Any(item => item.GetProperty("id").GetString() == missingThreadId),
+                "A granted device must see the conversation in the session list.");
+            store.RevokeConversationAccess(missingThreadId, second.Device.Id);
+            using var revoked = await client.GetAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId);
+            Check(revoked.StatusCode == HttpStatusCode.NotFound, "Revoking a conversation grant must immediately remove access.");
             using var usageResponse = await client.GetAsync(settings.DirectOrigin + "/api/usage");
             Check(usageResponse.IsSuccessStatusCode, "Usage must remain available when a selected thread is missing.");
         }

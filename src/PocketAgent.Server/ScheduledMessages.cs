@@ -7,6 +7,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
 {
     public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId, string? clientMessageId = null)
     {
+        conversations.RequireAccess(id, deviceId);
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32000) throw new ApiException(400, "Messages must contain 1–32,000 characters.");
         if (!string.IsNullOrWhiteSpace(clientMessageId) && clientMessageId.Length > 100) throw new ApiException(400, "Message IDs are too long.");
         if (!string.IsNullOrWhiteSpace(clientMessageId))
@@ -20,7 +21,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
             if (!store.BeginDelivery(id, clientMessageId, text))
                 return Receipt(store.Delivery(id, clientMessageId) ?? throw new ApiException(409, "That message is already being delivered."));
         }
-        var state = await conversations.Get(id);
+        var state = await conversations.Get(id, deviceId);
         if (state.Archived) throw new ApiException(409, "Restore this conversation before sending messages.");
         if (state.Status is "starting" or "uncertain" or "disconnected") throw new ApiException(409, "Wait until the conversation state is confirmed before submitting.");
         if (expectedTurnId is not null && state.ActiveTurnId != expectedTurnId || expectedTurnId is null && state.ActiveTurnId is not null)
@@ -52,6 +53,7 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
 
     public async Task<ScheduledMessage> Schedule(string id, string text, DateTimeOffset due, string? deviceId, string? clientMessageId = null)
     {
+        conversations.RequireAccess(id, deviceId);
         if (!string.IsNullOrWhiteSpace(clientMessageId))
         {
             var existing = store.Delivery(id, clientMessageId);
@@ -73,8 +75,10 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
         var status = delivery.Status is "pending" or "dispatching" ? "uncertain" : delivery.Status;
         return new(status == "queued", delivery.ScheduleId, null, delivery.Error, delivery.ClientMessageId, status);
     }
-    public async Task Cancel(string id)
+    public async Task Cancel(string id, string? deviceId = null)
     {
+        var job = store.Scheduled().FirstOrDefault(item => item.Id == id) ?? throw new ApiException(404, "Scheduled message not found.");
+        conversations.RequireAccess(job.ConversationId, deviceId);
         if (!store.UpdateSchedule(id, "canceled", expectedStatus: "pending"))
             throw new ApiException(409, "The message is no longer pending. A message already dispatching cannot be recalled.");
         await publisher.Changed();
@@ -97,8 +101,8 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
             foreach (var job in store.Scheduled().Where(job => job.Status == "pending"))
             {
                 if (stoppingToken.IsCancellationRequested) return;
-                if (job.DeviceId is not null && !store.IsDeviceActive(job.DeviceId))
-                { store.UpdateSchedule(job.Id, "canceled", "Device access expired or was revoked.", expectedStatus: "pending"); continue; }
+                if (job.DeviceId is not null && (!store.IsDeviceActive(job.DeviceId) || !store.HasConversationAccess(job.ConversationId, job.DeviceId)))
+                { store.UpdateSchedule(job.Id, "canceled", "Conversation access expired or was revoked.", expectedStatus: "pending"); continue; }
                 if (job.NextAttemptAt > DateTimeOffset.UtcNow) continue;
                 var claimed = false;
                 try

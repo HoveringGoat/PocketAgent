@@ -16,6 +16,14 @@ if (setup || revoke || diagnose)
     else { new LocalStore(settings).RevokeAll(); Console.WriteLine("All device sessions revoked."); }
     return;
 }
-await using var app = RelayHost.Create(hostArgs);
-app.Services.GetRequiredService<PairingCode>().Display();
-await app.RunAsync();
+try
+{
+    await using var app = RelayHost.Create(hostArgs);
+    app.Services.GetRequiredService<PairingCode>().Display();
+    await app.RunAsync();
+}
+catch (Exception exception)
+{
+    ServerDiagnostics.Log("relay", Microsoft.Extensions.Logging.LogLevel.Error, "host_start_failed", exception);
+    throw;
+}
