@@ -2,7 +2,7 @@
 
 ## Use the packaged native apps
 
-Current release: **Android 0.4.2 / desktop-server 0.3.6**. Install the 0.4.2 Android app and 0.3.6 desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
+Current release: **Android 0.4.3 / desktop-server 0.3.11**. Install the 0.4.3 Android app and 0.3.11 desktop app for QR/pairing-string enrollment. Existing saved connections remain available, but new pairing uses the full string rather than a six-digit entry.
 
 Release files are grouped together:
 

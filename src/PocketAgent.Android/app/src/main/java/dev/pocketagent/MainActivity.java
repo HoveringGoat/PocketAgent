@@ -757,6 +757,7 @@ public final class MainActivity extends Activity {
             }
             JSONArray pendingJobs = jobs;
             JSONObject usage = limits;
+            final JSONObject selectedState = state;
             final ApiClient.ApiError selectedStateError = stateError;
             ui.post(
                 () -> {
@@ -791,7 +792,7 @@ public final class MainActivity extends Activity {
                     select(sessions.optJSONObject(0).optString("id"));
                     return;
                   }
-                  if (id.equals(selected) && state != null) renderConversation(state);
+                  if (id.equals(selected) && selectedState != null) renderConversation(selectedState);
                   updateSend();
                 });
           } catch (Exception ex) {

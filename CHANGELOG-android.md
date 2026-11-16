@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.3 - 2026-11-15
+
+- Keep sessions and usage visible when a selected Codex thread is unavailable; preserve the local conversation metadata and show the conversation as disconnected instead of aborting the entire refresh.
+- Do not automatically recreate or resend messages for a missing thread.
+
 ## 0.4.2 - 2026-11-12
 
 - Added message-timestamp tab ordering with pinned-first tabs, one-tab left/right overflow controls, explicit server-selector chevron, and pin/unpin actions.
