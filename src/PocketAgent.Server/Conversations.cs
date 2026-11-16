@@ -100,10 +100,20 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
 
     public async Task<ConversationSnapshot> Get(string id)
     {
-        var hydrated = await GetState(id).ConfigureAwait(false);
-        await hydrated.Gate.WaitAsync();
-        try { return Snapshot(hydrated); }
-        finally { hydrated.Gate.Release(); }
+        try
+        {
+            var hydrated = await GetState(id).ConfigureAwait(false);
+            await hydrated.Gate.WaitAsync();
+            try { return Snapshot(hydrated); }
+            finally { hydrated.Gate.Release(); }
+        }
+        catch (ApiException exception) when (IsMissingThread(exception))
+        {
+            var reference = store.Conversations(true).FirstOrDefault(row => row.Id == id)
+                ?? throw new ApiException(404, "Conversation not found on this PocketAgent host.");
+            logger.LogWarning("Conversation {ConversationId} has local metadata but its Codex thread is unavailable.", id);
+            return UnavailableSnapshot(reference, exception.Message);
+        }
     }
 
     public async Task<ConversationHistoryPage> History(string id, string? before, int limit)
@@ -497,6 +507,16 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         }
         finally { readHydrations.TryRemove(id, out _); }
     }
+
+    private static bool IsMissingThread(ApiException exception) =>
+        exception.Message.Contains("thread not loaded", StringComparison.OrdinalIgnoreCase) ||
+        exception.Message.Contains("thread not found", StringComparison.OrdinalIgnoreCase);
+
+    private ConversationSnapshot UnavailableSnapshot(ConversationReference reference, string error) =>
+        new(reference.Id, reference.Title, "disconnected", null, [], [], error,
+            Path.GetFileName(reference.WorkingDirectory), reference.WorkingDirectory, Environment.MachineName,
+            settings.PermissionMode, null, null, null, null, reference.Model, reference.Archived,
+            reference.ReasoningEffort, false, null, reference.Pinned, reference.LastMessageAt);
 
     private async Task Hydrate(State state, JsonElement thread)
     {

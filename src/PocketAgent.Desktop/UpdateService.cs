@@ -48,7 +48,11 @@ public static class UpdateService
     {
         var updater = Path.Combine(AppContext.BaseDirectory, "PocketAgent.Updater.exe");
         var executable = Environment.ProcessPath;
-        if (!File.Exists(updater) || string.IsNullOrWhiteSpace(executable)) return null;
+        if (!File.Exists(updater) || string.IsNullOrWhiteSpace(executable))
+        {
+            DesktopDiagnostics.Log($"UPDATE launch-skipped updater-present={File.Exists(updater)} executable-present={!string.IsNullOrWhiteSpace(executable)}");
+            return null;
+        }
         try
         {
             var launchCopy = Path.Combine(Path.GetTempPath(), "PocketAgent-updater-" + Guid.NewGuid().ToString("N") + ".exe");
@@ -71,9 +75,15 @@ public static class UpdateService
             info.ArgumentList.Add("--version"); info.ArgumentList.Add(update.Version.ToString(3));
             info.ArgumentList.Add("--health-file"); info.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "PocketAgent-update-health-" + Guid.NewGuid().ToString("N")));
             info.ArgumentList.Add("--log-file"); info.ArgumentList.Add(logFile);
-            return Process.Start(info);
+            var process = Process.Start(info);
+            DesktopDiagnostics.Log($"UPDATE launch version={update.Version} pid={parentProcessId} updater={Path.GetFileName(updater)}");
+            return process;
         }
-        catch { return null; }
+        catch (Exception exception)
+        {
+            DesktopDiagnostics.LogException("update-launch", exception);
+            return null;
+        }
     }
 
     private static HttpClient CreateClient()

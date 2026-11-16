@@ -14,6 +14,8 @@ $updaterPath = Join-Path $packageDirectory 'PocketAgent.Updater.exe'
 foreach ($path in @($archive, $checksum, $packageDirectory, $updaterPath)) {
     if (!(Test-Path -LiteralPath $path)) { throw "Updater artifact check input was not found: $path" }
 }
+$hiddenPackageDirectories = @(Get-ChildItem -LiteralPath $packageDirectory -Directory -Force | Where-Object Name -like '.*')
+if ($hiddenPackageDirectories.Count -gt 0) { throw "Desktop package contains unsupported hidden directories: $($hiddenPackageDirectories.Name -join ', ')" }
 
 $root = Join-Path $projectRoot ('.local/updater-check-' + [Guid]::NewGuid().ToString('N'))
 $install = Join-Path $root 'install'
@@ -37,6 +39,13 @@ function Wait-ForFile([string]$path, [int]$seconds) {
 try {
     New-Item -ItemType Directory -Force -Path $install | Out-Null
     Get-ChildItem -LiteralPath $packageDirectory -Force | Copy-Item -Destination $install -Recurse -Force
+    $staleTransaction = Join-Path $install '.PocketAgent-update-stale\backup'
+    New-Item -ItemType Directory -Force -Path $staleTransaction | Out-Null
+    for ($depth = 0; $depth -lt 12; $depth++) {
+        $staleTransaction = Join-Path $staleTransaction '.PocketAgent-update-stale\backup'
+        New-Item -ItemType Directory -Force -Path $staleTransaction | Out-Null
+    }
+    Set-Content -LiteralPath (Join-Path $staleTransaction 'stale-marker.txt') -Value 'stale transaction'
 
     $portListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $portListener.Start(); $port = ([Net.IPEndPoint]$portListener.LocalEndpoint).Port; $portListener.Stop()
@@ -79,6 +88,8 @@ try {
     if ($updatedDesktop.Count -eq 0) { throw "The updated desktop was not running after the health check.`n$logText" }
     $staging = @(Get-ChildItem (Split-Path $install) -Directory -Filter '.PocketAgent-update-*' -ErrorAction SilentlyContinue)
     if ($staging.Count -gt 0) { throw "Updater staging directories were left behind: $($staging.Name -join ', ')`n$logText" }
+    $staleInstallTransactions = @(Get-ChildItem $install -Directory -Filter '.PocketAgent-update-*' -ErrorAction SilentlyContinue)
+    if ($staleInstallTransactions.Count -gt 0) { Write-Output "INFO stale hidden install transactions were ignored: $($staleInstallTransactions.Name -join ', ')" }
     if (!(Test-Path -LiteralPath (Join-Path $install 'PocketAgent.Desktop.exe'))) { throw 'The updated desktop executable is missing after replacement.' }
     Write-Output "PASS updater artifact handoff, replacement, restart health check, and staging cleanup ($Version)."
 }

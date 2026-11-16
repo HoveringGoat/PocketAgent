@@ -726,10 +726,16 @@ public final class MainActivity extends Activity {
         () -> {
           try {
             JSONArray sessions = (JSONArray) client.request("/conversations", null);
-            JSONObject state =
-                id.isEmpty()
-                    ? null
-                    : (JSONObject) client.request("/conversations/" + ApiClient.segment(id), null);
+            JSONObject state = null;
+            ApiClient.ApiError stateError = null;
+            if (!id.isEmpty()) {
+              try {
+                state = (JSONObject) client.request("/conversations/" + ApiClient.segment(id), null);
+              } catch (ApiClient.ApiError error) {
+                if (error.status == 401) throw error;
+                stateError = error;
+              }
+            }
             JSONArray jobs;
             try {
               jobs =
@@ -751,6 +757,7 @@ public final class MainActivity extends Activity {
             }
             JSONArray pendingJobs = jobs;
             JSONObject usage = limits;
+            final ApiClient.ApiError selectedStateError = stateError;
             ui.post(
                 () -> {
                   if (epoch != generation || api != client) return;
@@ -764,6 +771,12 @@ public final class MainActivity extends Activity {
                   if (id.equals(selected)) {
                     scheduledState = pendingJobs;
                     updateScheduleButton();
+                    if (selectedStateError != null) {
+                      conversation = null;
+                      setConversationActionsVisible(false);
+                      context.setText(selectedStateError.getMessage());
+                      problem(selectedStateError.getMessage());
+                    }
                   }
                   if (usage != null) {
                     usageState = usage;

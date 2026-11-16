@@ -115,22 +115,55 @@ static async Task<bool> WaitForFile(string? path, TimeSpan timeout)
 static void BackupDirectory(string source, string backup)
 {
     Directory.CreateDirectory(backup);
-    CopyDirectory(source, backup);
+    // A previous interrupted update can leave a transaction directory inside
+    // the live install. Never copy those transactions into a new backup: they
+    // can contain their own backup and recurse until Windows hits PathTooLong.
+    CopyDirectory(source, backup, skipUpdateTransactions: true);
 }
 
 static void ReplaceDirectoryContents(string source, string target)
 {
     Directory.CreateDirectory(target);
-    foreach (var file in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)) File.Delete(file);
-    foreach (var directory in Directory.EnumerateDirectories(target, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length)) Directory.Delete(directory);
+    // Hidden directories are not valid desktop artifact content. They may be
+    // stale updater transactions with recursively nested backups, so never
+    // traverse them while clearing the live install.
+    foreach (var file in EnumerateFilesSkippingUpdateTransactions(target)) File.Delete(file);
+    foreach (var directory in EnumerateDirectoriesSkippingUpdateTransactions(target).OrderByDescending(path => path.Length)) Directory.Delete(directory);
     CopyDirectory(source, target);
 }
 
-static void CopyDirectory(string source, string target)
+static IEnumerable<string> EnumerateFilesSkippingUpdateTransactions(string root)
+{
+    foreach (var file in Directory.EnumerateFiles(root)) yield return file;
+    foreach (var directory in Directory.EnumerateDirectories(root))
+    {
+        if (IsHiddenDirectory(directory)) continue;
+        foreach (var file in EnumerateFilesSkippingUpdateTransactions(directory)) yield return file;
+    }
+}
+
+static IEnumerable<string> EnumerateDirectoriesSkippingUpdateTransactions(string root)
+{
+    foreach (var directory in Directory.EnumerateDirectories(root))
+    {
+        if (IsHiddenDirectory(directory)) continue;
+        foreach (var nested in EnumerateDirectoriesSkippingUpdateTransactions(directory)) yield return nested;
+        yield return directory;
+    }
+}
+
+static bool IsHiddenDirectory(string path) =>
+    Path.GetFileName(path).StartsWith(".", StringComparison.OrdinalIgnoreCase);
+
+static void CopyDirectory(string source, string target, bool skipUpdateTransactions = false)
 {
     Directory.CreateDirectory(target);
     foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
-    foreach (var directory in Directory.EnumerateDirectories(source)) CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
+    foreach (var directory in Directory.EnumerateDirectories(source))
+    {
+        if (skipUpdateTransactions && IsHiddenDirectory(directory)) continue;
+        CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)), skipUpdateTransactions);
+    }
 }
 
 static void TryStart(string path)

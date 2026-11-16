@@ -16,11 +16,22 @@ internal static class Program
     {
         var root = Directory.GetCurrentDirectory();
         Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", Path.Combine(root, ".local", "desktop-color-" + Guid.NewGuid().ToString("N")));
+        var diagnosticsDirectory = Path.Combine(root, ".local", "desktop-diagnostics-" + Guid.NewGuid().ToString("N"));
+        Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_LOG_DIRECTORY", diagnosticsDirectory);
         var application = new App();
         application.InitializeComponent();
         SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
+            DesktopDiagnostics.Log("desktop-check startup marker token=should-not-appear");
+            DesktopDiagnostics.LogException("desktop-check", new InvalidOperationException("diagnostic exception marker"));
+            var diagnosticsLog = DesktopDiagnostics.LogPath;
+            if (!File.Exists(diagnosticsLog)) throw new InvalidOperationException("Desktop diagnostics log was not created.");
+            var diagnosticsText = File.ReadAllText(diagnosticsLog);
+            if (!diagnosticsText.Contains("desktop-check startup marker", StringComparison.Ordinal) ||
+                !diagnosticsText.Contains("EXCEPTION source=desktop-check", StringComparison.Ordinal) ||
+                diagnosticsText.Contains("should-not-appear", StringComparison.Ordinal))
+                throw new InvalidOperationException("Desktop diagnostics must record lifecycle and exception entries without exposing token-like values.");
             var parser = typeof(UpdateService).GetMethod("TryDesktopVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
             var parseArguments = new object?[] { "desktop-v0.3.2", null };
             if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
@@ -157,6 +168,7 @@ internal static class Program
             var metaSurface = (Border)window.FindName("ConversationMetaSurface")!;
             if (metaSurface.ActualHeight > 48)
                 throw new InvalidOperationException("The conversation context bar must stay compact.");
+            var idleMetaHeight = metaSurface.ActualHeight;
             var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
             if (!conversationMeta.Contains("completed", StringComparison.Ordinal) || conversationMeta.Contains("model", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("selected", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("provider policy", StringComparison.OrdinalIgnoreCase))
@@ -165,8 +177,16 @@ internal static class Program
             if (!Equals(sendButton.Content, "Send"))
                 throw new InvalidOperationException("The send action label must remain Send.");
             var interruptButton = (Button)window.FindName("InterruptButton")!;
-            if (interruptButton.ContentTemplate is null || interruptButton.Visibility != Visibility.Collapsed)
+            if (interruptButton.ContentTemplate is null || interruptButton.Visibility != Visibility.Hidden)
                 throw new InvalidOperationException("The interruption action must use a hidden-when-idle vector icon.");
+            interruptButton.Visibility = Visibility.Visible; window.UpdateLayout();
+            var runningMetaHeight = metaSurface.ActualHeight;
+            interruptButton.Visibility = Visibility.Hidden;
+            if (Math.Abs(idleMetaHeight - runningMetaHeight) > 0.5)
+                throw new InvalidOperationException($"The conversation context bar must keep one height while idle and running. Idle={idleMetaHeight}; running={runningMetaHeight}.");
+            var scheduleButton = (Button)window.FindName("ScheduleButton")!;
+            if (scheduleButton.Width > 48 || scheduleButton.MinWidth > 48)
+                throw new InvalidOperationException("The schedule action must use a compact icon-only button.");
             sendButton.ApplyTemplate(); window.UpdateLayout();
             var sendContent = Descendants(sendButton).OfType<ContentPresenter>().Single();
             ColorIs(TextElement.GetForeground(sendContent), "#111B17", "Primary Send label");

@@ -4,6 +4,13 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.11 - 2026-11-15
+
+- Kept session lists and usage available when a saved conversation points to a Codex thread that is no longer loaded; the conversation now reports a recoverable disconnected state instead of failing the whole refresh.
+- Preserved local conversation metadata and model selection when Codex history is unavailable. The missing remote thread is not silently recreated or resent.
+- Fixed updater backup recursion when an interrupted update leaves a hidden transaction inside the live install; desktop artifacts now reject hidden directories and the updater ignores them during replacement.
+- Added a local rotating desktop diagnostic log under `%LOCALAPPDATA%\PocketAgent\logs`, including startup, shutdown, updater handoff, and unhandled exception records without token-like values.
+
 ## 0.3.10 - 2026-11-12
 
 - Routed desktop file-backed image viewing through the same conversation image validation path used by Android, while retaining local data-URI decoding.

@@ -425,7 +425,7 @@ public partial class MainWindow : Window
         }
         selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
         providerModel = null;
-        ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Collapsed; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+        ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         SetServerToggle(false); SaveButton.IsEnabled = true;
@@ -468,7 +468,7 @@ public partial class MainWindow : Window
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
                 selected = null; conversation = null; rendered = "";
-                ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Collapsed; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
+                ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
             if (signature != sessionSignature)
@@ -525,7 +525,7 @@ public partial class MainWindow : Window
             ConversationMeta.Text = FormatConversationMeta(snapshot);
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
-            InterruptButton.Visibility = snapshot.ActiveTurnId is null ? Visibility.Collapsed : Visibility.Visible;
+            InterruptButton.Visibility = snapshot.ActiveTurnId is null ? Visibility.Hidden : Visibility.Visible;
             SendButton.Content = "Send";
             SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
             ScheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
@@ -615,7 +615,7 @@ public partial class MainWindow : Window
     private async void SessionSelected(object sender, SelectionChangedEventArgs e)
     {
         if (changingList || SessionList.SelectedItem is not SessionEntry entry) return;
-        selected = entry.Id; conversation = null; rendered = ""; InterruptButton.Visibility = Visibility.Collapsed; ConversationMeta.Text = "Loading conversation..."; historyCursors.Remove(selected); olderHistory.Remove(selected);
+        selected = entry.Id; conversation = null; rendered = ""; InterruptButton.Visibility = Visibility.Hidden; ConversationMeta.Text = "Loading conversation..."; historyCursors.Remove(selected); olderHistory.Remove(selected);
         settingDraft = true; Composer.Text = drafts.GetValueOrDefault(selected, ""); settingDraft = false;
         await Refresh();
     }

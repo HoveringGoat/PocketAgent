@@ -188,6 +188,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       break;
     }
     case 'thread/read':
+      if (!threads[params.threadId]) {
+        write({ id: request.id, error: { code: -32000, message: 'thread not loaded' } });
+        break;
+      }
       reply({ thread: threads[params.threadId] });
       break;
     case 'thread/resume':

@@ -63,14 +63,14 @@
             <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <ScrollViewer x:Name="TranscriptScroll" Grid.Row="0" Margin="0,12" ScrollChanged="TranscriptScrollChanged"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
             <!-- Native equivalent of conversation-meta: outside the transcript, immediately above input. -->
-            <Border Grid.Row="1" x:Name="ConversationMetaSurface" Background="#1D2C23" BorderBrush="#47604B" BorderThickness="1" Padding="8,5" Margin="0,0,0,4">
-              <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="" ContentTemplate="{StaticResource StopIconTemplate}" ToolTip="Stop work" AutomationProperties.Name="Stop" Click="InterruptWork" Visibility="Collapsed" MinWidth="30" Width="30" Height="28" Padding="4" Background="Transparent" Foreground="#C1DAA6"/><TextBlock x:Name="ConversationMeta" Text="No active conversation" FontSize="12" VerticalAlignment="Center" Foreground="#C1DAA6"/></DockPanel>
+            <Border Grid.Row="1" x:Name="ConversationMetaSurface" Height="38" MinHeight="38" Background="#1D2C23" BorderBrush="#47604B" BorderThickness="1" Padding="8,5" Margin="0,0,0,4">
+              <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="" ContentTemplate="{StaticResource StopIconTemplate}" ToolTip="Stop work" AutomationProperties.Name="Stop" Click="InterruptWork" Visibility="Hidden" MinWidth="30" Width="30" Height="28" Padding="4" Background="Transparent" Foreground="#C1DAA6"/><TextBlock x:Name="ConversationMeta" Text="No active conversation" FontSize="12" VerticalAlignment="Center" Foreground="#C1DAA6"/></DockPanel>
             </Border>
             <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="105" MaxHeight="200" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
+              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="88" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
               <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12">
                 <Button x:Name="SendButton" Content="Send" Click="SendMessage" Background="#C1DAA6" Foreground="#111B17" MinWidth="104"><Button.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="NoWrap" Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"/></DataTemplate></Button.ContentTemplate></Button>
-                <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol" MinWidth="104"/>
+                <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol" Width="38" MinWidth="38" Height="38" Padding="4" FontSize="18"/>
                 <Button x:Name="ScheduledSummaryButton" Visibility="Collapsed" Click="ShowScheduled"/>
               </StackPanel>
             </Grid>

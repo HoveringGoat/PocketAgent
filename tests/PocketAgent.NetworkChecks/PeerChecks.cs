@@ -13,7 +13,7 @@ internal static class PeerChecks
 {
     public static async Task Run()
     {
-        var directory = Path.Combine(Directory.GetCurrentDirectory(), ".local", "qr-fixture"); Directory.CreateDirectory(directory);
+        var directory = Path.Combine(Directory.GetCurrentDirectory(), ".local", "qr-fixture-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
         var settings = new HostSettings { RepositoryPath = Directory.GetCurrentDirectory(), DataDirectory = directory, ListenAddress = "127.0.0.1", DirectOrigin = "https://203.0.113.10:5147", CertificatePath = Path.Combine(directory, "certificates", "device", "server.pfx"), PinnedCertificate = true };
         PeerCertificates.Provision(settings);
         using var first = X509CertificateLoader.LoadPkcs12FromFile(settings.CertificatePath, null, X509KeyStorageFlags.EphemeralKeySet);
@@ -68,6 +68,18 @@ internal static class PeerChecks
             client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", paired.RootElement.GetProperty("token").GetString());
             using var protectedResponse = await client.GetAsync(settings.DirectOrigin + "/api/conversations");
             Check(protectedResponse.IsSuccessStatusCode, "Paired token did not authorize conversation access.");
+            var store = app.Services.GetRequiredService<LocalStore>();
+            var missingThreadId = "missing-thread-" + Guid.NewGuid().ToString("N");
+            store.SaveConversation(missingThreadId, "Recovered metadata", settings.RepositoryPath, "gpt-6.1-sol", "high");
+            using var unavailable = await client.GetAsync(settings.DirectOrigin + "/api/conversations/" + missingThreadId);
+            Check(unavailable.IsSuccessStatusCode, "A missing Codex thread must not fail the conversation endpoint.");
+            using var unavailableBody = JsonDocument.Parse(await unavailable.Content.ReadAsStringAsync());
+            Check(unavailableBody.RootElement.GetProperty("status").GetString() == "disconnected" &&
+                unavailableBody.RootElement.GetProperty("error").GetString()?.Contains("thread not loaded", StringComparison.OrdinalIgnoreCase) == true &&
+                unavailableBody.RootElement.GetProperty("model").GetString() == "gpt-6.1-sol",
+                "Missing Codex threads must preserve local metadata and expose a recoverable error state.");
+            using var usageResponse = await client.GetAsync(settings.DirectOrigin + "/api/usage");
+            Check(usageResponse.IsSuccessStatusCode, "Usage must remain available when a selected thread is missing.");
         }
         await CheckTls(second); PeerCertificates.Provision(settings, true); app.Services.GetRequiredService<PeerCertificates>().Reload();
         using var rotated = X509CertificateLoader.LoadPkcs12FromFile(settings.CertificatePath, null, X509KeyStorageFlags.EphemeralKeySet); await CheckTls(rotated);

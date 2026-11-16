@@ -6,6 +6,27 @@ namespace PocketAgent.Desktop;
 
 public partial class App : Application
 {
+    public App()
+    {
+        DesktopDiagnostics.Initialize();
+        DispatcherUnhandledException += (_, args) =>
+        {
+            DesktopDiagnostics.LogException("dispatcher", args.Exception);
+            args.Handled = false;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception exception) DesktopDiagnostics.LogException("app-domain", exception);
+            else DesktopDiagnostics.Log($"EXCEPTION source=app-domain object={args.ExceptionObject}");
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            DesktopDiagnostics.LogException("task-scheduler", args.Exception);
+            args.SetObserved();
+        };
+        Exit += (_, _) => DesktopDiagnostics.LogShutdown("application-exit");
+    }
+
     private void WindowLoaded(object sender, RoutedEventArgs args)
     {
         if (sender is not Window window || !ReferenceEquals(args.OriginalSource, window)) return;
