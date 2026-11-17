@@ -1,4 +1,5 @@
 mod codex;
+mod diagnostics;
 mod store;
 
 use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
@@ -21,6 +22,7 @@ use tokio::{
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    diagnostics::record("startup", "desktop_launch");
     let window = AppWindow::new()?;
     let interaction = InteractionState::shared();
     let store = DesktopStore::load();
@@ -153,6 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = window.as_weak();
         let relay_shutdown = Arc::clone(&relay_shutdown);
         window.on_start_relay(move |bind_address| {
+            diagnostics::record("relay", "start_requested");
             if relay_shutdown
                 .lock()
                 .expect("relay state lock should work")
@@ -218,8 +221,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let result = server.serve_until(listener, shutdown_rx).await;
                     *relay_shutdown.lock().expect("relay state lock should work") = None;
                     if let Err(error) = result {
+                        diagnostics::record("relay", "stopped_error");
                         set_relay_error(&weak, format!("Relay stopped with an error: {error}"));
                     } else {
+                        diagnostics::record("relay", "stopped");
                         set_relay_stopped(&weak);
                     }
                 });
@@ -230,6 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = window.as_weak();
         let relay_shutdown = Arc::clone(&relay_shutdown);
         window.on_stop_relay(move || {
+            diagnostics::record("relay", "stop_requested");
             if let Some(shutdown) = relay_shutdown
                 .lock()
                 .expect("relay state lock should work")
@@ -299,9 +305,11 @@ fn start_codex_worker(
                         repository,
                         executable,
                     } => {
+                        diagnostics::record("codex", "connect_start");
                         set_codex_status(&weak, "Connecting to Codex...".into(), None);
                         match CodexSession::connect(&executable, &repository).await {
                             Ok(mut connected) => {
+                                diagnostics::record("codex", "connect_ready");
                                 let sessions = connected.list_threads().await;
                                 store.repository_path = repository;
                                 store.codex_executable = executable;
@@ -333,6 +341,7 @@ fn start_codex_worker(
                                 }
                             }
                             Err(error) => {
+                                diagnostics::record("codex", "connect_failed");
                                 session = None;
                                 set_codex_error(&weak, error.to_string());
                             }
@@ -348,6 +357,7 @@ fn start_codex_worker(
                             .await
                         {
                             Ok(id) => {
+                                diagnostics::record("conversation", "created");
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
                                 store.merge_threads([(id, "New conversation".into())]);
@@ -407,6 +417,7 @@ fn start_codex_worker(
                         if let Some(id) = selected_id.as_deref()
                             && store.set_archived(id, true)
                         {
+                            diagnostics::record("conversation", "archived");
                             let _ = store.save();
                             set_sessions(&weak, visible_sessions(&store, showing_archived));
                         }
@@ -415,6 +426,7 @@ fn start_codex_worker(
                         if let Some(id) = selected_id.as_deref()
                             && store.set_archived(id, false)
                         {
+                            diagnostics::record("conversation", "restored");
                             let _ = store.save();
                             set_sessions(&weak, visible_sessions(&store, showing_archived));
                         }
@@ -445,6 +457,7 @@ fn start_codex_worker(
                         model,
                         effort,
                     } => {
+                        diagnostics::record("turn", "start");
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
@@ -502,9 +515,13 @@ fn start_codex_worker(
                                 refresh_sessions(current, &weak, &mut store).await;
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
+                                diagnostics::record("turn", "stopped");
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                             }
-                            Err(error) => set_codex_error(&weak, error.to_string()),
+                            Err(error) => {
+                                diagnostics::record("turn", "failed");
+                                set_codex_error(&weak, error.to_string());
+                            }
                         }
                     }
                     CodexCommand::Stop => {}

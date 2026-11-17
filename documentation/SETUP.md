@@ -153,6 +153,8 @@ pairing, provider credentials, and conversation state are not used.
 
 ### Rust desktop MVP preview
 
+Rust desktop diagnostics are appended to `%LOCALAPPDATA%/PocketAgent-rust/desktop.log` (or the XDG data equivalent). Entries record lifecycle and failure categories without message bodies, tokens, or provider stderr.
+
 The Rust rewrite now has a runnable native desktop shell. It defaults to local Codex mode: the repository defaults to saved local state, `POCKETAGENT_REPOSITORY`, or the launch directory, and Windows detects `%APPDATA%/npm/codex.ps1` when present. It connects to Codex on startup, persists settings, thread metadata, and per-conversation model/reasoning values under the user data directory, lists the provider model catalog and sanitized rate-limit usage summary, lists saved threads, creates a new conversation, resumes a selected thread, sends prompts, renders headings, bullets, code blocks, command output, and file changes as Markdown-styled transcript blocks, and presents supported Codex approval/user-input requests in the conversation view. The **Optional relay** panel starts/stops the authenticated relay and accepts an explicit bind address (it defaults to loopback). Its host/client development identity is persisted under `%LOCALAPPDATA%/PocketAgent-rust/relay.json`; do not expose that file or use this development enrollment as a production security boundary. Local conversation use does not require the relay. Full history pagination, device enrollment, mobile adapters, and replacement of the packaged WPF/ASP.NET desktop are still open.
 
 ```powershell
