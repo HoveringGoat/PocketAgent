@@ -15,6 +15,8 @@ $executable = Join-Path (Join-Path (Get-Location) 'rust/target/release') $execut
 if (!(Test-Path -LiteralPath $executable)) { throw "Rust desktop executable was not produced: $executable" }
 Copy-Item -LiteralPath $executable -Destination (Join-Path $output $executableName) -Force
 Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md -Destination $output -Force
+& (Join-Path (Get-Location) 'tests/rust-desktop-smoke.ps1') -Executable (Join-Path $output $executableName)
+if ($LASTEXITCODE -ne 0) { throw 'Rust desktop smoke test failed.' }
 
 $archive = Join-Path (Split-Path $output -Parent) 'PocketAgent-RustDesktopPreview.zip'
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -Force

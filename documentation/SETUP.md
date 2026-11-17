@@ -165,7 +165,7 @@ To produce a portable preview directory and ZIP, run:
 .\scripts\Build-RustDesktop.ps1
 ```
 
-The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. This preview package is separate from the current WPF installer and is not an app-release channel yet.
+The build runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. This preview package is separate from the current WPF installer and is not an app-release channel yet.
 
 Focused checks for this change:
 
