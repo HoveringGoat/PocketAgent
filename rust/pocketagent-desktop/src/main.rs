@@ -13,7 +13,10 @@ use std::{
 };
 use store::DesktopStore;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio::{net::TcpListener, sync::oneshot};
+use tokio::{
+    net::TcpListener,
+    sync::{oneshot, watch},
+};
 
 slint::include_modules!();
 
@@ -64,10 +67,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = commands.send(CodexCommand::SelectSession(id.to_string()));
         });
     }
+    {
+        let commands = codex_commands.clone();
+        window.on_archive_session(move || {
+            let _ = commands.send(CodexCommand::ArchiveSelected);
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_restore_session(move || {
+            let _ = commands.send(CodexCommand::RestoreSelected);
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_toggle_pin(move || {
+            let _ = commands.send(CodexCommand::TogglePin);
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_rename_session(move |title| {
+            let _ = commands.send(CodexCommand::RenameSelected(title.to_string()));
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_toggle_archived(move || {
+            let _ = commands.send(CodexCommand::ToggleArchived);
+        });
+    }
     let startup_commands = codex_commands.clone();
     window.on_send_prompt(move |prompt| {
         let _ = codex_commands.send(CodexCommand::Prompt(prompt.to_string()));
     });
+    {
+        let commands = startup_commands.clone();
+        window.on_stop_work(move || {
+            let _ = commands.send(CodexCommand::Stop);
+        });
+    }
 
     let _ = startup_commands.send(CodexCommand::Connect {
         repository,
@@ -167,7 +206,13 @@ enum CodexCommand {
     NewConversation,
     RefreshSessions,
     SelectSession(String),
+    ArchiveSelected,
+    RestoreSelected,
+    TogglePin,
+    RenameSelected(String),
+    ToggleArchived,
     Prompt(String),
+    Stop,
 }
 
 fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexCommand> {
@@ -186,6 +231,8 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
         runtime.block_on(async move {
             let mut session: Option<CodexSession> = None;
             let mut store = DesktopStore::load();
+            let mut selected_id = None::<String>;
+            let mut showing_archived = false;
             set_sessions(&weak, store.display_sessions());
             while let Some(command) = receiver.recv().await {
                 match command {
@@ -223,6 +270,8 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                         };
                         match current.new_thread().await {
                             Ok(id) => {
+                                selected_id = Some(id.clone());
+                                set_selected_session(&weak, id.clone());
                                 store.merge_threads([(id, "New conversation".into())]);
                                 let _ = store.save();
                                 set_transcript(&weak, "New conversation ready".into());
@@ -244,16 +293,57 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             continue;
                         };
                         match current.resume_thread(&id).await {
-                            Ok(history) => set_transcript(
-                                &weak,
-                                if history.is_empty() {
-                                    "Conversation loaded".into()
-                                } else {
-                                    history
-                                },
-                            ),
+                            Ok(history) => {
+                                selected_id = Some(id.clone());
+                                set_selected_session(&weak, id);
+                                set_transcript(
+                                    &weak,
+                                    if history.is_empty() {
+                                        "Conversation loaded".into()
+                                    } else {
+                                        history
+                                    },
+                                )
+                            }
                             Err(error) => set_codex_error(&weak, error.to_string()),
                         }
+                    }
+                    CodexCommand::ArchiveSelected => {
+                        if let Some(id) = selected_id.as_deref()
+                            && store.set_archived(id, true)
+                        {
+                            let _ = store.save();
+                            set_sessions(&weak, visible_sessions(&store, showing_archived));
+                        }
+                    }
+                    CodexCommand::RestoreSelected => {
+                        if let Some(id) = selected_id.as_deref()
+                            && store.set_archived(id, false)
+                        {
+                            let _ = store.save();
+                            set_sessions(&weak, visible_sessions(&store, showing_archived));
+                        }
+                    }
+                    CodexCommand::TogglePin => {
+                        if let Some(id) = selected_id.as_deref()
+                            && store.toggle_pinned(id)
+                        {
+                            let _ = store.save();
+                            set_sessions(&weak, visible_sessions(&store, showing_archived));
+                        }
+                    }
+                    CodexCommand::RenameSelected(title) => {
+                        if let Some(id) = selected_id.as_deref()
+                            && store.rename(id, &title)
+                        {
+                            let _ = store.save();
+                            set_sessions(&weak, visible_sessions(&store, showing_archived));
+                        }
+                    }
+                    CodexCommand::ToggleArchived => {
+                        showing_archived = !showing_archived;
+                        set_sessions(&weak, visible_sessions(&store, showing_archived));
+                        set_archived_view(&weak, showing_archived);
                     }
                     CodexCommand::Prompt(prompt) => {
                         let Some(current) = session.as_mut() else {
@@ -261,14 +351,32 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             continue;
                         };
                         set_codex_status(&weak, "Codex is working...".into(), None);
-                        match current.send_prompt(&prompt).await {
+                        let (stop_tx, mut stop_rx) = watch::channel(false);
+                        let result = loop {
+                            tokio::select! {
+                                result = current.send_prompt(&prompt, &mut stop_rx) => break Some(result),
+                                command = receiver.recv() => match command {
+                                    Some(CodexCommand::Stop) => {
+                                        let _ = stop_tx.send(true);
+                                    }
+                                    Some(_) => {}
+                                    None => break None,
+                                },
+                            }
+                        };
+                        let Some(result) = result else { break };
+                        match result {
                             Ok(response) => {
                                 set_codex_status(&weak, "Codex is ready".into(), Some(response));
                                 refresh_sessions(current, &weak, &mut store).await;
                             }
+                            Err(error) if error.to_string() == "Turn stopped by user" => {
+                                set_codex_status(&weak, "Codex is ready".into(), None);
+                            }
                             Err(error) => set_codex_error(&weak, error.to_string()),
                         }
                     }
+                    CodexCommand::Stop => {}
                 }
             }
         });
@@ -288,6 +396,14 @@ async fn refresh_sessions(
             set_sessions(weak, store.display_sessions());
         }
         Err(error) => set_codex_error(weak, error.to_string()),
+    }
+}
+
+fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {
+    if showing_archived {
+        store.display_archived_sessions()
+    } else {
+        store.display_sessions()
     }
 }
 
@@ -356,6 +472,14 @@ fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) 
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_session_items(slint::ModelRc::new(slint::VecModel::from(items)));
     });
+}
+
+fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_current_session_id(id.into()));
+}
+
+fn set_archived_view(weak: &slint::Weak<AppWindow>, showing: bool) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_showing_archived(showing));
 }
 
 fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {

@@ -21,6 +21,8 @@ export component AppWindow inherits Window {
     in-out property <string> codex-executable: "codex";
     in-out property <string> codex-status: "Codex is disconnected";
     in-out property <[SessionItem]> session-items: [];
+    in-out property <string> current-session-id: "";
+    in-out property <bool> showing-archived: false;
     in-out property <[MarkdownBlock]> transcript-blocks: [];
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
@@ -29,7 +31,13 @@ export component AppWindow inherits Window {
     callback new-conversation();
     callback refresh-sessions();
     callback select-session(string);
+    callback archive-session();
+    callback restore-session();
+    callback toggle-pin();
+    callback rename-session(string);
+    callback toggle-archived();
     callback send-prompt(string);
+    callback stop-work();
     callback start-relay();
     callback stop-relay();
 
@@ -82,6 +90,14 @@ export component AppWindow inherits Window {
                     spacing: 8px;
                     Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(); } }
                     Button { text: "Refresh"; enabled: codex-status == "Codex is ready"; clicked => { refresh-sessions(); } }
+                    Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
+                    Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                    Button { text: showing-archived ? "Restore" : "Archive"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
+                }
+                HorizontalBox {
+                    spacing: 8px;
+                    rename := LineEdit { placeholder-text: "Rename selected conversation"; }
+                    Button { text: "Rename"; enabled: current-session-id != "" && rename.text != ""; clicked => { rename-session(rename.text); rename.text = ""; } }
                 }
             }
         }
@@ -105,6 +121,11 @@ export component AppWindow inherits Window {
                         text: "Send";
                         enabled: codex-status == "Codex is ready" && prompt.text != "";
                         clicked => { send-prompt(prompt.text); prompt.text = ""; }
+                    }
+                    Button {
+                        text: "Stop";
+                        enabled: codex-status == "Codex is working...";
+                        clicked => { stop-work(); }
                     }
                 }
             }

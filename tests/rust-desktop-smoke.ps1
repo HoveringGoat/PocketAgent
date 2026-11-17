@@ -37,7 +37,7 @@ try {
     }
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
-    $stop = $buttons | Where-Object { $_.Current.Name -eq 'Stop' }
+    $stop = $buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1
     if ($null -eq $stop) { throw 'Stop button was not exposed while running.' }
     $stop.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 400

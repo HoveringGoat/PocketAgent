@@ -75,10 +75,18 @@ impl DesktopStore {
     }
 
     pub fn display_sessions(&self) -> Vec<(String, String)> {
+        self.display_filtered(false)
+    }
+
+    pub fn display_archived_sessions(&self) -> Vec<(String, String)> {
+        self.display_filtered(true)
+    }
+
+    fn display_filtered(&self, archived: bool) -> Vec<(String, String)> {
         let mut sessions = self
             .conversations
             .iter()
-            .filter(|conversation| !conversation.archived)
+            .filter(|conversation| conversation.archived == archived)
             .map(|conversation| {
                 let title = format!(
                     "{}{}  ({})",
@@ -91,6 +99,34 @@ impl DesktopStore {
             .collect::<Vec<_>>();
         sessions.sort_by(|left, right| left.1.cmp(&right.1));
         sessions
+    }
+
+    pub fn set_archived(&mut self, id: &str, archived: bool) -> bool {
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.archived = archived;
+        true
+    }
+
+    pub fn toggle_pinned(&mut self, id: &str) -> bool {
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.pinned = !conversation.pinned;
+        true
+    }
+
+    pub fn rename(&mut self, id: &str, title: &str) -> bool {
+        let title = title.trim();
+        if title.is_empty() {
+            return false;
+        }
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.title = title.to_owned();
+        true
     }
 }
 
@@ -113,5 +149,27 @@ mod tests {
         assert_eq!(store.conversations[0].title, "Saved title");
         assert!(store.conversations[0].archived);
         assert!(store.conversations[0].pinned);
+    }
+
+    #[test]
+    fn conversation_controls_update_local_metadata() {
+        let mut store = DesktopStore {
+            conversations: vec![ConversationRecord {
+                id: "thread-1".into(),
+                title: "Old title".into(),
+                archived: false,
+                pinned: false,
+            }],
+            ..Default::default()
+        };
+        assert!(store.rename("thread-1", "New title"));
+        assert!(store.toggle_pinned("thread-1"));
+        assert!(store.set_archived("thread-1", true));
+        assert!(store.display_sessions().is_empty());
+        assert_eq!(
+            store.display_archived_sessions()[0].1,
+            "[pinned] New title  (thread-1)"
+        );
+        assert!(store.set_archived("thread-1", false));
     }
 }

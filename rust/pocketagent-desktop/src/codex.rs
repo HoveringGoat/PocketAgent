@@ -3,6 +3,7 @@ use std::{io, path::Path};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
+    sync::watch,
 };
 
 pub struct CodexSession {
@@ -90,20 +91,46 @@ impl CodexSession {
     pub async fn send_prompt(
         &mut self,
         prompt: &str,
+        cancel: &mut watch::Receiver<bool>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread_id = self.ensure_thread().await?;
-        self.request(
-            "turn/start",
-            json!({
-                "threadId": thread_id,
-                "input": [{ "type": "text", "text": prompt, "text_elements": [] }]
-            }),
-        )
-        .await?;
+        let turn = self
+            .request(
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{ "type": "text", "text": prompt, "text_elements": [] }]
+                }),
+            )
+            .await?;
+        let turn_id = turn
+            .get("turn")
+            .and_then(|turn| turn.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
 
         let mut output = String::new();
+        let mut interrupted = false;
         loop {
-            let message = self.read_message().await?;
+            let message = if interrupted {
+                self.read_message().await?
+            } else {
+                tokio::select! {
+                    message = self.read_message() => message?,
+                    changed = cancel.changed() => {
+                        if changed.is_ok() && *cancel.borrow() {
+                            if let Some(turn_id) = turn_id.as_deref() {
+                                let _ = self.notify("turn/interrupt", json!({
+                                    "threadId": thread_id,
+                                    "turnId": turn_id,
+                                })).await;
+                            }
+                            interrupted = true;
+                        }
+                        continue;
+                    }
+                }
+            };
             match message.get("method").and_then(Value::as_str) {
                 Some("item/agentMessage/delta") => {
                     if let Some(delta) = message
@@ -115,6 +142,9 @@ impl CodexSession {
                     }
                 }
                 Some("turn/completed") => {
+                    if interrupted {
+                        return Err(io::Error::other("Turn stopped by user").into());
+                    }
                     if output.is_empty()
                         && let Some(items) = message
                             .get("params")
