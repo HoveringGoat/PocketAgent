@@ -9,6 +9,7 @@ publish = false
 pocketagent-relay = { path = "../pocketagent-relay" }
 serde_json = "1"
 pulldown-cmark = "0.13"
+serde = { version = "1", features = ["derive"] }
 slint = "1.14"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "rt"] }
 
