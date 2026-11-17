@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::{env, fs, io, path::PathBuf};
+use std::{
+    env, fs, io,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConversationRecord {
@@ -11,6 +15,10 @@ pub struct ConversationRecord {
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub created_at_unix: i64,
+    #[serde(default)]
+    pub last_activity_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -35,10 +43,17 @@ impl DesktopStore {
 
     pub fn load() -> Self {
         let path = Self::path();
-        fs::read_to_string(path)
+        let mut store: Self = fs::read_to_string(path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let now = now_unix();
+        for conversation in &mut store.conversations {
+            if conversation.created_at_unix == 0 {
+                conversation.created_at_unix = now;
+            }
+        }
+        store
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -75,6 +90,8 @@ impl DesktopStore {
                     pinned: false,
                     model: None,
                     reasoning_effort: None,
+                    created_at_unix: now_unix(),
+                    last_activity_unix: None,
                 });
             }
         }
@@ -148,6 +165,35 @@ impl DesktopStore {
         conversation.reasoning_effort = effort.filter(|value| !value.trim().is_empty());
         true
     }
+
+    pub fn mark_activity(&mut self, id: &str, timestamp: i64) -> bool {
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.last_activity_unix = Some(timestamp);
+        true
+    }
+
+    pub fn archive_stale(&mut self, cutoff_unix: i64) -> usize {
+        let mut archived = 0;
+        for conversation in &mut self.conversations {
+            let activity = conversation
+                .last_activity_unix
+                .unwrap_or(conversation.created_at_unix);
+            if !conversation.archived && !conversation.pinned && activity < cutoff_unix {
+                conversation.archived = true;
+                archived += 1;
+            }
+        }
+        archived
+    }
+}
+
+pub fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -164,6 +210,8 @@ mod tests {
                 pinned: true,
                 model: None,
                 reasoning_effort: None,
+                created_at_unix: 1,
+                last_activity_unix: None,
             }],
             ..Default::default()
         };
@@ -183,6 +231,8 @@ mod tests {
                 pinned: false,
                 model: None,
                 reasoning_effort: None,
+                created_at_unix: 1,
+                last_activity_unix: None,
             }],
             ..Default::default()
         };
@@ -195,5 +245,48 @@ mod tests {
             "[pinned] New title  (thread-1)"
         );
         assert!(store.set_archived("thread-1", false));
+    }
+
+    #[test]
+    fn auto_archive_skips_pinned_and_recent_conversations() {
+        let mut store = DesktopStore {
+            conversations: vec![
+                ConversationRecord {
+                    id: "old".into(),
+                    title: "Old".into(),
+                    archived: false,
+                    pinned: false,
+                    model: None,
+                    reasoning_effort: None,
+                    created_at_unix: 10,
+                    last_activity_unix: None,
+                },
+                ConversationRecord {
+                    id: "pinned".into(),
+                    title: "Pinned".into(),
+                    archived: false,
+                    pinned: true,
+                    model: None,
+                    reasoning_effort: None,
+                    created_at_unix: 10,
+                    last_activity_unix: None,
+                },
+                ConversationRecord {
+                    id: "recent".into(),
+                    title: "Recent".into(),
+                    archived: false,
+                    pinned: false,
+                    model: None,
+                    reasoning_effort: None,
+                    created_at_unix: 10,
+                    last_activity_unix: Some(99),
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(store.archive_stale(50), 1);
+        assert!(store.conversations[0].archived);
+        assert!(!store.conversations[1].archived);
+        assert!(!store.conversations[2].archived);
     }
 }

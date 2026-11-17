@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use store::DesktopStore;
+use store::{DesktopStore, now_unix};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::{
     net::TcpListener,
@@ -298,6 +298,10 @@ fn start_codex_worker(
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
             let mut showing_archived = false;
+            if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
+                diagnostics::record("conversation", "auto_archived_stale");
+                let _ = store.save();
+            }
             set_sessions(&weak, store.display_sessions());
             while let Some(command) = receiver.recv().await {
                 match command {
@@ -509,6 +513,10 @@ fn start_codex_worker(
                                     .filter(|text| !text.is_empty())
                                     .unwrap_or(response);
                                 set_codex_status(&weak, "Codex is ready".into(), Some(transcript));
+                                if let Some(id) = selected_id.as_deref() {
+                                    store.mark_activity(id, now_unix());
+                                    let _ = store.save();
+                                }
                                 if let Ok(usage) = current.usage_summary().await {
                                     set_usage(&weak, usage);
                                 }
