@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 futures-util = "0.3"
+pocketagent-crypto = { path = "../pocketagent-crypto" }
 pocketagent-protocol = { path = "../pocketagent-protocol" }
 rustls = "0.23"
 serde_json = "1"
@@ -19,5 +20,4 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-pocketagent-crypto = { path = "../pocketagent-crypto" }
 rcgen = "0.13"

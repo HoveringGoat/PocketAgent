@@ -1,7 +1,8 @@
-//! In-process relay routing core.
+//! In-process relay routing core and authenticated WebSocket transport.
 //!
-//! This crate deliberately has no socket listener yet. It proves the routing and
-//! session boundaries before adding WebSocket/HTTPS transport and persistent identity.
+//! The transport is an MVP foundation: it supports loopback `ws://` and native
+//! Rustls `wss://` listeners, while enrollment and persistent identity remain
+//! application-level work.
 
 use pocketagent_protocol::{RelayFrame, RelayFrameEnvelope, RelayRequest, RelayResponse};
 use std::{collections::HashMap, sync::Arc};
