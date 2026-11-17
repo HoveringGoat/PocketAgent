@@ -3,8 +3,9 @@ use pocketagent_protocol::{
     OpaqueEnvelope, RelayFrame, RelayFrameEnvelope, RelayRequest, RelayResponse,
 };
 use pocketagent_relay::RelayNode;
+use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportClient, RelayTransportServer};
-use std::{env, error::Error, io};
+use std::{env, error::Error, fs, io, path::Path};
 use tokio::{net::TcpListener, sync::oneshot};
 use uuid::Uuid;
 
@@ -13,6 +14,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match env::args().nth(1).as_deref() {
         Some("demo") => run_demo().await,
         Some("serve") => run_serve().await,
+        Some("init-config") => run_init_config(),
+        Some("serve-config") => run_serve_config().await,
         Some("host") => run_host().await,
         Some("client") => run_client().await,
         _ => {
@@ -28,6 +31,10 @@ fn print_usage() {
     println!("  cargo run -p pocketagent-relay --bin pocketagent-relay -- demo");
     println!(
         "  cargo run -p pocketagent-relay --bin pocketagent-relay -- serve <bind> <host-id> <host-token> <client-id> <client-token>"
+    );
+    println!("  cargo run -p pocketagent-relay --bin pocketagent-relay -- init-config <path>");
+    println!(
+        "  cargo run -p pocketagent-relay --bin pocketagent-relay -- serve-config <bind> <path>"
     );
     println!(
         "  cargo run -p pocketagent-relay --bin pocketagent-relay -- host <url> <host-id> <host-token>"
@@ -60,6 +67,52 @@ async fn run_serve() -> Result<(), Box<dyn Error>> {
         .await;
     let listener = TcpListener::bind(bind).await?;
     println!("relay listening at ws://{}", listener.local_addr()?);
+    println!("press Ctrl+C to stop");
+    let server = RelayTransportServer::new(RelayNode::new(), auth);
+    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+    server.serve_until(listener, shutdown_rx).await?;
+    Ok(())
+}
+
+fn run_init_config() -> Result<(), Box<dyn Error>> {
+    let path = env::args()
+        .nth(2)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "init-config expects a path"))?;
+    let path = Path::new(&path);
+    if path.exists() {
+        return Err(
+            io::Error::new(io::ErrorKind::AlreadyExists, "config file already exists").into(),
+        );
+    }
+    let config = RelayConfig::new();
+    let encoded = serde_json::to_string_pretty(&config)?;
+    fs::write(path, format!("{encoded}\n"))?;
+    println!("created relay config at {}", path.display());
+    println!("host id: {}", config.host_id);
+    println!("client id: {}", config.client_id);
+    println!("tokens are stored only in the config file");
+    Ok(())
+}
+
+async fn run_serve_config() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = env::args().skip(2).collect();
+    if args.len() != 2 {
+        print_usage();
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "serve-config expects bind and path",
+        )
+        .into());
+    }
+    let config: RelayConfig = serde_json::from_str(&fs::read_to_string(&args[1])?)?;
+    let auth = RelayAuthRegistry::default();
+    auth.register_host(config.host_id, config.host_token.into_bytes())
+        .await;
+    auth.register_client(config.client_id, config.client_token.into_bytes())
+        .await;
+    let listener = TcpListener::bind(&args[0]).await?;
+    println!("relay listening at ws://{}", listener.local_addr()?);
+    println!("loaded identities from {}", args[1]);
     println!("press Ctrl+C to stop");
     let server = RelayTransportServer::new(RelayNode::new(), auth);
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();

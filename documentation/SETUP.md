@@ -175,6 +175,15 @@ cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent
 
 The host probe echoes the client's opaque envelope and the client verifies the request ID and envelope. These commands use loopback `ws://`, in-memory authentication and a deliberately non-provider payload; they are development probes, not a production service or a replacement for device enrollment.
 
+To keep probe identities across restarts, create a local config once and start from it:
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- init-config .local/relay-config.json
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- serve-config 127.0.0.1:8787 .local/relay-config.json
+```
+
+The generated file contains bearer tokens and must stay local/ignored. This format is intentionally plain JSON for the MVP; it is not encrypted secret storage and must not be used for production deployment.
+
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
 Build/lint/signature checks and focused native/protocol tests are distinguished from physical acceptance: scanning a real screen with the phone camera and connecting through the actual router/cellular route still require user verification. No public endpoint, router/Caddy configuration, live model turn or full test suite was used. Native title-bar attributes can fall back to Windows behavior; OS-owned folder pickers retain the OS theme. A prior theme claim was too broad: brush/render tests do not prove every OS theme state matches the user's display.
