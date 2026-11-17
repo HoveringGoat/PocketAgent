@@ -12,11 +12,14 @@ use std::{collections::HashMap, io, sync::Arc};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     sync::{RwLock, mpsc, oneshot},
 };
+use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, accept_async, connect_async, tungstenite::Message,
+    Connector, MaybeTlsStream, WebSocketStream, accept_async, connect_async,
+    connect_async_tls_with_config, tungstenite::Message,
 };
 use url::Url;
 use uuid::Uuid;
@@ -109,7 +112,33 @@ impl RelayTransportServer {
         }
     }
 
-    async fn handle(&self, stream: TcpStream) -> Result<(), TransportError> {
+    pub async fn serve_tls_until(
+        &self,
+        listener: TcpListener,
+        acceptor: TlsAcceptor,
+        mut shutdown: oneshot::Receiver<()>,
+    ) -> Result<(), TransportError> {
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (stream, _) = accepted?;
+                    let acceptor = acceptor.clone();
+                    let server = self.clone();
+                    tokio::spawn(async move {
+                        if let Ok(stream) = acceptor.accept(stream).await {
+                            let _ = server.handle(stream).await;
+                        }
+                    });
+                }
+                _ = &mut shutdown => return Ok(()),
+            }
+        }
+    }
+
+    async fn handle<S>(&self, stream: S) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let mut socket = accept_async(stream).await?;
         let first = socket
             .next()
@@ -184,12 +213,15 @@ impl RelayTransportServer {
         result
     }
 
-    async fn handle_wire(
+    async fn handle_wire<S>(
         &self,
-        socket: &mut WebSocketStream<TcpStream>,
+        socket: &mut WebSocketStream<S>,
         role: &SessionRole,
         message: RelayWireMessage,
-    ) -> Result<(), TransportError> {
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let RelayWireMessage::Frame(frame) = message else {
             return Err(TransportError::UnexpectedMessage);
         };
@@ -252,7 +284,26 @@ impl RelayTransportClient {
         host_id: Uuid,
         token: Vec<u8>,
     ) -> Result<Self, TransportError> {
-        Self::connect(url, RelayWireMessage::AuthenticateHost { host_id, token }).await
+        Self::connect(
+            url,
+            RelayWireMessage::AuthenticateHost { host_id, token },
+            None,
+        )
+        .await
+    }
+
+    pub async fn connect_host_with_connector(
+        url: &str,
+        host_id: Uuid,
+        token: Vec<u8>,
+        connector: Connector,
+    ) -> Result<Self, TransportError> {
+        Self::connect(
+            url,
+            RelayWireMessage::AuthenticateHost { host_id, token },
+            Some(connector),
+        )
+        .await
     }
 
     pub async fn connect_client(
@@ -263,13 +314,37 @@ impl RelayTransportClient {
         Self::connect(
             url,
             RelayWireMessage::AuthenticateClient { client_id, token },
+            None,
         )
         .await
     }
 
-    async fn connect(url: &str, authentication: RelayWireMessage) -> Result<Self, TransportError> {
+    pub async fn connect_client_with_connector(
+        url: &str,
+        client_id: Uuid,
+        token: Vec<u8>,
+        connector: Connector,
+    ) -> Result<Self, TransportError> {
+        Self::connect(
+            url,
+            RelayWireMessage::AuthenticateClient { client_id, token },
+            Some(connector),
+        )
+        .await
+    }
+
+    async fn connect(
+        url: &str,
+        authentication: RelayWireMessage,
+        connector: Option<Connector>,
+    ) -> Result<Self, TransportError> {
         let parsed = Url::parse(url)?;
-        let (mut socket, _) = connect_async(parsed.as_str()).await?;
+        let (mut socket, _) = match connector {
+            Some(connector) => {
+                connect_async_tls_with_config(parsed.as_str(), None, false, Some(connector)).await?
+            }
+            None => connect_async(parsed.as_str()).await?,
+        };
         send_wire(&mut socket, authentication).await?;
         let response = socket
             .next()
@@ -433,6 +508,125 @@ mod tests {
         let result =
             RelayTransportClient::connect_host(&url, host_id, b"wrong-secret".to_vec()).await;
         assert!(matches!(result, Err(TransportError::Rejected(_))));
+
+        let _ = shutdown_tx.send(());
+        server_task
+            .await
+            .expect("server task should join")
+            .expect("server should stop cleanly");
+    }
+
+    #[tokio::test]
+    async fn authenticates_and_routes_over_native_tls_websocket() {
+        let node = RelayNode::new();
+        let auth = RelayAuthRegistry::default();
+        let host_id = Uuid::new_v4();
+        let client_id = Uuid::new_v4();
+        auth.register_host(host_id, b"host-secret".to_vec()).await;
+        auth.register_client(client_id, b"client-secret".to_vec())
+            .await;
+
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
+            .expect("certificate should generate");
+        let certificate_der =
+            rustls::pki_types::CertificateDer::from(certificate.cert.der().to_vec());
+        let private_key = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.key_pair.serialize_der()),
+        );
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate_der.clone()], private_key)
+            .expect("server certificate should be accepted");
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(certificate_der)
+            .expect("test certificate should be trusted");
+        let client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = Connector::Rustls(Arc::new(client_config));
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind should work");
+        let url = format!(
+            "wss://localhost:{}",
+            listener.local_addr().expect("address should exist").port()
+        );
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = RelayTransportServer::new(node, auth);
+        let server_task = tokio::spawn(async move {
+            server
+                .serve_tls_until(listener, acceptor, shutdown_rx)
+                .await
+        });
+
+        let mut host = RelayTransportClient::connect_host_with_connector(
+            &url,
+            host_id,
+            b"host-secret".to_vec(),
+            connector.clone(),
+        )
+        .await
+        .expect("host should authenticate over TLS");
+        let mut client = RelayTransportClient::connect_client_with_connector(
+            &url,
+            client_id,
+            b"client-secret".to_vec(),
+            connector,
+        )
+        .await
+        .expect("client should authenticate over TLS");
+
+        let key = SessionKey::random();
+        let request = RelayRequest {
+            request_id: Uuid::new_v4(),
+            target_host: host_id,
+            device_id: client_id,
+            envelope: seal(&key, b"host/device/request", b"tls request"),
+        };
+        client
+            .send_frame(RelayFrameEnvelope::new(RelayFrame::ClientRequest(
+                request.clone(),
+            )))
+            .await
+            .expect("client request should send");
+        let received = host
+            .recv_frame()
+            .await
+            .expect("host should receive request");
+        let RelayFrame::ClientRequest(received_request) = received.frame else {
+            panic!("expected client request");
+        };
+        assert_eq!(received_request.request_id, request.request_id);
+        assert_eq!(
+            open(&key, b"host/device/request", &received_request.envelope)
+                .expect("request should decrypt"),
+            b"tls request"
+        );
+
+        let response = RelayResponse {
+            request_id: request.request_id,
+            target_host: host_id,
+            envelope: seal(&key, b"host/device/response", b"tls response"),
+        };
+        host.send_frame(RelayFrameEnvelope::new(RelayFrame::HostResponse(response)))
+            .await
+            .expect("host response should send");
+        let received = client
+            .recv_frame()
+            .await
+            .expect("client should receive response");
+        let RelayFrame::HostResponse(received_response) = received.frame else {
+            panic!("expected host response");
+        };
+        assert_eq!(
+            open(&key, b"host/device/response", &received_response.envelope)
+                .expect("response should decrypt"),
+            b"tls response"
+        );
 
         let _ = shutdown_tx.send(());
         server_task
