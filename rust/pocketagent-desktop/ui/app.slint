@@ -27,6 +27,7 @@ export component AppWindow inherits Window {
     in-out property <string> interaction-method: "";
     in-out property <string> interaction-decisions: "";
     in-out property <string> model-catalog: "Provider model catalog unavailable";
+    in-out property <string> usage-summary: "Usage unavailable";
     in-out property <[MarkdownBlock]> transcript-blocks: [];
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
@@ -79,6 +80,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text { text: codex-status; color: #c1daa6; font-size: 14px; }
+                Text { text: usage-summary; color: #a7b7aa; font-size: 13px; }
             }
         }
 

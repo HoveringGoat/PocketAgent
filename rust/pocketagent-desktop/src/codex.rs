@@ -375,6 +375,13 @@ impl CodexSession {
             .collect())
     }
 
+    pub async fn usage_summary(
+        &mut self,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self.request("account/rateLimits/read", json!({})).await?;
+        Ok(rate_limit_summary(&result))
+    }
+
     async fn ensure_thread(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(thread_id) = self.thread_id.clone() {
             return Ok(thread_id);
@@ -526,6 +533,39 @@ fn format_item(label: &str, first: Option<&str>, second: Option<&str>) -> String
     .join("\n")
 }
 
+fn rate_limit_summary(result: &Value) -> String {
+    let mut bucket = result
+        .get("rateLimitsByLimitId")
+        .and_then(|value| value.get("codex"))
+        .unwrap_or(result);
+    if bucket.get("primary").is_none() && bucket.get("secondary").is_none() {
+        bucket = result.get("rateLimits").unwrap_or(result);
+    }
+    let windows = [bucket.get("primary"), bucket.get("secondary")]
+        .into_iter()
+        .flatten()
+        .filter_map(|window| {
+            let used = window.get("usedPercent").and_then(Value::as_i64)?;
+            let minutes = window
+                .get("windowDurationMins")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let remaining = (100 - used).clamp(0, 100);
+            let label = if minutes >= 10_000 {
+                "weekly"
+            } else {
+                "5-hour"
+            };
+            Some(format!("{label} {remaining}%"))
+        })
+        .collect::<Vec<_>>();
+    if windows.is_empty() {
+        "Usage unavailable".into()
+    } else {
+        windows.join("  ·  ")
+    }
+}
+
 fn prompt_request(message: &Value, method: &str) -> PromptRequest {
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     let question_ids = params
@@ -643,5 +683,18 @@ mod tests {
         assert!(text.contains("hello"));
         assert!(text.contains("Command: cargo test"));
         assert!(text.contains("done"));
+    }
+
+    #[test]
+    fn rate_limit_summary_exposes_only_remaining_windows() {
+        let summary = rate_limit_summary(&json!({
+            "rateLimits": {
+                "primary": { "usedPercent": 20, "windowDurationMins": 300 },
+                "secondary": { "usedPercent": 5, "windowDurationMins": 10080 }
+            },
+            "accountId": "must-not-be-rendered"
+        }));
+        assert_eq!(summary, "5-hour 80%  ·  weekly 95%");
+        assert!(!summary.contains("account"));
     }
 }

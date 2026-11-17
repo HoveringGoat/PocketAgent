@@ -302,6 +302,14 @@ fn start_codex_worker(
                                 {
                                     set_model_catalog(&weak, models.join("\n"));
                                 }
+                                if let Ok(usage) = session
+                                    .as_mut()
+                                    .expect("session was set")
+                                    .usage_summary()
+                                    .await
+                                {
+                                    set_usage(&weak, usage);
+                                }
                                 match sessions {
                                     Ok(sessions) => {
                                         store.merge_threads(sessions);
@@ -475,6 +483,9 @@ fn start_codex_worker(
                                     .filter(|text| !text.is_empty())
                                     .unwrap_or(response);
                                 set_codex_status(&weak, "Codex is ready".into(), Some(transcript));
+                                if let Ok(usage) = current.usage_summary().await {
+                                    set_usage(&weak, usage);
+                                }
                                 refresh_sessions(current, &weak, &mut store).await;
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
@@ -596,6 +607,10 @@ fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String) {
         models
     };
     let _ = weak.upgrade_in_event_loop(move |window| window.set_model_catalog(value.into()));
+}
+
+fn set_usage(weak: &slint::Weak<AppWindow>, usage: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_usage_summary(usage.into()));
 }
 
 fn set_pending_interaction(weak: &slint::Weak<AppWindow>, request: PromptRequest) {
