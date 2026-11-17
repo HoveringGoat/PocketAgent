@@ -58,8 +58,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = commands.send(CodexCommand::RefreshSessions);
         });
     }
+    {
+        let commands = codex_commands.clone();
+        window.on_select_session(move |id| {
+            let _ = commands.send(CodexCommand::SelectSession(id.to_string()));
+        });
+    }
+    let startup_commands = codex_commands.clone();
     window.on_send_prompt(move |prompt| {
         let _ = codex_commands.send(CodexCommand::Prompt(prompt.to_string()));
+    });
+
+    let _ = startup_commands.send(CodexCommand::Connect {
+        repository,
+        executable,
     });
 
     {
@@ -154,6 +166,7 @@ enum CodexCommand {
     },
     NewConversation,
     RefreshSessions,
+    SelectSession(String),
     Prompt(String),
 }
 
@@ -224,6 +237,23 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             continue;
                         };
                         refresh_sessions(current, &weak, &mut store).await;
+                    }
+                    CodexCommand::SelectSession(id) => {
+                        let Some(current) = session.as_mut() else {
+                            set_codex_error(&weak, "Connect Codex first.".into());
+                            continue;
+                        };
+                        match current.resume_thread(&id).await {
+                            Ok(history) => set_transcript(
+                                &weak,
+                                if history.is_empty() {
+                                    "Conversation loaded".into()
+                                } else {
+                                    history
+                                },
+                            ),
+                            Err(error) => set_codex_error(&weak, error.to_string()),
+                        }
                     }
                     CodexCommand::Prompt(prompt) => {
                         let Some(current) = session.as_mut() else {
@@ -315,13 +345,17 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
     window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
 }
 
-fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<String>) {
-    let value = if sessions.is_empty() {
-        "No saved sessions".into()
-    } else {
-        sessions.join("\n")
-    };
-    let _ = weak.upgrade_in_event_loop(move |window| window.set_sessions(value.into()));
+fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) {
+    let items = sessions
+        .into_iter()
+        .map(|(id, title)| SessionItem {
+            id: id.into(),
+            title: title.into(),
+        })
+        .collect::<Vec<_>>();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_session_items(slint::ModelRc::new(slint::VecModel::from(items)));
+    });
 }
 
 fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {

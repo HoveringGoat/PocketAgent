@@ -157,6 +157,20 @@ impl CodexSession {
         self.ensure_thread().await
     }
 
+    pub async fn resume_thread(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self
+            .request(
+                "thread/resume",
+                json!({ "threadId": thread_id, "cwd": self.repository }),
+            )
+            .await?;
+        self.thread_id = Some(thread_id.to_owned());
+        Ok(thread_text(&result))
+    }
+
     pub async fn list_threads(
         &mut self,
     ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
@@ -258,4 +272,23 @@ impl Drop for CodexSession {
             let _ = self.child.start_kill();
         }
     }
+}
+
+fn thread_text(result: &Value) -> String {
+    let Some(items) = result
+        .get("thread")
+        .and_then(|thread| thread.get("items"))
+        .and_then(Value::as_array)
+    else {
+        return String::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let kind = item.get("type").and_then(Value::as_str)?;
+            let text = item.get("text").and_then(Value::as_str)?;
+            (kind == "userMessage" || kind == "agentMessage").then_some(text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }

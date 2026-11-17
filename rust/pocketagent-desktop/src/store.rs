@@ -74,21 +74,22 @@ impl DesktopStore {
         }
     }
 
-    pub fn display_sessions(&self) -> Vec<String> {
+    pub fn display_sessions(&self) -> Vec<(String, String)> {
         let mut sessions = self
             .conversations
             .iter()
             .filter(|conversation| !conversation.archived)
             .map(|conversation| {
-                format!(
+                let title = format!(
                     "{}{}  ({})",
-                    if conversation.pinned { "📌 " } else { "" },
+                    if conversation.pinned { "[pinned] " } else { "" },
                     conversation.title,
                     conversation.id
-                )
+                );
+                (conversation.id.clone(), title)
             })
             .collect::<Vec<_>>();
-        sessions.sort();
+        sessions.sort_by(|left, right| left.1.cmp(&right.1));
         sessions
     }
 }
