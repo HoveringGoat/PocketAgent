@@ -159,6 +159,14 @@ The Rust rewrite now has a runnable desktop shell. It opens a native Slint windo
 cargo run --manifest-path rust/Cargo.toml -p pocketagent-desktop
 ```
 
+To produce a portable preview directory and ZIP, run:
+
+```powershell
+.\scripts\Build-RustDesktop.ps1
+```
+
+The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. This preview package is separate from the current WPF installer and is not an app-release channel yet.
+
 Focused checks for this change:
 
 ```powershell
