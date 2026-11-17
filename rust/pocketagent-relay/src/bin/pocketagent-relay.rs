@@ -1,5 +1,7 @@
 use pocketagent_crypto::{SessionKey, open, seal};
-use pocketagent_protocol::{RelayFrame, RelayFrameEnvelope, RelayRequest, RelayResponse};
+use pocketagent_protocol::{
+    OpaqueEnvelope, RelayFrame, RelayFrameEnvelope, RelayRequest, RelayResponse,
+};
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportClient, RelayTransportServer};
 use std::{env, error::Error, io};
@@ -10,6 +12,9 @@ use uuid::Uuid;
 async fn main() -> Result<(), Box<dyn Error>> {
     match env::args().nth(1).as_deref() {
         Some("demo") => run_demo().await,
+        Some("serve") => run_serve().await,
+        Some("host") => run_host().await,
+        Some("client") => run_client().await,
         _ => {
             print_usage();
             Ok(())
@@ -21,9 +26,110 @@ fn print_usage() {
     println!("PocketAgent Rust relay MVP");
     println!();
     println!("  cargo run -p pocketagent-relay --bin pocketagent-relay -- demo");
+    println!(
+        "  cargo run -p pocketagent-relay --bin pocketagent-relay -- serve <bind> <host-id> <host-token> <client-id> <client-token>"
+    );
+    println!(
+        "  cargo run -p pocketagent-relay --bin pocketagent-relay -- host <url> <host-id> <host-token>"
+    );
+    println!(
+        "  cargo run -p pocketagent-relay --bin pocketagent-relay -- client <url> <host-id> <client-id> <client-token>"
+    );
     println!();
     println!("Runs a local authenticated relay round trip over ws:// with encrypted payloads.");
-    println!("This demo is for transport validation; it is not a production relay service.");
+    println!(
+        "serve/host/client are process-level opaque routing probes; they are not production commands."
+    );
+}
+
+async fn run_serve() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = env::args().skip(2).collect();
+    if args.len() != 5 {
+        print_usage();
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "serve expects five arguments").into(),
+        );
+    }
+    let bind = &args[0];
+    let host_id = args[1].parse::<Uuid>()?;
+    let client_id = args[3].parse::<Uuid>()?;
+    let auth = RelayAuthRegistry::default();
+    auth.register_host(host_id, args[2].as_bytes().to_vec())
+        .await;
+    auth.register_client(client_id, args[4].as_bytes().to_vec())
+        .await;
+    let listener = TcpListener::bind(bind).await?;
+    println!("relay listening at ws://{}", listener.local_addr()?);
+    println!("press Ctrl+C to stop");
+    let server = RelayTransportServer::new(RelayNode::new(), auth);
+    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+    server.serve_until(listener, shutdown_rx).await?;
+    Ok(())
+}
+
+async fn run_host() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = env::args().skip(2).collect();
+    if args.len() != 3 {
+        print_usage();
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "host expects three arguments").into(),
+        );
+    }
+    let host_id = args[1].parse::<Uuid>()?;
+    let mut host =
+        RelayTransportClient::connect_host(&args[0], host_id, args[2].as_bytes().to_vec()).await?;
+    let received = host.recv_frame().await?;
+    let RelayFrame::ClientRequest(request) = received.frame else {
+        return Err(io::Error::other("host received an unexpected frame").into());
+    };
+    let response = RelayResponse {
+        request_id: request.request_id,
+        target_host: request.target_host,
+        envelope: request.envelope,
+    };
+    host.send_frame(RelayFrameEnvelope::new(RelayFrame::HostResponse(response)))
+        .await?;
+    println!("host echoed request {}", request.request_id);
+    Ok(())
+}
+
+async fn run_client() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = env::args().skip(2).collect();
+    if args.len() != 4 {
+        print_usage();
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "client expects four arguments").into(),
+        );
+    }
+    let host_id = args[1].parse::<Uuid>()?;
+    let client_id = args[2].parse::<Uuid>()?;
+    let mut client =
+        RelayTransportClient::connect_client(&args[0], client_id, args[3].as_bytes().to_vec())
+            .await?;
+    let request = RelayRequest {
+        request_id: Uuid::new_v4(),
+        target_host: host_id,
+        device_id: client_id,
+        envelope: OpaqueEnvelope {
+            key_id: "cli-probe".into(),
+            nonce: vec![0; 12],
+            ciphertext: b"opaque probe".to_vec(),
+        },
+    };
+    client
+        .send_frame(RelayFrameEnvelope::new(RelayFrame::ClientRequest(
+            request.clone(),
+        )))
+        .await?;
+    let received = client.recv_frame().await?;
+    let RelayFrame::HostResponse(response) = received.frame else {
+        return Err(io::Error::other("client received an unexpected frame").into());
+    };
+    if response.request_id != request.request_id || response.envelope != request.envelope {
+        return Err(io::Error::other("host response did not preserve the opaque envelope").into());
+    }
+    println!("client received echoed response {}", response.request_id);
+    Ok(())
 }
 
 async fn run_demo() -> Result<(), Box<dyn Error>> {

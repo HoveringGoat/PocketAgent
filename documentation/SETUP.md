@@ -165,6 +165,16 @@ cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent
 
 The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. The `pocketagent-relay demo` command runs the same authenticated encrypted request/response flow as a real process-level smoke check. These checks do not yet prove production certificate enrollment or a real two-desktop deployment.
 
+For a three-process routing probe, start the relay with explicit test identities and tokens, then run one host and one client in separate terminals:
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- serve 127.0.0.1:8787 11111111-1111-1111-1111-111111111111 host-token 22222222-2222-2222-2222-222222222222 client-token
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- host ws://127.0.0.1:8787 11111111-1111-1111-1111-111111111111 host-token
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- client ws://127.0.0.1:8787 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 client-token
+```
+
+The host probe echoes the client's opaque envelope and the client verifies the request ID and envelope. These commands use loopback `ws://`, in-memory authentication and a deliberately non-provider payload; they are development probes, not a production service or a replacement for device enrollment.
+
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
 Build/lint/signature checks and focused native/protocol tests are distinguished from physical acceptance: scanning a real screen with the phone camera and connecting through the actual router/cellular route still require user verification. No public endpoint, router/Caddy configuration, live model turn or full test suite was used. Native title-bar attributes can fall back to Windows behavior; OS-owned folder pickers retain the OS theme. A prior theme claim was too broad: brush/render tests do not prove every OS theme state matches the user's display.
