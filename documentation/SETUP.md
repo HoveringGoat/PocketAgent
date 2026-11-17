@@ -160,9 +160,10 @@ dotnet run --project tests/PocketAgent.DesktopChecks -c Release
 $env:POCKETAGENT_TEST_SERVER_DLL = (Resolve-Path src/PocketAgent.Server/bin/Release/net10.0/PocketAgent.Server.dll).Path
 node --test tests/direct-internet.test.mjs
 .\tests\desktop-smoke.ps1
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- demo
 ```
 
-The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. It does not yet prove production certificate enrollment or a real two-desktop deployment.
+The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. The `pocketagent-relay demo` command runs the same authenticated encrypted request/response flow as a real process-level smoke check. These checks do not yet prove production certificate enrollment or a real two-desktop deployment.
 
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
