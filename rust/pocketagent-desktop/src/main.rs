@@ -80,8 +80,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let commands = codex_commands.clone();
-        window.on_new_conversation(move || {
-            let _ = commands.send(CodexCommand::NewConversation);
+        window.on_new_conversation(move |model, effort| {
+            let _ = commands.send(CodexCommand::NewConversation {
+                model: model.to_string(),
+                effort: effort.to_string(),
+            });
         });
     }
     {
@@ -127,8 +130,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let startup_commands = codex_commands.clone();
-    window.on_send_prompt(move |prompt| {
-        let _ = codex_commands.send(CodexCommand::Prompt(prompt.to_string()));
+    window.on_send_prompt(move |prompt, model, effort| {
+        let _ = codex_commands.send(CodexCommand::Prompt {
+            prompt: prompt.to_string(),
+            model: model.to_string(),
+            effort: effort.to_string(),
+        });
     });
     {
         let commands = startup_commands.clone();
@@ -232,7 +239,10 @@ enum CodexCommand {
         repository: String,
         executable: String,
     },
-    NewConversation,
+    NewConversation {
+        model: String,
+        effort: String,
+    },
     RefreshSessions,
     SelectSession(String),
     ArchiveSelected,
@@ -240,7 +250,11 @@ enum CodexCommand {
     TogglePin,
     RenameSelected(String),
     ToggleArchived,
-    Prompt(String),
+    Prompt {
+        prompt: String,
+        model: String,
+        effort: String,
+    },
     Stop,
 }
 
@@ -280,6 +294,14 @@ fn start_codex_worker(
                                 store.codex_executable = executable;
                                 session = Some(connected);
                                 set_codex_status(&weak, "Codex is ready".into(), None);
+                                if let Ok(models) = session
+                                    .as_mut()
+                                    .expect("session was set")
+                                    .list_models()
+                                    .await
+                                {
+                                    set_model_catalog(&weak, models.join("\n"));
+                                }
                                 match sessions {
                                     Ok(sessions) => {
                                         store.merge_threads(sessions);
@@ -295,16 +317,24 @@ fn start_codex_worker(
                             }
                         }
                     }
-                    CodexCommand::NewConversation => {
+                    CodexCommand::NewConversation { model, effort } => {
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        match current.new_thread().await {
+                        match current
+                            .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
+                            .await
+                        {
                             Ok(id) => {
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
                                 store.merge_threads([(id, "New conversation".into())]);
+                                let _ = store.set_model_options(
+                                    selected_id.as_deref().unwrap_or_default(),
+                                    Some(model),
+                                    Some(effort),
+                                );
                                 let _ = store.save();
                                 set_transcript(&weak, "New conversation ready".into());
                                 refresh_sessions(current, &weak, &mut store).await;
@@ -324,7 +354,19 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        match current.resume_thread(&id).await {
+                        let options = store
+                            .conversations
+                            .iter()
+                            .find(|conversation| conversation.id == id)
+                            .and_then(|conversation| conversation.model.clone())
+                            .unwrap_or_default();
+                        match current
+                            .resume_thread(
+                                &id,
+                                (!options.trim().is_empty()).then_some(options.as_str()),
+                            )
+                            .await
+                        {
                             Ok(history) => {
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id);
@@ -377,11 +419,24 @@ fn start_codex_worker(
                         set_sessions(&weak, visible_sessions(&store, showing_archived));
                         set_archived_view(&weak, showing_archived);
                     }
-                    CodexCommand::Prompt(prompt) => {
+                    CodexCommand::Prompt {
+                        prompt,
+                        model,
+                        effort,
+                    } => {
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
+                        if let Some(id) = selected_id.as_deref()
+                            && store.set_model_options(
+                                id,
+                                Some(model.clone()),
+                                Some(effort.clone()),
+                            )
+                        {
+                            let _ = store.save();
+                        }
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
                         set_codex_status(&weak, "Codex is working...".into(), None);
@@ -390,6 +445,8 @@ fn start_codex_worker(
                             tokio::select! {
                                 result = current.send_prompt(
                                     &prompt,
+                                    (!model.trim().is_empty()).then_some(model.as_str()),
+                                    (!effort.trim().is_empty()).then_some(effort.as_str()),
                                     &mut stop_rx,
                                     interaction.clone(),
                                     {
@@ -411,7 +468,13 @@ fn start_codex_worker(
                         clear_pending_interaction(&weak);
                         match result {
                             Ok(response) => {
-                                set_codex_status(&weak, "Codex is ready".into(), Some(response));
+                                let transcript = current
+                                    .current_thread_text()
+                                    .await
+                                    .ok()
+                                    .filter(|text| !text.is_empty())
+                                    .unwrap_or(response);
+                                set_codex_status(&weak, "Codex is ready".into(), Some(transcript));
                                 refresh_sessions(current, &weak, &mut store).await;
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
@@ -524,6 +587,15 @@ fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
 
 fn set_archived_view(weak: &slint::Weak<AppWindow>, showing: bool) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_showing_archived(showing));
+}
+
+fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String) {
+    let value = if models.is_empty() {
+        "Provider returned no visible models".to_owned()
+    } else {
+        models
+    };
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_model_catalog(value.into()));
 }
 
 fn set_pending_interaction(weak: &slint::Weak<AppWindow>, request: PromptRequest) {

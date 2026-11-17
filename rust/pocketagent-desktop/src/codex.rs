@@ -136,20 +136,24 @@ impl CodexSession {
     pub async fn send_prompt(
         &mut self,
         prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
         cancel: &mut watch::Receiver<bool>,
         interaction: SharedInteraction,
         on_request: impl Fn(PromptRequest),
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread_id = self.ensure_thread().await?;
-        let turn = self
-            .request(
-                "turn/start",
-                json!({
-                    "threadId": thread_id,
-                    "input": [{ "type": "text", "text": prompt, "text_elements": [] }]
-                }),
-            )
-            .await?;
+        let mut parameters = json!({
+            "threadId": thread_id,
+            "input": [{ "type": "text", "text": prompt, "text_elements": [] }]
+        });
+        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+            parameters["model"] = json!(model);
+        }
+        if let Some(effort) = effort.filter(|value| !value.trim().is_empty()) {
+            parameters["effort"] = json!(effort);
+        }
+        let turn = self.request("turn/start", parameters).await?;
         let turn_id = turn
             .get("turn")
             .and_then(|turn| turn.get("id"))
@@ -258,22 +262,53 @@ impl CodexSession {
         }
     }
 
-    pub async fn new_thread(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new_thread(
+        &mut self,
+        model: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         self.thread_id = None;
-        self.ensure_thread().await
+        let mut parameters = json!({ "cwd": self.repository });
+        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+            parameters["model"] = json!(model);
+        }
+        let result = self.request("thread/start", parameters).await?;
+        let id = result
+            .get("thread")
+            .and_then(|thread| thread.get("id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| io::Error::other("Codex returned a thread without an ID"))?
+            .to_owned();
+        self.thread_id = Some(id.clone());
+        Ok(id)
     }
 
     pub async fn resume_thread(
         &mut self,
         thread_id: &str,
+        model: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let mut parameters = json!({ "threadId": thread_id, "cwd": self.repository });
+        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+            parameters["model"] = json!(model);
+        }
+        let result = self.request("thread/resume", parameters).await?;
+        self.thread_id = Some(thread_id.to_owned());
+        Ok(thread_text(&result))
+    }
+
+    pub async fn current_thread_text(
+        &mut self,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let thread_id = self
+            .thread_id
+            .clone()
+            .ok_or_else(|| io::Error::other("No conversation is selected"))?;
         let result = self
             .request(
-                "thread/resume",
-                json!({ "threadId": thread_id, "cwd": self.repository }),
+                "thread/read",
+                json!({ "threadId": thread_id, "includeTurns": true }),
             )
             .await?;
-        self.thread_id = Some(thread_id.to_owned());
         Ok(thread_text(&result))
     }
 
@@ -296,6 +331,46 @@ impl CodexSession {
                     .and_then(Value::as_str)
                     .unwrap_or("Untitled");
                 Some((id.to_owned(), title.to_owned()))
+            })
+            .collect())
+    }
+
+    pub async fn list_models(
+        &mut self,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self
+            .request(
+                "model/list",
+                json!({ "limit": 100, "includeHidden": false }),
+            )
+            .await?;
+        Ok(result
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                let id = model.get("model").and_then(Value::as_str)?;
+                let display = model
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id);
+                let efforts = model
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| {
+                                value.get("reasoningEffort").and_then(Value::as_str)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    })
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" [{value}]"))
+                    .unwrap_or_default();
+                Some(format!("{id} - {display}{efforts}"))
             })
             .collect())
     }
@@ -390,13 +465,65 @@ fn thread_text(result: &Value) -> String {
     };
     items
         .iter()
-        .filter_map(|item| {
-            let kind = item.get("type").and_then(Value::as_str)?;
-            let text = item.get("text").and_then(Value::as_str)?;
-            (kind == "userMessage" || kind == "agentMessage").then_some(text)
-        })
+        .filter_map(render_item)
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn render_item(item: &Value) -> Option<String> {
+    let kind = item.get("type").and_then(Value::as_str)?;
+    match kind {
+        "userMessage" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .map(|content| {
+                        content
+                            .iter()
+                            .filter_map(|part| {
+                                (part.get("type").and_then(Value::as_str) == Some("text"))
+                                    .then(|| part.get("text").and_then(Value::as_str))
+                                    .flatten()
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+            }),
+        "agentMessage" => item.get("text").and_then(Value::as_str).map(str::to_owned),
+        "commandExecution" => Some(format_item(
+            "Command",
+            item.get("command").and_then(Value::as_str),
+            item.get("aggregatedOutput").and_then(Value::as_str),
+        )),
+        "fileChange" => item
+            .get("changes")
+            .and_then(|changes| serde_json::to_string_pretty(changes).ok())
+            .map(|changes| format!("File changes\n```json\n{changes}\n```")),
+        "mcpToolCall" => Some(format!(
+            "Tool: {}/{}",
+            item.get("server").and_then(Value::as_str).unwrap_or("MCP"),
+            item.get("tool").and_then(Value::as_str).unwrap_or("call")
+        )),
+        "webSearch" => item
+            .get("query")
+            .and_then(Value::as_str)
+            .map(|query| format!("Web search: {query}")),
+        _ => None,
+    }
+}
+
+fn format_item(label: &str, first: Option<&str>, second: Option<&str>) -> String {
+    [
+        first.map(|value| format!("{label}: {value}")),
+        second.map(str::to_owned),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn prompt_request(message: &Value, method: &str) -> PromptRequest {
@@ -502,5 +629,19 @@ mod tests {
         );
         assert_eq!(request.question_ids, vec!["name", "color"]);
         assert!(request.prompt.contains("What is your name?"));
+    }
+
+    #[test]
+    fn thread_text_renders_content_and_tool_items() {
+        let text = thread_text(&json!({
+            "thread": { "items": [
+                { "type": "userMessage", "content": [{ "type": "text", "text": "hello" }] },
+                { "type": "commandExecution", "command": "cargo test", "aggregatedOutput": "ok" },
+                { "type": "agentMessage", "text": "done" }
+            ] }
+        }));
+        assert!(text.contains("hello"));
+        assert!(text.contains("Command: cargo test"));
+        assert!(text.contains("done"));
     }
 }

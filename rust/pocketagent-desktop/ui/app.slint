@@ -26,12 +26,13 @@ export component AppWindow inherits Window {
     in-out property <string> pending-interaction: "";
     in-out property <string> interaction-method: "";
     in-out property <string> interaction-decisions: "";
+    in-out property <string> model-catalog: "Provider model catalog unavailable";
     in-out property <[MarkdownBlock]> transcript-blocks: [];
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
     in-out property <bool> relay-running: false;
     callback connect-codex(string, string);
-    callback new-conversation();
+    callback new-conversation(string, string);
     callback refresh-sessions();
     callback select-session(string);
     callback archive-session();
@@ -40,7 +41,7 @@ export component AppWindow inherits Window {
     callback rename-session(string);
     callback toggle-archived();
     callback answer-interaction(string);
-    callback send-prompt(string);
+    callback send-prompt(string, string, string);
     callback stop-work();
     callback start-relay();
     callback stop-relay();
@@ -92,7 +93,7 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
-                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(); } }
+                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(model.text, effort.text); } }
                     Button { text: "Refresh"; enabled: codex-status == "Codex is ready"; clicked => { refresh-sessions(); } }
                     Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
                     Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
@@ -135,11 +136,17 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
+                    model := LineEdit { placeholder-text: "Model slug (optional)"; }
+                    effort := LineEdit { placeholder-text: "Reasoning effort (optional)"; }
+                }
+                Text { text: model-catalog; color: #8fa294; font-size: 12px; wrap: word-wrap; }
+                HorizontalBox {
+                    spacing: 8px;
                     prompt := LineEdit { placeholder-text: "Send a prompt"; enabled: codex-status == "Codex is ready"; }
                     Button {
                         text: "Send";
                         enabled: codex-status == "Codex is ready" && prompt.text != "";
-                        clicked => { send-prompt(prompt.text); prompt.text = ""; }
+                        clicked => { send-prompt(prompt.text, model.text, effort.text); prompt.text = ""; }
                     }
                     Button {
                         text: "Stop";

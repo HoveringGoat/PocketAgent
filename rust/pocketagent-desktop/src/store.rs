@@ -7,6 +7,10 @@ pub struct ConversationRecord {
     pub title: String,
     pub archived: bool,
     pub pinned: bool,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -69,6 +73,8 @@ impl DesktopStore {
                     title,
                     archived: false,
                     pinned: false,
+                    model: None,
+                    reasoning_effort: None,
                 });
             }
         }
@@ -128,6 +134,20 @@ impl DesktopStore {
         conversation.title = title.to_owned();
         true
     }
+
+    pub fn set_model_options(
+        &mut self,
+        id: &str,
+        model: Option<String>,
+        effort: Option<String>,
+    ) -> bool {
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.model = model.filter(|value| !value.trim().is_empty());
+        conversation.reasoning_effort = effort.filter(|value| !value.trim().is_empty());
+        true
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +162,8 @@ mod tests {
                 title: "Saved title".into(),
                 archived: true,
                 pinned: true,
+                model: None,
+                reasoning_effort: None,
             }],
             ..Default::default()
         };
@@ -159,6 +181,8 @@ mod tests {
                 title: "Old title".into(),
                 archived: false,
                 pinned: false,
+                model: None,
+                reasoning_effort: None,
             }],
             ..Default::default()
         };
