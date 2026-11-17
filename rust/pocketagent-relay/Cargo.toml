@@ -8,13 +8,16 @@ publish = false
 [dependencies]
 futures-util = "0.3"
 pocketagent-protocol = { path = "../pocketagent-protocol" }
+rustls = "0.23"
 serde_json = "1"
 subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["net", "sync", "rt", "macros"] }
+tokio-rustls = "0.26"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 pocketagent-crypto = { path = "../pocketagent-crypto" }
+rcgen = "0.13"
