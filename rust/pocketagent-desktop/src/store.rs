@@ -21,11 +21,26 @@ pub struct ConversationRecord {
     pub last_activity_unix: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScheduledMessage {
+    pub id: String,
+    #[serde(default)]
+    pub conversation_id: String,
+    pub prompt: String,
+    pub due_at_unix: i64,
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DesktopStore {
     pub repository_path: String,
     pub codex_executable: String,
     pub conversations: Vec<ConversationRecord>,
+    #[serde(default)]
+    pub schedules: Vec<ScheduledMessage>,
 }
 
 impl DesktopStore {
@@ -187,6 +202,35 @@ impl DesktopStore {
         }
         archived
     }
+
+    pub fn add_schedule(
+        &mut self,
+        conversation_id: String,
+        prompt: String,
+        due_at_unix: i64,
+        model: Option<String>,
+        effort: Option<String>,
+    ) -> String {
+        let id = format!("schedule-{}-{}", now_unix(), self.schedules.len());
+        self.schedules.push(ScheduledMessage {
+            id: id.clone(),
+            conversation_id,
+            prompt,
+            due_at_unix,
+            model,
+            reasoning_effort: effort,
+            status: "pending".into(),
+        });
+        id
+    }
+
+    pub fn set_schedule_status(&mut self, id: &str, status: &str) -> bool {
+        let Some(schedule) = self.schedules.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        schedule.status = status.to_owned();
+        true
+    }
 }
 
 pub fn now_unix() -> i64 {
@@ -288,5 +332,20 @@ mod tests {
         assert!(store.conversations[0].archived);
         assert!(!store.conversations[1].archived);
         assert!(!store.conversations[2].archived);
+    }
+
+    #[test]
+    fn scheduled_messages_persist_pending_metadata() {
+        let mut store = DesktopStore::default();
+        let id = store.add_schedule(
+            "thread-1".into(),
+            "later".into(),
+            123,
+            Some("gpt".into()),
+            None,
+        );
+        assert_eq!(store.schedules[0].id, id);
+        assert_eq!(store.schedules[0].status, "pending");
+        assert_eq!(store.schedules[0].due_at_unix, 123);
     }
 }

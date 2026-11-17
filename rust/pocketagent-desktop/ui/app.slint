@@ -43,6 +43,7 @@ export component AppWindow inherits Window {
     callback toggle-archived();
     callback answer-interaction(string);
     callback send-prompt(string, string, string);
+    callback schedule-prompt(string, string, string, string);
     callback stop-work();
     callback start-relay(string);
     callback stop-relay();
@@ -154,6 +155,15 @@ export component AppWindow inherits Window {
                         text: "Stop";
                         enabled: codex-status == "Codex is working...";
                         clicked => { stop-work(); }
+                    }
+                }
+                HorizontalBox {
+                    spacing: 8px;
+                    delay := LineEdit { placeholder-text: "Delay seconds"; }
+                    Button {
+                        text: "Schedule";
+                        enabled: codex-status == "Codex is ready" && prompt.text != "" && delay.text != "";
+                        clicked => { schedule-prompt(prompt.text, model.text, effort.text, delay.text); prompt.text = ""; delay.text = ""; }
                     }
                 }
             }

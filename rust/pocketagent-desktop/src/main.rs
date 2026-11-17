@@ -137,8 +137,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             prompt: prompt.to_string(),
             model: model.to_string(),
             effort: effort.to_string(),
+            schedule_id: None,
+            conversation_id: None,
         });
     });
+    {
+        let commands = startup_commands.clone();
+        window.on_schedule_prompt(move |prompt, model, effort, delay| {
+            let _ = commands.send(CodexCommand::Schedule {
+                prompt: prompt.to_string(),
+                model: model.to_string(),
+                effort: effort.to_string(),
+                delay: delay.to_string(),
+            });
+        });
+    }
     {
         let commands = startup_commands.clone();
         window.on_stop_work(move || {
@@ -273,6 +286,14 @@ enum CodexCommand {
         prompt: String,
         model: String,
         effort: String,
+        schedule_id: Option<String>,
+        conversation_id: Option<String>,
+    },
+    Schedule {
+        prompt: String,
+        model: String,
+        effort: String,
+        delay: String,
     },
     Stop,
 }
@@ -282,6 +303,7 @@ fn start_codex_worker(
     interaction: SharedInteraction,
 ) -> UnboundedSender<CodexCommand> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
+    let scheduler = sender.clone();
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -303,6 +325,21 @@ fn start_codex_worker(
                 let _ = store.save();
             }
             set_sessions(&weak, store.display_sessions());
+            for schedule in store
+                .schedules
+                .iter()
+                .filter(|item| item.status == "pending")
+            {
+                queue_schedule(
+                    &scheduler,
+                    schedule.due_at_unix.saturating_sub(now_unix()) as u64,
+                    schedule.id.clone(),
+                    schedule.conversation_id.clone(),
+                    schedule.prompt.clone(),
+                    schedule.model.clone().unwrap_or_default(),
+                    schedule.reasoning_effort.clone().unwrap_or_default(),
+                );
+            }
             while let Some(command) = receiver.recv().await {
                 match command {
                     CodexCommand::Connect {
@@ -460,12 +497,36 @@ fn start_codex_worker(
                         prompt,
                         model,
                         effort,
+                        schedule_id,
+                        conversation_id,
                     } => {
                         diagnostics::record("turn", "start");
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
+                        if let Some(target) = conversation_id.as_deref()
+                            && selected_id.as_deref() != Some(target)
+                        {
+                            let target_model = store
+                                .conversations
+                                .iter()
+                                .find(|conversation| conversation.id == target)
+                                .and_then(|conversation| conversation.model.clone());
+                            if current
+                                .resume_thread(target, target_model.as_deref())
+                                .await
+                                .is_err()
+                            {
+                                set_codex_error(
+                                    &weak,
+                                    "Scheduled conversation could not be resumed.".into(),
+                                );
+                                continue;
+                            }
+                            selected_id = Some(target.to_owned());
+                            set_selected_session(&weak, target.to_owned());
+                        }
                         if let Some(id) = selected_id.as_deref()
                             && store.set_model_options(
                                 id,
@@ -473,6 +534,10 @@ fn start_codex_worker(
                                 Some(effort.clone()),
                             )
                         {
+                            let _ = store.save();
+                        }
+                        if let Some(schedule_id) = schedule_id.as_deref() {
+                            let _ = store.set_schedule_status(schedule_id, "sent");
                             let _ = store.save();
                         }
                         InteractionState::clear(&interaction);
@@ -532,12 +597,74 @@ fn start_codex_worker(
                             }
                         }
                     }
+                    CodexCommand::Schedule {
+                        prompt,
+                        model,
+                        effort,
+                        delay,
+                    } => {
+                        let Ok(delay) = delay.trim().parse::<u64>() else {
+                            set_codex_error(&weak, "Schedule delay must be seconds.".into());
+                            continue;
+                        };
+                        if prompt.trim().is_empty() || delay == 0 {
+                            set_codex_error(&weak, "Enter a prompt and a positive delay.".into());
+                            continue;
+                        }
+                        let Some(conversation_id) = selected_id.clone() else {
+                            set_codex_error(
+                                &weak,
+                                "Select a conversation before scheduling.".into(),
+                            );
+                            continue;
+                        };
+                        let id = store.add_schedule(
+                            conversation_id.clone(),
+                            prompt.clone(),
+                            now_unix() + delay as i64,
+                            (!model.trim().is_empty()).then_some(model.clone()),
+                            (!effort.trim().is_empty()).then_some(effort.clone()),
+                        );
+                        let _ = store.save();
+                        queue_schedule(
+                            &scheduler,
+                            delay,
+                            id,
+                            conversation_id,
+                            prompt,
+                            model,
+                            effort,
+                        );
+                        set_codex_status(&weak, "Prompt scheduled".into(), None);
+                    }
                     CodexCommand::Stop => {}
                 }
             }
         });
     });
     sender
+}
+
+fn queue_schedule(
+    sender: &UnboundedSender<CodexCommand>,
+    delay: u64,
+    schedule_id: String,
+    conversation_id: String,
+    prompt: String,
+    model: String,
+    effort: String,
+) {
+    let sender = sender.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        let _ = sender.send(CodexCommand::Prompt {
+            prompt,
+            model,
+            effort,
+            schedule_id: Some(schedule_id),
+            conversation_id: Some(conversation_id),
+        });
+    });
 }
 
 async fn refresh_sessions(
