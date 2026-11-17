@@ -7,8 +7,9 @@ publish = false
 
 [dependencies]
 pocketagent-relay = { path = "../pocketagent-relay" }
+serde_json = "1"
 slint = "1.14"
-tokio = { version = "1", features = ["net", "sync", "rt"] }
+tokio = { version = "1", features = ["io-util", "net", "process", "sync", "rt"] }
 
 [build-dependencies]
 slint-build = "1.14"
