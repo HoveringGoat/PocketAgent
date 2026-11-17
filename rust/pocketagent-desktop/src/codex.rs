@@ -30,14 +30,29 @@ impl CodexSession {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"))
         {
-            let mut command = Command::new("powershell.exe");
-            command.args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                executable,
-            ]);
+            let script = Path::new(executable);
+            let basedir = script.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Codex wrapper has no parent directory",
+                )
+            })?;
+            let node = basedir.join("node.exe");
+            let node = if node.is_file() {
+                node
+            } else {
+                "node.exe".into()
+            };
+            let codex_js = basedir.join("node_modules/@openai/codex/bin/codex.js");
+            if !codex_js.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Codex wrapper's codex.js was not found",
+                )
+                .into());
+            }
+            let mut command = Command::new(node);
+            command.arg(codex_js);
             command
         } else {
             Command::new(executable)
