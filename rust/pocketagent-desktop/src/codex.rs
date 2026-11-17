@@ -26,7 +26,23 @@ impl CodexSession {
             )
             .into());
         }
-        let mut child = Command::new(executable)
+        let mut command = if Path::new(executable)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"))
+        {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                executable,
+            ]);
+            command
+        } else {
+            Command::new(executable)
+        };
+        let mut child = command
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(repository)
             .stdin(std::process::Stdio::piped())
