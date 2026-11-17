@@ -10,6 +10,7 @@ use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+pub mod config;
 pub mod transport;
 
 #[derive(Debug, Error, PartialEq, Eq)]

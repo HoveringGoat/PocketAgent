@@ -605,6 +605,7 @@ dependencies = [
  "pocketagent-protocol",
  "rcgen",
  "rustls",
+ "serde",
  "serde_json",
  "subtle",
  "thiserror",
