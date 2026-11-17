@@ -1,4 +1,4 @@
-import { Button, GroupBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Button, GroupBox, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "PocketAgent Rust Desktop";
@@ -10,8 +10,12 @@ export component AppWindow inherits Window {
     in-out property <string> status: "Relay is stopped";
     in-out property <string> endpoint: "No endpoint";
     in-out property <bool> relay-running: false;
+    in-out property <string> codex-status: "Codex is disconnected";
+    in-out property <string> transcript: "No conversation yet";
     callback start-relay();
     callback stop-relay();
+    callback connect-codex(string, string);
+    callback send-prompt(string);
 
     background: #18271f;
 
@@ -41,6 +45,34 @@ export component AppWindow inherits Window {
             }
         }
 
+        GroupBox {
+            title: "Codex conversation";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalBox {
+                    spacing: 8px;
+                    repository := LineEdit { placeholder-text: "Repository directory"; }
+                    executable := LineEdit { text: "codex"; placeholder-text: "Codex executable"; }
+                    Button {
+                        text: "Connect Codex";
+                        clicked => { connect-codex(repository.text, executable.text); }
+                    }
+                }
+                Text { text: codex-status; color: #c1daa6; font-size: 14px; }
+                Text { text: transcript; color: #e8f1e6; font-size: 14px; vertical-alignment: center; }
+                HorizontalBox {
+                    spacing: 8px;
+                    prompt := LineEdit { placeholder-text: "Send a prompt"; enabled: codex-status == "Codex is ready"; }
+                    Button {
+                        text: "Send";
+                        enabled: codex-status == "Codex is ready" && prompt.text != "";
+                        clicked => { send-prompt(prompt.text); prompt.text = ""; }
+                    }
+                }
+            }
+        }
+
         HorizontalBox {
             spacing: 12px;
             Button {
@@ -55,7 +87,7 @@ export component AppWindow inherits Window {
             }
         }
         Text {
-            text: "This preview starts a loopback relay only. Provider and conversation adapters are next.";
+            text: "Basic Codex prompts are wired locally; approvals and mobile adapters remain next.";
             color: #8fa294;
             font-size: 13px;
         }

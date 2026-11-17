@@ -1,3 +1,6 @@
+mod codex;
+
+use codex::CodexSession;
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
@@ -10,6 +13,7 @@ slint::include_modules!();
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = AppWindow::new()?;
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    let codex_commands = start_codex_worker(window.as_weak());
 
     {
         let weak = window.as_weak();
@@ -74,6 +78,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
+        let commands = codex_commands.clone();
+        window.on_connect_codex(move |repository, executable| {
+            let _ = commands.send(CodexCommand::Connect {
+                repository: repository.to_string(),
+                executable: executable.to_string(),
+            });
+        });
+    }
+
+    {
+        let commands = codex_commands;
+        window.on_send_prompt(move |prompt| {
+            let _ = commands.send(CodexCommand::Prompt(prompt.to_string()));
+        });
+    }
+
+    {
         let weak = window.as_weak();
         let relay_shutdown = Arc::clone(&relay_shutdown);
         window.on_stop_relay(move || {
@@ -91,6 +112,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     window.run()?;
     Ok(())
+}
+
+#[derive(Clone)]
+enum CodexCommand {
+    Connect {
+        repository: String,
+        executable: String,
+    },
+    Prompt(String),
+}
+
+fn start_codex_worker(
+    weak: slint::Weak<AppWindow>,
+) -> tokio::sync::mpsc::UnboundedSender<CodexCommand> {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                set_codex_error(&weak, format!("Runtime failed: {error}"));
+                return;
+            }
+        };
+        runtime.block_on(async move {
+            let mut session: Option<CodexSession> = None;
+            while let Some(command) = receiver.recv().await {
+                match command {
+                    CodexCommand::Connect {
+                        repository,
+                        executable,
+                    } => {
+                        set_codex_status(&weak, "Connecting to Codex...".into(), None);
+                        match CodexSession::connect(&executable, &repository).await {
+                            Ok(connected) => {
+                                session = Some(connected);
+                                set_codex_status(&weak, "Codex is ready".into(), None);
+                            }
+                            Err(error) => {
+                                session = None;
+                                set_codex_error(&weak, error.to_string());
+                            }
+                        }
+                    }
+                    CodexCommand::Prompt(prompt) => {
+                        let Some(current) = session.as_mut() else {
+                            set_codex_error(&weak, "Connect Codex first.".into());
+                            continue;
+                        };
+                        set_codex_status(&weak, "Codex is working...".into(), None);
+                        match current.send_prompt(&prompt).await {
+                            Ok(response) => {
+                                set_codex_status(&weak, "Codex is ready".into(), Some(response));
+                            }
+                            Err(error) => {
+                                set_codex_error(&weak, error.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    });
+    sender
 }
 
 fn set_ui_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: String) {
@@ -115,4 +202,17 @@ fn set_ui_error(weak: &slint::Weak<AppWindow>, message: String) {
         window.set_status(message.into());
         window.set_endpoint("No endpoint".into());
     });
+}
+
+fn set_codex_status(weak: &slint::Weak<AppWindow>, status: String, transcript: Option<String>) {
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_codex_status(status.into());
+        if let Some(transcript) = transcript {
+            window.set_transcript(transcript.into());
+        }
+    });
+}
+
+fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {
+    set_codex_status(weak, format!("Codex error: {message}"), None);
 }
