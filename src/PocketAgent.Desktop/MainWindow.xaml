@@ -58,7 +58,23 @@
       <TabItem Header="Sessions">
         <Grid Margin="0,16,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <DockPanel Margin="0,0,0,12"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="+" AutomationProperties.Name="New conversation" ToolTip="New conversation" Click="NewConversation"/><StackPanel x:Name="ConversationActions" Orientation="Horizontal" IsEnabled="False"><Button x:Name="RenameButton" Content="" ContentTemplate="{StaticResource EditIconTemplate}" ToolTip="Rename conversation" AutomationProperties.Name="Rename conversation" Click="RenameConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button x:Name="ModelButton" Content="" ContentTemplate="{StaticResource RobotIconTemplate}" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button x:Name="PinButton" Content="" ContentTemplate="{StaticResource PinIconTemplate}" ToolTip="Pin conversation" AutomationProperties.Name="Pin conversation" Click="TogglePinned" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button x:Name="ArchiveButton" Content="" ContentTemplate="{StaticResource ArchiveIconTemplate}" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/><Button x:Name="ArchivedButton" Content="" ContentTemplate="{StaticResource UnarchiveIconTemplate}" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/></StackPanel></StackPanel><ListBox x:Name="SessionList" Background="#18271F" Foreground="#EBF1EA" BorderThickness="0" DisplayMemberPath="Label" SelectionChanged="SessionSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"><ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel><ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource ReadableListItem}"><Setter Property="Padding" Value="16,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style></ListBox.ItemContainerStyle></ListBox></DockPanel>
+          <DockPanel Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="+" AutomationProperties.Name="New conversation" ToolTip="New conversation" Click="NewConversation"/>
+              <StackPanel x:Name="ConversationActions" Orientation="Horizontal" IsEnabled="False">
+                <Button x:Name="AccessButton" Content="Access" ToolTip="Manage conversation access" AutomationProperties.Name="Manage conversation access" Click="ManageSelectedAccess" MinWidth="70" Height="32" Padding="8,2" Foreground="#C1DAA6"/>
+                <Button x:Name="RenameButton" Content="" ContentTemplate="{StaticResource EditIconTemplate}" ToolTip="Rename conversation" AutomationProperties.Name="Rename conversation" Click="RenameConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="ModelButton" Content="" ContentTemplate="{StaticResource RobotIconTemplate}" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="PinButton" Content="" ContentTemplate="{StaticResource PinIconTemplate}" ToolTip="Pin conversation" AutomationProperties.Name="Pin conversation" Click="TogglePinned" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="ArchiveButton" Content="" ContentTemplate="{StaticResource ArchiveIconTemplate}" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="ArchivedButton" Content="" ContentTemplate="{StaticResource UnarchiveIconTemplate}" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+              </StackPanel>
+            </StackPanel>
+            <ListBox x:Name="SessionList" Background="#18271F" Foreground="#EBF1EA" BorderThickness="0" DisplayMemberPath="Label" SelectionChanged="SessionSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+              <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+              <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource ReadableListItem}"><Setter Property="Padding" Value="16,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style></ListBox.ItemContainerStyle>
+            </ListBox>
+          </DockPanel>
           <Grid Grid.Row="1" x:Name="ConversationPanel" IsEnabled="False">
             <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <ScrollViewer x:Name="TranscriptScroll" Grid.Row="0" Margin="0,12" ScrollChanged="TranscriptScrollChanged"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
@@ -87,7 +103,7 @@
           <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
           <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
           <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
-          <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><TextBlock x:Name="DeviceAccessStatus" Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,8"/><StackPanel x:Name="DeviceList"/>
+           <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><TextBlock x:Name="DeviceAccessStatus" Text="Manage conversation access from the Access action beside the selected session." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,8"/><StackPanel x:Name="DeviceList"/>
         </StackPanel></ScrollViewer>
       </TabItem>
       <TabItem Header="Settings">

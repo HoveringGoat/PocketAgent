@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.13 - 2026-11-16
+
+- Added an Access action beside the selected conversation's desktop actions, with a per-conversation device checklist.
+- Moved per-conversation grants out of the Devices page; Devices now focuses on pairing and device-wide revocation.
+- Reworked the conversation model picker with searchable readable names, technical IDs, and friendly reasoning labels.
+
 ## 0.3.12 - 2026-11-16
 
 - Allow archiving and restoring an idle conversation from PocketAgent metadata when its Codex thread is unavailable.
