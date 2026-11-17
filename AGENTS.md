@@ -10,6 +10,21 @@
 - Clean up obsolete scaffolding or helper code in the same change rather than leaving dead code behind.
 - This is an independent repository. Keep its implementation, tooling, and documentation here; do not modify unrelated repositories as part of this project.
 
+## Two-Phase Commits
+
+- Commit mechanical prep edits (renames, formatting, import sorting) first in an isolated prep commit.
+- Implement behavior changes and tests in a second commit scoped to one clear change.
+- Keep each commit small enough to explain in a single sentence.
+
+## Commit consistency
+
+- Commit every completed, approved change set before handoff unless the user explicitly asks to leave it uncommitted.
+- Keep unrelated user changes out of the commit; stage only files belonging to the current change.
+- Use a concise imperative commit subject that names the behavior or maintenance change.
+- Run focused validation and inspect `git diff --cached` before committing; do not commit credentials, private files, generated build output, or temporary artifacts.
+- If a change is incomplete or validation is blocked, leave it uncommitted and report the exact blocker rather than creating a misleading partial commit.
+- Do not amend, rewrite, or push existing commits unless the user explicitly requests it.
+
 ## Documentation workflow
 
 - Documentation must explain how a feature or system is intended to work as well as actual implementation details.
