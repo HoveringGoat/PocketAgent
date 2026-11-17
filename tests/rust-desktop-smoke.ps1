@@ -35,6 +35,10 @@ try {
     if (!($texts -contains 'Relay is running') -or !($texts | Where-Object { $_ -like 'ws://*' })) {
         throw 'Relay did not enter the running state with a visible endpoint.'
     }
+    $relayConfigPath = Join-Path $env:LOCALAPPDATA 'PocketAgent-rust/relay.json'
+    if (!(Test-Path -LiteralPath $relayConfigPath)) { throw 'Relay identity was not persisted.' }
+    $firstRelayHost = (Get-Content -LiteralPath $relayConfigPath -Raw | ConvertFrom-Json).host_id
+    if ([string]::IsNullOrWhiteSpace($firstRelayHost)) { throw 'Persisted relay identity was empty.' }
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $stop = $buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1
@@ -43,6 +47,15 @@ try {
     Start-Sleep -Milliseconds 400
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
     if (!($texts -contains 'Relay is stopped')) { throw 'Relay did not stop cleanly.' }
+
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    ($buttons | Where-Object { $_.Current.Name -eq 'Start relay' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 500
+    $secondRelayHost = (Get-Content -LiteralPath $relayConfigPath -Raw | ConvertFrom-Json).host_id
+    if ($firstRelayHost -ne $secondRelayHost) { throw 'Relay identity changed across restart.' }
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    ($buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 300
 
     $editCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
