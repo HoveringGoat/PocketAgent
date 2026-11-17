@@ -1,7 +1,7 @@
 mod codex;
 mod store;
 
-use codex::CodexSession;
+use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
@@ -22,6 +22,7 @@ slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = AppWindow::new()?;
+    let interaction = InteractionState::shared();
     let store = DesktopStore::load();
     let repository = if !store.repository_path.is_empty()
         && std::path::Path::new(&store.repository_path).is_dir()
@@ -38,7 +39,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_repository_path(repository.clone().into());
     window.set_codex_executable(executable.clone().into());
 
-    let codex_commands = start_codex_worker(window.as_weak());
+    {
+        let interaction = interaction.clone();
+        window.on_answer_interaction(move |answer| {
+            let pending = interaction
+                .0
+                .lock()
+                .expect("interaction lock should work")
+                .pending
+                .clone();
+            let Some(pending) = pending else { return };
+            let answer = answer.to_string();
+            let response = if pending.method == "item/tool/requestUserInput" {
+                let answers = pending
+                    .question_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, id)| {
+                        let value = answer.lines().nth(index).unwrap_or(&answer).to_owned();
+                        (id.clone(), serde_json::json!({ "answers": [value] }))
+                    })
+                    .collect::<serde_json::Map<_, _>>();
+                serde_json::json!({ "answers": answers })
+            } else {
+                serde_json::json!({ "decision": answer })
+            };
+            InteractionState::respond(&interaction, response);
+        });
+    }
+    let codex_commands = start_codex_worker(window.as_weak(), interaction.clone());
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     {
         let commands = codex_commands.clone();
@@ -215,7 +244,10 @@ enum CodexCommand {
     Stop,
 }
 
-fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexCommand> {
+fn start_codex_worker(
+    weak: slint::Weak<AppWindow>,
+    interaction: SharedInteraction,
+) -> UnboundedSender<CodexCommand> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -350,11 +382,21 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
+                        InteractionState::clear(&interaction);
+                        clear_pending_interaction(&weak);
                         set_codex_status(&weak, "Codex is working...".into(), None);
                         let (stop_tx, mut stop_rx) = watch::channel(false);
                         let result = loop {
                             tokio::select! {
-                                result = current.send_prompt(&prompt, &mut stop_rx) => break Some(result),
+                                result = current.send_prompt(
+                                    &prompt,
+                                    &mut stop_rx,
+                                    interaction.clone(),
+                                    {
+                                        let weak = weak.clone();
+                                        move |request| set_pending_interaction(&weak, request)
+                                    },
+                                ) => break Some(result),
                                 command = receiver.recv() => match command {
                                     Some(CodexCommand::Stop) => {
                                         let _ = stop_tx.send(true);
@@ -365,6 +407,8 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             }
                         };
                         let Some(result) = result else { break };
+                        InteractionState::clear(&interaction);
+                        clear_pending_interaction(&weak);
                         match result {
                             Ok(response) => {
                                 set_codex_status(&weak, "Codex is ready".into(), Some(response));
@@ -480,6 +524,23 @@ fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
 
 fn set_archived_view(weak: &slint::Weak<AppWindow>, showing: bool) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_showing_archived(showing));
+}
+
+fn set_pending_interaction(weak: &slint::Weak<AppWindow>, request: PromptRequest) {
+    let decisions = request.decisions.join(",");
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_pending_interaction(request.prompt.into());
+        window.set_interaction_method(request.method.into());
+        window.set_interaction_decisions(decisions.into());
+    });
+}
+
+fn clear_pending_interaction(weak: &slint::Weak<AppWindow>) {
+    let _ = weak.upgrade_in_event_loop(|window| {
+        window.set_pending_interaction("".into());
+        window.set_interaction_method("".into());
+        window.set_interaction_decisions("".into());
+    });
 }
 
 fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {

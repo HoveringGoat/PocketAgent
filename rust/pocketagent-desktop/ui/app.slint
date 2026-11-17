@@ -23,6 +23,9 @@ export component AppWindow inherits Window {
     in-out property <[SessionItem]> session-items: [];
     in-out property <string> current-session-id: "";
     in-out property <bool> showing-archived: false;
+    in-out property <string> pending-interaction: "";
+    in-out property <string> interaction-method: "";
+    in-out property <string> interaction-decisions: "";
     in-out property <[MarkdownBlock]> transcript-blocks: [];
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
@@ -36,6 +39,7 @@ export component AppWindow inherits Window {
     callback toggle-pin();
     callback rename-session(string);
     callback toggle-archived();
+    callback answer-interaction(string);
     callback send-prompt(string);
     callback stop-work();
     callback start-relay();
@@ -113,6 +117,21 @@ export component AppWindow inherits Window {
                     font-size: block.kind == "heading" ? 18px : 14px;
                     font-weight: block.kind == "heading" ? 700 : 400;
                     font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                }
+                if interaction-method != "" : GroupBox {
+                    title: "Codex needs your input";
+                    VerticalBox {
+                        spacing: 8px;
+                        Text { text: pending-interaction; color: #f3d28a; font-size: 14px; }
+                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; }
+                        HorizontalBox {
+                            spacing: 8px;
+                            if interaction-method == "item/tool/requestUserInput" : Button { text: "Submit"; enabled: response.text != ""; clicked => { answer-interaction(response.text); response.text = ""; } }
+                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Accept"; clicked => { answer-interaction("accept"); } }
+                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Decline"; clicked => { answer-interaction("decline"); } }
+                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Cancel"; clicked => { answer-interaction("cancel"); } }
+                        }
+                    }
                 }
                 HorizontalBox {
                     spacing: 8px;

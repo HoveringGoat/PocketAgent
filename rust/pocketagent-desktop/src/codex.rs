@@ -1,10 +1,55 @@
 use serde_json::{Value, json};
-use std::{io, path::Path};
+use std::{io, path::Path, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::watch,
+    sync::{Notify, watch},
 };
+
+#[derive(Clone, Debug)]
+pub struct PromptRequest {
+    pub id: Value,
+    pub method: String,
+    pub prompt: String,
+    pub decisions: Vec<String>,
+    pub question_ids: Vec<String>,
+}
+
+#[derive(Default)]
+pub struct InteractionState {
+    pub pending: Option<PromptRequest>,
+    pub response: Option<Value>,
+}
+
+pub type SharedInteraction = Arc<(std::sync::Mutex<InteractionState>, Notify)>;
+
+impl InteractionState {
+    pub fn shared() -> SharedInteraction {
+        Arc::new((std::sync::Mutex::new(Self::default()), Notify::new()))
+    }
+
+    pub fn clear(shared: &SharedInteraction) {
+        shared
+            .0
+            .lock()
+            .expect("interaction lock should work")
+            .pending = None;
+        shared
+            .0
+            .lock()
+            .expect("interaction lock should work")
+            .response = None;
+    }
+
+    pub fn respond(shared: &SharedInteraction, response: Value) {
+        shared
+            .0
+            .lock()
+            .expect("interaction lock should work")
+            .response = Some(response);
+        shared.1.notify_one();
+    }
+}
 
 pub struct CodexSession {
     child: Child,
@@ -92,6 +137,8 @@ impl CodexSession {
         &mut self,
         prompt: &str,
         cancel: &mut watch::Receiver<bool>,
+        interaction: SharedInteraction,
+        on_request: impl Fn(PromptRequest),
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread_id = self.ensure_thread().await?;
         let turn = self
@@ -117,6 +164,27 @@ impl CodexSession {
             } else {
                 tokio::select! {
                     message = self.read_message() => message?,
+                    _ = interaction.1.notified() => {
+                        let response = {
+                            let mut state = interaction.0.lock().expect("interaction lock should work");
+                            state.response.take()
+                        };
+                        if let Some(response) = response {
+                            let request_id = interaction
+                                .0
+                                .lock()
+                                .expect("interaction lock should work")
+                                .pending
+                                .as_ref()
+                                .map(|request| request.id.clone());
+                            if let Some(request_id) = request_id {
+                                self.write_message(json!({ "id": request_id, "result": response })).await?;
+                                let mut state = interaction.0.lock().expect("interaction lock should work");
+                                state.pending = None;
+                            }
+                        }
+                        continue;
+                    }
                     changed = cancel.changed() => {
                         if changed.is_ok() && *cancel.borrow() {
                             if let Some(turn_id) = turn_id.as_deref() {
@@ -125,6 +193,7 @@ impl CodexSession {
                                     "turnId": turn_id,
                                 })).await;
                             }
+                            InteractionState::clear(&interaction);
                             interrupted = true;
                         }
                         continue;
@@ -163,10 +232,17 @@ impl CodexSession {
                     return Ok(output);
                 }
                 Some(method)
-                    if method.contains("requestApproval")
-                        || method == "item/tool/requestUserInput" =>
+                    if message.get("id").is_some()
+                        && (method.contains("requestApproval")
+                            || method == "item/tool/requestUserInput") =>
                 {
-                    return Err(io::Error::other("Codex requested approval/input; use the existing desktop for this interaction.").into());
+                    let request = prompt_request(&message, method);
+                    {
+                        let mut state = interaction.0.lock().expect("interaction lock should work");
+                        state.pending = Some(request.clone());
+                        state.response = None;
+                    }
+                    on_request(request);
                 }
                 Some("error") => {
                     let message = message
@@ -321,4 +397,110 @@ fn thread_text(result: &Value) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn prompt_request(message: &Value, method: &str) -> PromptRequest {
+    let params = message.get("params").cloned().unwrap_or(Value::Null);
+    let question_ids = params
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|question| {
+            question
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let prompt = if method == "item/tool/requestUserInput" {
+        params
+            .get("questions")
+            .and_then(Value::as_array)
+            .map(|questions| {
+                questions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, question)| {
+                        let label = question
+                            .get("header")
+                            .or_else(|| question.get("id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("Question");
+                        let text = question
+                            .get("question")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Provide an answer");
+                        format!("{}. {}: {}", index + 1, label, text)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_else(|| "Codex is requesting input.".into())
+    } else {
+        params
+            .get("reason")
+            .or_else(|| params.get("command"))
+            .and_then(Value::as_str)
+            .unwrap_or("Codex is requesting approval.")
+            .to_owned()
+    };
+    let decisions = params
+        .get("availableDecisions")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["accept".into(), "decline".into(), "cancel".into()]);
+    PromptRequest {
+        id: message.get("id").cloned().unwrap_or(Value::Null),
+        method: method.to_owned(),
+        prompt,
+        decisions,
+        question_ids,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_request_preserves_id_reason_and_decisions() {
+        let request = prompt_request(
+            &json!({
+                "id": 7,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "reason": "Run the formatter",
+                    "availableDecisions": ["accept", "decline"]
+                }
+            }),
+            "item/commandExecution/requestApproval",
+        );
+        assert_eq!(request.id, json!(7));
+        assert_eq!(request.prompt, "Run the formatter");
+        assert_eq!(request.decisions, vec!["accept", "decline"]);
+    }
+
+    #[test]
+    fn input_request_extracts_question_ids() {
+        let request = prompt_request(
+            &json!({
+                "id": "req-1",
+                "method": "item/tool/requestUserInput",
+                "params": { "questions": [
+                    { "id": "name", "header": "Name", "question": "What is your name?" },
+                    { "id": "color", "question": "Favorite color?" }
+                ] }
+            }),
+            "item/tool/requestUserInput",
+        );
+        assert_eq!(request.question_ids, vec!["name", "color"]);
+        assert!(request.prompt.contains("What is your name?"));
+    }
 }
