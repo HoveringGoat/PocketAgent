@@ -7,7 +7,7 @@ use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::{
-    env,
+    env, fs,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -152,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let weak = window.as_weak();
         let relay_shutdown = Arc::clone(&relay_shutdown);
-        window.on_start_relay(move || {
+        window.on_start_relay(move |bind_address| {
             if relay_shutdown
                 .lock()
                 .expect("relay state lock should work")
@@ -162,6 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let weak = weak.clone();
             let relay_shutdown = Arc::clone(&relay_shutdown);
+            let bind_address = bind_address.to_string();
             std::thread::spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -174,7 +175,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
                 runtime.block_on(async move {
-                    let listener = match TcpListener::bind("127.0.0.1:0").await {
+                    let config = match load_relay_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            set_relay_error(
+                                &weak,
+                                format!("Could not load relay identity: {error}"),
+                            );
+                            return;
+                        }
+                    };
+                    let listener = match TcpListener::bind(&bind_address).await {
                         Ok(listener) => listener,
                         Err(error) => {
                             set_relay_error(&weak, format!("Could not bind relay: {error}"));
@@ -191,12 +202,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             return;
                         }
                     };
-                    let config = RelayConfig::new();
                     let auth = RelayAuthRegistry::default();
-                    auth.register_host(config.host_id, config.host_token.into_bytes())
+                    auth.register_host(config.host_id, config.host_token.clone().into_bytes())
                         .await;
-                    auth.register_client(config.client_id, config.client_token.into_bytes())
-                        .await;
+                    auth.register_client(
+                        config.client_id,
+                        config.client_token.clone().into_bytes(),
+                    )
+                    .await;
                     let (shutdown_tx, shutdown_rx) = oneshot::channel();
                     *relay_shutdown.lock().expect("relay state lock should work") =
                         Some(shutdown_tx);
@@ -553,6 +566,33 @@ fn default_codex_executable() -> String {
         }
     }
     "codex".into()
+}
+
+fn relay_config_path() -> PathBuf {
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        return PathBuf::from(local_app_data).join("PocketAgent-rust/relay.json");
+    }
+    if let Ok(data_home) = env::var("XDG_DATA_HOME") {
+        return PathBuf::from(data_home).join("PocketAgent-rust/relay.json");
+    }
+    env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".pocketagent-rust/relay.json")
+}
+
+fn load_relay_config() -> Result<RelayConfig, Box<dyn std::error::Error + Send + Sync>> {
+    let path = relay_config_path();
+    if let Ok(contents) = fs::read_to_string(&path)
+        && let Ok(config) = serde_json::from_str(&contents)
+    {
+        return Ok(config);
+    }
+    let config = RelayConfig::new();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(&config)?)?;
+    Ok(config)
 }
 
 fn set_codex_status(weak: &slint::Weak<AppWindow>, status: String, transcript: Option<String>) {

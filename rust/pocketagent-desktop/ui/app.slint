@@ -44,7 +44,7 @@ export component AppWindow inherits Window {
     callback answer-interaction(string);
     callback send-prompt(string, string, string);
     callback stop-work();
-    callback start-relay();
+    callback start-relay(string);
     callback stop-relay();
 
     background: #18271f;
@@ -168,7 +168,8 @@ export component AppWindow inherits Window {
                 Text { text: relay-endpoint; color: #c1daa6; font-size: 13px; }
                 HorizontalBox {
                     spacing: 8px;
-                    Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(); } }
+                    relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }
+                    Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
                     Button { text: "Stop"; enabled: relay-running; clicked => { stop-relay(); } }
                 }
             }
