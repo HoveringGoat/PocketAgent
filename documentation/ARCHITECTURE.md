@@ -107,7 +107,7 @@ Conversation metadata is stored locally, but transcript history is owned by the 
 
 - `src/PocketAgent.Server`: API, provider protocol, policy mapping, authentication, SQLite, timing and scheduler.
 - `src/PocketAgent.Desktop`: shipped WPF control/chat UI, Wi-Fi setup and connector lifecycle.
-- `rust/pocketagent-desktop`: cross-platform Rust/Slint desktop work in progress. Local Codex mode auto-discovers basic defaults, lists/creates threads, sends prompts, and renders a tested Markdown block model; the optional relay panel exposes the Rust relay MVP. Approval handling, durable metadata, device enrollment and mobile adapters are not wired yet.
+- `rust/pocketagent-desktop`: cross-platform Rust/Slint desktop work in progress. Local Codex mode auto-discovers basic defaults, persists basic settings/thread metadata, lists/creates threads, sends prompts, and renders a tested Markdown block model; the optional relay panel exposes the Rust relay MVP. Approval handling, full history/conversation controls, device enrollment and mobile adapters are not wired yet.
 - `src/PocketAgent.Android`: native multi-server client, encrypted vault, transport and debug-only instrumentation.
 - `scripts`: repeatable builds, signing, publishing, connector acquisition and local launch.
 - `tests`: isolated deterministic protocol/security/scheduler checks and emulator tests. Live inference requires explicit opt-in.

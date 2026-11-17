@@ -159,7 +159,7 @@ impl CodexSession {
 
     pub async fn list_threads(
         &mut self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
         let result = self.request("thread/list", json!({ "limit": 100 })).await?;
         let threads = result
             .get("data")
@@ -175,7 +175,7 @@ impl CodexSession {
                     .get("title")
                     .and_then(Value::as_str)
                     .unwrap_or("Untitled");
-                Some(format!("{title}  ({id})"))
+                Some((id.to_owned(), title.to_owned()))
             })
             .collect())
     }

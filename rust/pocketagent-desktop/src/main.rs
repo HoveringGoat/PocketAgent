@@ -1,4 +1,5 @@
 mod codex;
+mod store;
 
 use codex::CodexSession;
 use pocketagent_relay::RelayNode;
@@ -10,6 +11,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use store::DesktopStore;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::{net::TcpListener, sync::oneshot};
 
@@ -17,8 +19,19 @@ slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = AppWindow::new()?;
-    let repository = default_repository();
-    let executable = default_codex_executable();
+    let store = DesktopStore::load();
+    let repository = if !store.repository_path.is_empty()
+        && std::path::Path::new(&store.repository_path).is_dir()
+    {
+        store.repository_path.clone()
+    } else {
+        default_repository()
+    };
+    let executable = if store.codex_executable.is_empty() {
+        default_codex_executable()
+    } else {
+        store.codex_executable.clone()
+    };
     window.set_repository_path(repository.clone().into());
     window.set_codex_executable(executable.clone().into());
 
@@ -159,6 +172,8 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
         };
         runtime.block_on(async move {
             let mut session: Option<CodexSession> = None;
+            let mut store = DesktopStore::load();
+            set_sessions(&weak, store.display_sessions());
             while let Some(command) = receiver.recv().await {
                 match command {
                     CodexCommand::Connect {
@@ -169,10 +184,16 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                         match CodexSession::connect(&executable, &repository).await {
                             Ok(mut connected) => {
                                 let sessions = connected.list_threads().await;
+                                store.repository_path = repository;
+                                store.codex_executable = executable;
                                 session = Some(connected);
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                                 match sessions {
-                                    Ok(sessions) => set_sessions(&weak, sessions),
+                                    Ok(sessions) => {
+                                        store.merge_threads(sessions);
+                                        let _ = store.save();
+                                        set_sessions(&weak, store.display_sessions());
+                                    }
                                     Err(error) => set_codex_error(&weak, error.to_string()),
                                 }
                             }
@@ -188,9 +209,11 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             continue;
                         };
                         match current.new_thread().await {
-                            Ok(_) => {
+                            Ok(id) => {
+                                store.merge_threads([(id, "New conversation".into())]);
+                                let _ = store.save();
                                 set_transcript(&weak, "New conversation ready".into());
-                                refresh_sessions(current, &weak).await;
+                                refresh_sessions(current, &weak, &mut store).await;
                             }
                             Err(error) => set_codex_error(&weak, error.to_string()),
                         }
@@ -200,7 +223,7 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        refresh_sessions(current, &weak).await;
+                        refresh_sessions(current, &weak, &mut store).await;
                     }
                     CodexCommand::Prompt(prompt) => {
                         let Some(current) = session.as_mut() else {
@@ -211,7 +234,7 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
                         match current.send_prompt(&prompt).await {
                             Ok(response) => {
                                 set_codex_status(&weak, "Codex is ready".into(), Some(response));
-                                refresh_sessions(current, &weak).await;
+                                refresh_sessions(current, &weak, &mut store).await;
                             }
                             Err(error) => set_codex_error(&weak, error.to_string()),
                         }
@@ -223,9 +246,17 @@ fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexComm
     sender
 }
 
-async fn refresh_sessions(session: &mut CodexSession, weak: &slint::Weak<AppWindow>) {
+async fn refresh_sessions(
+    session: &mut CodexSession,
+    weak: &slint::Weak<AppWindow>,
+    store: &mut DesktopStore,
+) {
     match session.list_threads().await {
-        Ok(sessions) => set_sessions(weak, sessions),
+        Ok(sessions) => {
+            store.merge_threads(sessions);
+            let _ = store.save();
+            set_sessions(weak, store.display_sessions());
+        }
         Err(error) => set_codex_error(weak, error.to_string()),
     }
 }
