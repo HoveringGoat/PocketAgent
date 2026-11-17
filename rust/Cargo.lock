@@ -3653,6 +3653,7 @@ version = "0.1.0"
 dependencies = [
  "pocketagent-relay",
  "pulldown-cmark",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",
