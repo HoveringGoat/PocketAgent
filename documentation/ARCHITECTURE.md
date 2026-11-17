@@ -106,7 +106,8 @@ The desktop initializes a rotating diagnostic log at `%LOCALAPPDATA%/PocketAgent
 Conversation metadata is stored locally, but transcript history is owned by the Codex app-server thread store. If a saved conversation's thread is unavailable, the relay returns the local title, folder, model, and an explicit disconnected error without deleting the row or automatically creating a replacement thread. History remains recoverable only if the original Codex executable and `CODEX_HOME` can see that thread; otherwise the relay cannot reconstruct the missing transcript. Client refreshes must keep session-list and usage requests independent from this per-conversation failure.
 
 - `src/PocketAgent.Server`: API, provider protocol, policy mapping, authentication, SQLite, timing and scheduler.
-- `src/PocketAgent.Desktop`: native control/chat UI, Wi-Fi setup and connector lifecycle.
+- `src/PocketAgent.Desktop`: shipped WPF control/chat UI, Wi-Fi setup and connector lifecycle.
+- `rust/pocketagent-desktop`: cross-platform Rust/Slint desktop preview that starts and stops the Rust relay MVP; provider/conversation adapters are not wired yet.
 - `src/PocketAgent.Android`: native multi-server client, encrypted vault, transport and debug-only instrumentation.
 - `scripts`: repeatable builds, signing, publishing, connector acquisition and local launch.
 - `tests`: isolated deterministic protocol/security/scheduler checks and emulator tests. Live inference requires explicit opt-in.

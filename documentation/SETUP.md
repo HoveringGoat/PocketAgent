@@ -151,6 +151,14 @@ pairing, provider credentials, and conversation state are not used.
 
 ## Verification commands and limits
 
+### Rust desktop MVP preview
+
+The Rust rewrite now has a runnable desktop shell. It opens a native Slint window and starts an authenticated loopback relay from the **Start relay** button; **Stop** shuts that listener down. The endpoint and generated host identity are shown in the window, while bearer tokens remain in memory. This preview is intentionally local-only and does not yet replace the packaged WPF/ASP.NET desktop or connect to Codex conversations.
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-desktop
+```
+
 Focused checks for this change:
 
 ```powershell

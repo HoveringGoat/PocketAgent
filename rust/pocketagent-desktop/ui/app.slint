@@ -1,0 +1,63 @@
+import { Button, GroupBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "PocketAgent Rust Desktop";
+    preferred-width: 720px;
+    preferred-height: 420px;
+    min-width: 560px;
+    min-height: 320px;
+
+    in-out property <string> status: "Relay is stopped";
+    in-out property <string> endpoint: "No endpoint";
+    in-out property <bool> relay-running: false;
+    callback start-relay();
+    callback stop-relay();
+
+    background: #18271f;
+
+    VerticalBox {
+        padding: 28px;
+        spacing: 18px;
+
+        Text {
+            text: "PocketAgent";
+            color: #c1daa6;
+            font-size: 30px;
+            font-weight: 700;
+        }
+        Text {
+            text: "Rust desktop MVP";
+            color: #a7b7aa;
+            font-size: 16px;
+        }
+
+        GroupBox {
+            title: "Local relay";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: status; color: #e8f1e6; font-size: 16px; }
+                Text { text: endpoint; color: #c1daa6; font-size: 14px; }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 12px;
+            Button {
+                text: relay-running ? "Running" : "Start relay";
+                enabled: !relay-running;
+                clicked => { start-relay(); }
+            }
+            Button {
+                text: "Stop";
+                enabled: relay-running;
+                clicked => { stop-relay(); }
+            }
+        }
+        Text {
+            text: "This preview starts a loopback relay only. Provider and conversation adapters are next.";
+            color: #8fa294;
+            font-size: 13px;
+        }
+    }
+}
