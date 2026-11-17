@@ -32,6 +32,7 @@ TestResults/
 .vs/
 .idea/
 **/.gradle/
+rust/target/
 src/PocketAgent.Android/**/build/
 src/PocketAgent.Android/local.properties
 *.jks

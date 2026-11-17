@@ -48,6 +48,12 @@ ConnectivityDiagnostics connects to the local listener while verifying the publi
 
 On Windows, the desktop can create one explicitly approved inbound TCP port rule named `PocketAgent inbound TCP <port>`. The rule is port-based rather than tied to the versioned executable path, so replacing the desktop package does not create a new firewall exception. The rule is only requested for a non-loopback listener, requires UAC elevation once, and is not silently created or broadened by the app. Changing the configured listener port creates a separate rule for the new port; old rules are left for the user to remove.
 
+## Relay mode
+
+Relay mode is the approved self-hosted path for a locked-down remote desktop. An unlocked PocketAgent server can run its normal local host and an optional relay node at the same time. A remote server opens an outbound authenticated connection to that relay node; a phone also connects to the relay node, and the relay routes PocketAgent messages to the selected remote host. The remote server does not need an inbound firewall rule. The relay node is the only endpoint that must be reachable, and it never becomes a generic TCP proxy.
+
+The relay protocol uses versioned opaque envelopes. The relay routes request/response frames by host, device and request IDs but does not deserialize conversation content, provider credentials or files. The remote host remains authoritative for device enrollment, per-conversation access, provider execution and local metadata. A relay node may serve its own conversations and multiple attached remote hosts. The initial Rust workspace contains only the protocol and in-process routing foundation; WebSocket/HTTPS transport, persistent identity, encryption and native client configuration are not shipped by the current WPF/Android clients yet.
+
 ## Conversations, steering and recovery
 
 `Conversations` serializes state mutations per conversation; the host-wide gate only protects the state registry and event dispatch bookkeeping. Exactly one provider turn runs per conversation. Idle input starts a new turn; additional active input uses `turn/steer` with the sender's expected turn ID. A stale ID is rejected and never silently converted into a new turn. An unscoped second turn is rejected. Steering does not answer an approval, modify policy, or cancel work. Initial history hydration for reads runs outside the host-wide gate and concurrent reads of one conversation are deduplicated.

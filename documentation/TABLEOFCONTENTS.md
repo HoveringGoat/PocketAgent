@@ -9,6 +9,7 @@
   - [Android](../CHANGELOG-android.md)
 - [Runtime architecture](ARCHITECTURE.md)
   - [Network exposure and QR trust](ARCHITECTURE.md#network-exposure-and-trust)
+  - [Relay mode](ARCHITECTURE.md#relay-mode)
 - [Release convention for another repository](RELEASE-CONVENTION.md)
 - [Local setup and verification](SETUP.md)
   - [Packaged native apps](SETUP.md#use-the-packaged-native-apps)

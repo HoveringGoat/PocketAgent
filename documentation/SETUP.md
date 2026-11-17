@@ -46,6 +46,10 @@ A CGNAT/private WAN address needs ISP/router changes to permit direct inbound ac
 
 Public-IP changes require setup again and a new phone origin; the desktop key is preserved, but saved tokens are never forwarded to a changed origin. On home Wi-Fi, using the public address requires router NAT loopback support; otherwise use cellular or configure a separate LAN connection.
 
+### Relay mode status
+
+The planned relay mode uses an unlocked PocketAgent server as a relay node. A locked-down remote desktop connects outbound to that relay; the phone connects to the relay and selects the attached remote host. This removes the inbound firewall requirement from the remote desktop, but the relay node itself must remain reachable. The Rust workspace currently contains the versioned protocol and in-process routing foundation only; relay transport, pairing UI and packaged client support are not available in the current release.
+
 ## Connect over Wi-Fi
 
 While stopped, expand Advanced certificate settings and choose Set up Wi-Fi connection. Choose the desktop's private interface, save, and start. Pair using its QR/string. No CA certificate installation is required. Both devices must share a network that permits connections; guest isolation can block them. Configure direct internet instead when cellular access is required.
@@ -157,6 +161,8 @@ $env:POCKETAGENT_TEST_SERVER_DLL = (Resolve-Path src/PocketAgent.Server/bin/Rele
 node --test tests/direct-internet.test.mjs
 .\tests\desktop-smoke.ps1
 ```
+
+The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, opaque payload preservation, outbound-host routing and device/session mismatch rejection. It does not yet prove live HTTPS/WebSocket transport or a real two-desktop deployment.
 
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
