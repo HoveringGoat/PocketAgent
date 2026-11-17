@@ -153,7 +153,7 @@ pairing, provider credentials, and conversation state are not used.
 
 ### Rust desktop MVP preview
 
-The Rust rewrite now has a runnable desktop shell. It opens a native Slint window, starts an authenticated loopback relay from the **Start relay** button, and can connect to a locally installed Codex app-server to create a thread and send basic prompts. **Stop** shuts the relay listener down. The endpoint and generated host identity are shown in the window, while bearer tokens remain in memory. Approval/question handling, persistence, mobile adapters, and replacement of the packaged WPF/ASP.NET desktop are still open.
+The Rust rewrite now has a runnable native desktop shell. It defaults to local Codex mode: the repository defaults to `POCKETAGENT_REPOSITORY` or the launch directory, and Windows detects `%APPDATA%/npm/codex.ps1` when present. It connects to Codex, lists saved thread IDs, creates a new conversation, sends basic prompts, and renders headings, bullets, and code blocks as Markdown-styled transcript blocks. The **Optional relay** panel starts/stops the authenticated loopback relay when remote transport is needed; local conversation use does not require it. Approval/question handling, durable PocketAgent metadata, device enrollment, mobile adapters, and replacement of the packaged WPF/ASP.NET desktop are still open.
 
 ```powershell
 cargo run --manifest-path rust/Cargo.toml -p pocketagent-desktop

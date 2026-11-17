@@ -4,16 +4,50 @@ use codex::CodexSession;
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
-use std::sync::{Arc, Mutex};
-use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use std::{
+    env,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::{net::TcpListener, sync::oneshot};
 
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = AppWindow::new()?;
-    let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    let repository = default_repository();
+    let executable = default_codex_executable();
+    window.set_repository_path(repository.clone().into());
+    window.set_codex_executable(executable.clone().into());
+
     let codex_commands = start_codex_worker(window.as_weak());
+    let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    {
+        let commands = codex_commands.clone();
+        window.on_connect_codex(move |repository, executable| {
+            let _ = commands.send(CodexCommand::Connect {
+                repository: repository.to_string(),
+                executable: executable.to_string(),
+            });
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_new_conversation(move || {
+            let _ = commands.send(CodexCommand::NewConversation);
+        });
+    }
+    {
+        let commands = codex_commands.clone();
+        window.on_refresh_sessions(move || {
+            let _ = commands.send(CodexCommand::RefreshSessions);
+        });
+    }
+    window.on_send_prompt(move |prompt| {
+        let _ = codex_commands.send(CodexCommand::Prompt(prompt.to_string()));
+    });
 
     {
         let weak = window.as_weak();
@@ -35,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     Ok(runtime) => runtime,
                     Err(error) => {
-                        set_ui_error(&weak, format!("Runtime failed: {error}"));
+                        set_relay_error(&weak, format!("Runtime failed: {error}"));
                         return;
                     }
                 };
@@ -43,14 +77,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let listener = match TcpListener::bind("127.0.0.1:0").await {
                         Ok(listener) => listener,
                         Err(error) => {
-                            set_ui_error(&weak, format!("Could not bind relay: {error}"));
+                            set_relay_error(&weak, format!("Could not bind relay: {error}"));
                             return;
                         }
                     };
                     let address = match listener.local_addr() {
                         Ok(address) => address,
                         Err(error) => {
-                            set_ui_error(&weak, format!("Could not read relay address: {error}"));
+                            set_relay_error(
+                                &weak,
+                                format!("Could not read relay address: {error}"),
+                            );
                             return;
                         }
                     };
@@ -63,37 +100,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (shutdown_tx, shutdown_rx) = oneshot::channel();
                     *relay_shutdown.lock().expect("relay state lock should work") =
                         Some(shutdown_tx);
-                    set_ui_running(&weak, address.to_string(), config.host_id.to_string());
+                    set_relay_running(&weak, address.to_string(), config.host_id.to_string());
                     let server = RelayTransportServer::new(RelayNode::new(), auth);
                     let result = server.serve_until(listener, shutdown_rx).await;
                     *relay_shutdown.lock().expect("relay state lock should work") = None;
                     if let Err(error) = result {
-                        set_ui_error(&weak, format!("Relay stopped with an error: {error}"));
+                        set_relay_error(&weak, format!("Relay stopped with an error: {error}"));
                     } else {
-                        set_ui_stopped(&weak);
+                        set_relay_stopped(&weak);
                     }
                 });
             });
         });
     }
-
-    {
-        let commands = codex_commands.clone();
-        window.on_connect_codex(move |repository, executable| {
-            let _ = commands.send(CodexCommand::Connect {
-                repository: repository.to_string(),
-                executable: executable.to_string(),
-            });
-        });
-    }
-
-    {
-        let commands = codex_commands;
-        window.on_send_prompt(move |prompt| {
-            let _ = commands.send(CodexCommand::Prompt(prompt.to_string()));
-        });
-    }
-
     {
         let weak = window.as_weak();
         let relay_shutdown = Arc::clone(&relay_shutdown);
@@ -105,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = shutdown.send(());
             } else {
-                set_ui_stopped(&weak);
+                set_relay_stopped(&weak);
             }
         });
     }
@@ -120,13 +139,13 @@ enum CodexCommand {
         repository: String,
         executable: String,
     },
+    NewConversation,
+    RefreshSessions,
     Prompt(String),
 }
 
-fn start_codex_worker(
-    weak: slint::Weak<AppWindow>,
-) -> tokio::sync::mpsc::UnboundedSender<CodexCommand> {
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+fn start_codex_worker(weak: slint::Weak<AppWindow>) -> UnboundedSender<CodexCommand> {
+    let (sender, mut receiver) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -148,15 +167,40 @@ fn start_codex_worker(
                     } => {
                         set_codex_status(&weak, "Connecting to Codex...".into(), None);
                         match CodexSession::connect(&executable, &repository).await {
-                            Ok(connected) => {
+                            Ok(mut connected) => {
+                                let sessions = connected.list_threads().await;
                                 session = Some(connected);
                                 set_codex_status(&weak, "Codex is ready".into(), None);
+                                match sessions {
+                                    Ok(sessions) => set_sessions(&weak, sessions),
+                                    Err(error) => set_codex_error(&weak, error.to_string()),
+                                }
                             }
                             Err(error) => {
                                 session = None;
                                 set_codex_error(&weak, error.to_string());
                             }
                         }
+                    }
+                    CodexCommand::NewConversation => {
+                        let Some(current) = session.as_mut() else {
+                            set_codex_error(&weak, "Connect Codex first.".into());
+                            continue;
+                        };
+                        match current.new_thread().await {
+                            Ok(_) => {
+                                set_transcript(&weak, "New conversation ready".into());
+                                refresh_sessions(current, &weak).await;
+                            }
+                            Err(error) => set_codex_error(&weak, error.to_string()),
+                        }
+                    }
+                    CodexCommand::RefreshSessions => {
+                        let Some(current) = session.as_mut() else {
+                            set_codex_error(&weak, "Connect Codex first.".into());
+                            continue;
+                        };
+                        refresh_sessions(current, &weak).await;
                     }
                     CodexCommand::Prompt(prompt) => {
                         let Some(current) = session.as_mut() else {
@@ -167,10 +211,9 @@ fn start_codex_worker(
                         match current.send_prompt(&prompt).await {
                             Ok(response) => {
                                 set_codex_status(&weak, "Codex is ready".into(), Some(response));
+                                refresh_sessions(current, &weak).await;
                             }
-                            Err(error) => {
-                                set_codex_error(&weak, error.to_string());
-                            }
+                            Err(error) => set_codex_error(&weak, error.to_string()),
                         }
                     }
                 }
@@ -180,39 +223,191 @@ fn start_codex_worker(
     sender
 }
 
-fn set_ui_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: String) {
-    let _ = weak.upgrade_in_event_loop(move |window| {
-        window.set_relay_running(true);
-        window.set_status("Relay is running".into());
-        window.set_endpoint(format!("ws://{endpoint}  •  host {host_id}").into());
-    });
+async fn refresh_sessions(session: &mut CodexSession, weak: &slint::Weak<AppWindow>) {
+    match session.list_threads().await {
+        Ok(sessions) => set_sessions(weak, sessions),
+        Err(error) => set_codex_error(weak, error.to_string()),
+    }
 }
 
-fn set_ui_stopped(weak: &slint::Weak<AppWindow>) {
-    let _ = weak.upgrade_in_event_loop(|window| {
-        window.set_relay_running(false);
-        window.set_status("Relay is stopped".into());
-        window.set_endpoint("No endpoint".into());
-    });
+fn default_repository() -> String {
+    if let Ok(repository) = env::var("POCKETAGENT_REPOSITORY")
+        && PathBuf::from(&repository).is_dir()
+    {
+        return repository;
+    }
+    env::current_dir()
+        .ok()
+        .filter(|path| path.is_dir())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
-fn set_ui_error(weak: &slint::Weak<AppWindow>, message: String) {
-    let _ = weak.upgrade_in_event_loop(move |window| {
-        window.set_relay_running(false);
-        window.set_status(message.into());
-        window.set_endpoint("No endpoint".into());
-    });
+fn default_codex_executable() -> String {
+    if let Ok(executable) = env::var("POCKETAGENT_CODEX_EXECUTABLE")
+        && !executable.trim().is_empty()
+    {
+        return executable;
+    }
+    if cfg!(windows)
+        && let Ok(app_data) = env::var("APPDATA")
+    {
+        let wrapper = PathBuf::from(app_data).join("npm/codex.ps1");
+        if wrapper.is_file() {
+            return wrapper.to_string_lossy().into_owned();
+        }
+    }
+    "codex".into()
 }
 
 fn set_codex_status(weak: &slint::Weak<AppWindow>, status: String, transcript: Option<String>) {
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_codex_status(status.into());
         if let Some(transcript) = transcript {
-            window.set_transcript(transcript.into());
+            set_transcript_blocks(&window, &transcript);
         }
     });
 }
 
+fn set_transcript(weak: &slint::Weak<AppWindow>, transcript: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| set_transcript_blocks(&window, &transcript));
+}
+
+fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
+    let blocks = markdown_blocks(markdown)
+        .into_iter()
+        .map(|block| MarkdownBlock {
+            text: block.text.into(),
+            kind: block.kind.into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
+}
+
+fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<String>) {
+    let value = if sessions.is_empty() {
+        "No saved sessions".into()
+    } else {
+        sessions.join("\n")
+    };
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_sessions(value.into()));
+}
+
 fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {
     set_codex_status(weak, format!("Codex error: {message}"), None);
+}
+
+fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_relay_running(true);
+        window.set_relay_status("Relay is running".into());
+        window.set_relay_endpoint(format!("ws://{endpoint}  •  host {host_id}").into());
+    });
+}
+
+fn set_relay_stopped(weak: &slint::Weak<AppWindow>) {
+    let _ = weak.upgrade_in_event_loop(|window| {
+        window.set_relay_running(false);
+        window.set_relay_status("Relay is stopped".into());
+        window.set_relay_endpoint("No endpoint".into());
+    });
+}
+
+fn set_relay_error(weak: &slint::Weak<AppWindow>, message: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_relay_running(false);
+        window.set_relay_status(message.into());
+        window.set_relay_endpoint("No endpoint".into());
+    });
+}
+
+struct ParsedBlock {
+    text: String,
+    kind: String,
+}
+
+fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    let mut kind = "paragraph".to_owned();
+    let mut list_depth = 0usize;
+    let parser = Parser::new_ext(markdown, Options::all());
+    for event in parser {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                flush_block(&mut blocks, &mut current, &mut kind);
+                kind = if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) {
+                    "heading".into()
+                } else {
+                    "subheading".into()
+                };
+            }
+            Event::End(TagEnd::Heading(_)) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::Start(Tag::Paragraph) => {
+                if current.is_empty() {
+                    kind = "paragraph".into();
+                }
+            }
+            Event::End(TagEnd::Paragraph) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::Start(Tag::Item) => {
+                flush_block(&mut blocks, &mut current, &mut kind);
+                kind = "bullet".into();
+                current.push_str("• ");
+                list_depth += 1;
+            }
+            Event::End(TagEnd::Item) => {
+                flush_block(&mut blocks, &mut current, &mut kind);
+                list_depth = list_depth.saturating_sub(1);
+            }
+            Event::Start(Tag::CodeBlock(_)) => {
+                flush_block(&mut blocks, &mut current, &mut kind);
+                kind = "code".into();
+            }
+            Event::End(TagEnd::CodeBlock) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::Text(text) | Event::Code(text) => current.push_str(&text),
+            Event::SoftBreak | Event::HardBreak => current.push('\n'),
+            Event::Rule => {
+                flush_block(&mut blocks, &mut current, &mut kind);
+                blocks.push(ParsedBlock {
+                    text: "────────".into(),
+                    kind: "rule".into(),
+                });
+            }
+            Event::Start(Tag::List(_)) => {
+                if list_depth == 0 {
+                    flush_block(&mut blocks, &mut current, &mut kind);
+                }
+            }
+            Event::End(TagEnd::List(_)) => flush_block(&mut blocks, &mut current, &mut kind),
+            _ => {}
+        }
+    }
+    flush_block(&mut blocks, &mut current, &mut kind);
+    blocks
+}
+
+fn flush_block(blocks: &mut Vec<ParsedBlock>, current: &mut String, kind: &mut String) {
+    let text = current.trim_end_matches('\n').to_owned();
+    if !text.is_empty() {
+        blocks.push(ParsedBlock {
+            text,
+            kind: kind.clone(),
+        });
+    }
+    current.clear();
+    *kind = "paragraph".into();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::markdown_blocks;
+
+    #[test]
+    fn markdown_blocks_preserve_headings_bullets_and_code() {
+        let blocks = markdown_blocks("# Heading\n\n- one\n- two\n\n```rust\nlet x = 1;\n```");
+        assert_eq!(blocks[0].kind, "heading");
+        assert_eq!(blocks[1].text, "• one");
+        assert_eq!(blocks[2].text, "• two");
+        assert_eq!(blocks[3].kind, "code");
+    }
 }

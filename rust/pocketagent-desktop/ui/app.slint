@@ -1,21 +1,31 @@
 import { Button, GroupBox, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 
+export struct MarkdownBlock {
+    text: string,
+    kind: string,
+}
+
 export component AppWindow inherits Window {
     title: "PocketAgent Rust Desktop";
-    preferred-width: 720px;
-    preferred-height: 420px;
-    min-width: 560px;
-    min-height: 320px;
+    preferred-width: 820px;
+    preferred-height: 680px;
+    min-width: 640px;
+    min-height: 480px;
 
-    in-out property <string> status: "Relay is stopped";
-    in-out property <string> endpoint: "No endpoint";
-    in-out property <bool> relay-running: false;
+    in-out property <string> repository-path: "";
+    in-out property <string> codex-executable: "codex";
     in-out property <string> codex-status: "Codex is disconnected";
-    in-out property <string> transcript: "No conversation yet";
+    in-out property <string> sessions: "No sessions loaded";
+    in-out property <[MarkdownBlock]> transcript-blocks: [];
+    in-out property <string> relay-status: "Relay is stopped";
+    in-out property <string> relay-endpoint: "No endpoint";
+    in-out property <bool> relay-running: false;
+    callback connect-codex(string, string);
+    callback new-conversation();
+    callback refresh-sessions();
+    callback send-prompt(string);
     callback start-relay();
     callback stop-relay();
-    callback connect-codex(string, string);
-    callback send-prompt(string);
 
     background: #18271f;
 
@@ -30,37 +40,55 @@ export component AppWindow inherits Window {
             font-weight: 700;
         }
         Text {
-            text: "Rust desktop MVP";
+            text: "Local desktop mode";
             color: #a7b7aa;
             font-size: 16px;
         }
 
         GroupBox {
-            title: "Local relay";
-            VerticalBox {
-                padding: 16px;
-                spacing: 8px;
-                Text { text: status; color: #e8f1e6; font-size: 16px; }
-                Text { text: endpoint; color: #c1daa6; font-size: 14px; }
-            }
-        }
-
-        GroupBox {
-            title: "Codex conversation";
+            title: "Codex connection";
             VerticalBox {
                 padding: 16px;
                 spacing: 8px;
                 HorizontalBox {
                     spacing: 8px;
-                    repository := LineEdit { placeholder-text: "Repository directory"; }
-                    executable := LineEdit { text: "codex"; placeholder-text: "Codex executable"; }
+                    repository := LineEdit { text: repository-path; edited => { repository-path = self.text; } }
+                    executable := LineEdit { text: codex-executable; edited => { codex-executable = self.text; } }
                     Button {
                         text: "Connect Codex";
                         clicked => { connect-codex(repository.text, executable.text); }
                     }
                 }
                 Text { text: codex-status; color: #c1daa6; font-size: 14px; }
-                Text { text: transcript; color: #e8f1e6; font-size: 14px; vertical-alignment: center; }
+            }
+        }
+
+        GroupBox {
+            title: "Sessions";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: sessions; color: #e8f1e6; font-size: 14px; }
+                HorizontalBox {
+                    spacing: 8px;
+                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(); } }
+                    Button { text: "Refresh"; enabled: codex-status == "Codex is ready"; clicked => { refresh-sessions(); } }
+                }
+            }
+        }
+
+        GroupBox {
+            title: "Conversation";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                for block in transcript-blocks : Text {
+                    text: block.text;
+                    color: block.kind == "code" ? #c1daa6 : #e8f1e6;
+                    font-size: block.kind == "heading" ? 18px : 14px;
+                    font-weight: block.kind == "heading" ? 700 : 400;
+                    font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                }
                 HorizontalBox {
                     spacing: 8px;
                     prompt := LineEdit { placeholder-text: "Send a prompt"; enabled: codex-status == "Codex is ready"; }
@@ -73,21 +101,23 @@ export component AppWindow inherits Window {
             }
         }
 
-        HorizontalBox {
-            spacing: 12px;
-            Button {
-                text: relay-running ? "Running" : "Start relay";
-                enabled: !relay-running;
-                clicked => { start-relay(); }
-            }
-            Button {
-                text: "Stop";
-                enabled: relay-running;
-                clicked => { stop-relay(); }
+        GroupBox {
+            title: "Optional relay";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: relay-status; color: #a7b7aa; font-size: 13px; }
+                Text { text: relay-endpoint; color: #c1daa6; font-size: 13px; }
+                HorizontalBox {
+                    spacing: 8px;
+                    Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(); } }
+                    Button { text: "Stop"; enabled: relay-running; clicked => { stop-relay(); } }
+                }
             }
         }
+
         Text {
-            text: "Basic Codex prompts are wired locally; approvals and mobile adapters remain next.";
+            text: "Local Codex mode does not require a relay. Approvals, persistence, and mobile adapters remain next.";
             color: #8fa294;
             font-size: 13px;
         }

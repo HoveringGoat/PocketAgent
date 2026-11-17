@@ -91,22 +91,7 @@ impl CodexSession {
         &mut self,
         prompt: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let thread_id = match self.thread_id.clone() {
-            Some(thread_id) => thread_id,
-            None => {
-                let result = self
-                    .request("thread/start", json!({ "cwd": self.repository }))
-                    .await?;
-                let id = result
-                    .get("thread")
-                    .and_then(|thread| thread.get("id"))
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| io::Error::other("Codex returned a thread without an ID"))?
-                    .to_owned();
-                self.thread_id = Some(id.clone());
-                id
-            }
-        };
+        let thread_id = self.ensure_thread().await?;
         self.request(
             "turn/start",
             json!({
@@ -165,6 +150,51 @@ impl CodexSession {
                 _ => {}
             }
         }
+    }
+
+    pub async fn new_thread(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        self.thread_id = None;
+        self.ensure_thread().await
+    }
+
+    pub async fn list_threads(
+        &mut self,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self.request("thread/list", json!({ "limit": 100 })).await?;
+        let threads = result
+            .get("data")
+            .or_else(|| result.get("threads"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(threads
+            .into_iter()
+            .filter_map(|thread| {
+                let id = thread.get("id").and_then(Value::as_str)?;
+                let title = thread
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Untitled");
+                Some(format!("{title}  ({id})"))
+            })
+            .collect())
+    }
+
+    async fn ensure_thread(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(thread_id) = self.thread_id.clone() {
+            return Ok(thread_id);
+        }
+        let result = self
+            .request("thread/start", json!({ "cwd": self.repository }))
+            .await?;
+        let id = result
+            .get("thread")
+            .and_then(|thread| thread.get("id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| io::Error::other("Codex returned a thread without an ID"))?
+            .to_owned();
+        self.thread_id = Some(id.clone());
+        Ok(id)
     }
 
     async fn notify(
