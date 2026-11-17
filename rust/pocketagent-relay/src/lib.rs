@@ -9,6 +9,8 @@ use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+pub mod transport;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RelayError {
     #[error("the host is not connected")]
@@ -209,6 +211,34 @@ impl RelayNode {
 
     pub async fn connected_clients(&self) -> Vec<Uuid> {
         self.inner.read().await.clients.keys().copied().collect()
+    }
+
+    pub async fn detach_host(&self, session: HostSession) {
+        let mut state = self.inner.write().await;
+        if state
+            .hosts
+            .get(&session.host_id)
+            .is_some_and(|connection| connection.session_id == session.session_id)
+        {
+            state.hosts.remove(&session.host_id);
+            state
+                .pending
+                .retain(|_, pending| pending.host_id != session.host_id);
+        }
+    }
+
+    pub async fn detach_client(&self, session: ClientSession) {
+        let mut state = self.inner.write().await;
+        if state
+            .clients
+            .get(&session.client_id)
+            .is_some_and(|connection| connection.session_id == session.session_id)
+        {
+            state.clients.remove(&session.client_id);
+            state
+                .pending
+                .retain(|_, pending| pending.client_id != session.client_id);
+        }
     }
 }
 

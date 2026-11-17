@@ -62,6 +62,19 @@ impl RelayFrameEnvelope {
             frame,
         }
     }
+
+    pub fn is_supported(&self) -> bool {
+        self.version == RELAY_PROTOCOL_VERSION
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelayWireMessage {
+    AuthenticateHost { host_id: Uuid, token: Vec<u8> },
+    AuthenticateClient { client_id: Uuid, token: Vec<u8> },
+    Authenticated { session_id: Uuid },
+    Frame(RelayFrameEnvelope),
+    Rejected { reason: String },
 }
 
 #[cfg(test)]
@@ -86,5 +99,6 @@ mod tests {
             serde_json::from_slice(&encoded).expect("frame should deserialize");
         assert_eq!(decoded, frame);
         assert_eq!(decoded.version, RELAY_PROTOCOL_VERSION);
+        assert!(decoded.is_supported());
     }
 }
