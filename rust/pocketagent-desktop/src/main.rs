@@ -589,10 +589,18 @@ fn start_codex_worker(
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
                                 diagnostics::record("turn", "stopped");
+                                if let Some(schedule_id) = schedule_id.as_deref() {
+                                    let _ = store.set_schedule_status(schedule_id, "failed");
+                                    let _ = store.save();
+                                }
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                             }
                             Err(error) => {
                                 diagnostics::record("turn", "failed");
+                                if let Some(schedule_id) = schedule_id.as_deref() {
+                                    let _ = store.set_schedule_status(schedule_id, "failed");
+                                    let _ = store.save();
+                                }
                                 set_codex_error(&weak, error.to_string());
                             }
                         }
