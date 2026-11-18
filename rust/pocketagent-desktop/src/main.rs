@@ -14,6 +14,7 @@ use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::{
+    collections::VecDeque,
     env, fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -423,6 +424,7 @@ fn start_codex_worker(
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
             let mut showing_archived = false;
+            let mut deferred_commands = VecDeque::new();
             sync_host_conversations(&host_conversations, &store);
             sync_host_schedules(&host_schedules, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
@@ -445,7 +447,11 @@ fn start_codex_worker(
                     schedule.reasoning_effort.clone().unwrap_or_default(),
                 );
             }
-            while let Some(command) = receiver.recv().await {
+            while let Some(command) = if let Some(command) = deferred_commands.pop_front() {
+                Some(command)
+            } else {
+                receiver.recv().await
+            } {
                 match command {
                     CodexCommand::Connect {
                         repository,
@@ -711,7 +717,7 @@ fn start_codex_worker(
                                     {
                                         let _ = stop_tx.send(true);
                                     }
-                                    Some(_) => {}
+                                    Some(command) => deferred_commands.push_back(command),
                                     None => break None,
                                 },
                             }
