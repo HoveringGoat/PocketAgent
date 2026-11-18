@@ -674,6 +674,11 @@ fn start_codex_worker(
                                     Some(CodexCommand::Stop) => {
                                         let _ = stop_tx.send(true);
                                     }
+                                    Some(CodexCommand::Host(HostAction::Interrupt { conversation_id }))
+                                        if selected_id.as_deref() == Some(conversation_id.as_str()) =>
+                                    {
+                                        let _ = stop_tx.send(true);
+                                    }
                                     Some(_) => {}
                                     None => break None,
                                 },
@@ -858,6 +863,45 @@ fn start_codex_worker(
                             }
                             .await;
                             let _ = response.send(result);
+                        }
+                        HostAction::SetModel {
+                            conversation_id,
+                            model,
+                        } => {
+                            if store.set_model_options(
+                                &conversation_id,
+                                (!model.trim().is_empty()).then_some(model),
+                                store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == conversation_id)
+                                    .and_then(|conversation| conversation.reasoning_effort.clone()),
+                            ) {
+                                let _ = store.save();
+                            }
+                        }
+                        HostAction::SetReasoning {
+                            conversation_id,
+                            effort,
+                        } => {
+                            if store.set_model_options(
+                                &conversation_id,
+                                store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == conversation_id)
+                                    .and_then(|conversation| conversation.model.clone()),
+                                (!effort.trim().is_empty()).then_some(effort),
+                            ) {
+                                let _ = store.save();
+                            }
+                        }
+                        HostAction::Interrupt { conversation_id } => {
+                            if selected_id.as_deref() == Some(conversation_id.as_str()) {
+                                let _ = scheduler.send(CodexCommand::Host(
+                                    HostAction::Interrupt { conversation_id },
+                                ));
+                            }
                         }
                         HostAction::Schedule {
                             conversation_id,

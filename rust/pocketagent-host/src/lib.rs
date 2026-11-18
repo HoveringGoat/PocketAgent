@@ -61,6 +61,17 @@ pub enum HostAction {
         conversation_id: String,
         title: String,
     },
+    SetModel {
+        conversation_id: String,
+        model: String,
+    },
+    SetReasoning {
+        conversation_id: String,
+        effort: String,
+    },
+    Interrupt {
+        conversation_id: String,
+    },
     Create {
         device_id: Uuid,
         title: String,
@@ -496,6 +507,16 @@ struct PinInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct ModelInput {
+    model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReasoningInput {
+    effort: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RenameInput {
     title: Option<String>,
 }
@@ -543,6 +564,9 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/conversations/{id}/restore", post(restore))
         .route("/api/conversations/{id}/pin", post(pin))
         .route("/api/conversations/{id}/rename", post(rename))
+        .route("/api/conversations/{id}/model", post(set_model))
+        .route("/api/conversations/{id}/reasoning", post(set_reasoning))
+        .route("/api/conversations/{id}/interrupt", post(interrupt))
         .with_state(state)
 }
 
@@ -982,6 +1006,82 @@ async fn rename(
     mutate(&state, headers, id, HostActionKind::Rename(title))
 }
 
+async fn set_model(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<ModelInput>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND;
+    }
+    if state
+        .actions
+        .send(HostAction::SetModel {
+            conversation_id: id,
+            model: input.model.unwrap_or_default(),
+        })
+        .is_ok()
+    {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+async fn set_reasoning(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<ReasoningInput>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND;
+    }
+    if state
+        .actions
+        .send(HostAction::SetReasoning {
+            conversation_id: id,
+            effort: input.effort.unwrap_or_default(),
+        })
+        .is_ok()
+    {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+async fn interrupt(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND;
+    }
+    if state
+        .actions
+        .send(HostAction::Interrupt {
+            conversation_id: id,
+        })
+        .is_ok()
+    {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
 enum HostActionKind {
     Archive(bool),
     Pin(bool),
@@ -1218,6 +1318,52 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
+        let identity = registry.authenticate(&token).unwrap();
+        registry
+            .grant_conversation("thread-1", identity.id)
+            .unwrap();
+        for (path, body) in [
+            (
+                "/api/conversations/thread-1/model",
+                serde_json::json!({"model": "gpt-test"}),
+            ),
+            (
+                "/api/conversations/thread-1/reasoning",
+                serde_json::json!({"effort": "high"}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::post(path)
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            assert!(matches!(
+                received.recv().await.unwrap(),
+                HostAction::SetModel { .. } | HostAction::SetReasoning { .. }
+            ));
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/interrupt")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(matches!(
+            received.recv().await.unwrap(),
+            HostAction::Interrupt { .. }
+        ));
         let denied = app
             .clone()
             .oneshot(
@@ -1234,12 +1380,8 @@ mod tests {
             serde_json::from_slice::<Vec<HostConversation>>(&body)
                 .unwrap()
                 .len(),
-            0
+            1
         );
-        let identity = registry.authenticate(&token).unwrap();
-        registry
-            .grant_conversation("thread-1", identity.id)
-            .unwrap();
         let read_app = router(state.clone());
         let read_token = token.clone();
         let read_task = tokio::spawn(async move {
