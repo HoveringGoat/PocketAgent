@@ -3,6 +3,8 @@ import { Button, GroupBox, HorizontalBox, LineEdit, VerticalBox } from "std-widg
 export struct MarkdownBlock {
     text: string,
     kind: string,
+    has-image: bool,
+    image: image,
 }
 
 export struct SessionItem {
@@ -126,12 +128,22 @@ export component AppWindow inherits Window {
             VerticalBox {
                 padding: 16px;
                 spacing: 8px;
-                for block in transcript-blocks : Text {
-                    text: block.text;
-                    color: block.kind == "code" ? #c1daa6 : #e8f1e6;
-                    font-size: block.kind == "heading" ? 18px : 14px;
-                    font-weight: block.kind == "heading" ? 700 : 400;
-                    font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                for block in transcript-blocks : Rectangle {
+                    background: transparent;
+                    if block.has-image : Image {
+                        source: block.image;
+                        image-fit: contain;
+                        max-width: 640px;
+                        max-height: 480px;
+                    }
+                    if !block.has-image : Text {
+                        text: block.text;
+                        color: block.kind == "code" ? #c1daa6 : #e8f1e6;
+                        font-size: block.kind == "heading" ? 18px : 14px;
+                        font-weight: block.kind == "heading" ? 700 : 400;
+                        font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                        wrap: word-wrap;
+                    }
                 }
                 if interaction-method != "" : GroupBox {
                     title: "Codex needs your input";

@@ -1329,12 +1329,25 @@ fn set_transcript(weak: &slint::Weak<AppWindow>, transcript: String) {
 fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
     let blocks = markdown_blocks(markdown)
         .into_iter()
-        .map(|block| MarkdownBlock {
-            text: block.text.into(),
-            kind: block.kind.into(),
+        .map(|block| {
+            let image = block
+                .image_path
+                .as_deref()
+                .and_then(image_from_markdown_path);
+            MarkdownBlock {
+                text: block.text.into(),
+                kind: block.kind.into(),
+                has_image: image.is_some(),
+                image: image.unwrap_or_default(),
+            }
         })
         .collect::<Vec<_>>();
     window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
+}
+
+fn image_from_markdown_path(path: &str) -> Option<slint::Image> {
+    let path = path.strip_prefix("file://").unwrap_or(path);
+    slint::Image::load_from_path(std::path::Path::new(path)).ok()
 }
 
 fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) {
@@ -1602,78 +1615,104 @@ fn parse_session_key(value: &str) -> Option<SessionKey> {
 struct ParsedBlock {
     text: String,
     kind: String,
+    image_path: Option<String>,
 }
 
 fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
     let mut blocks = Vec::new();
     let mut current = String::new();
     let mut kind = "paragraph".to_owned();
+    let mut image_path = None;
     let mut list_depth = 0usize;
     let parser = Parser::new_ext(markdown, Options::all());
     for event in parser {
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
-                flush_block(&mut blocks, &mut current, &mut kind);
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 kind = if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) {
                     "heading".into()
                 } else {
                     "subheading".into()
                 };
             }
-            Event::End(TagEnd::Heading(_)) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::End(TagEnd::Heading(_)) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
+            }
             Event::Start(Tag::Paragraph) => {
                 if current.is_empty() {
                     kind = "paragraph".into();
                 }
             }
-            Event::End(TagEnd::Paragraph) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::End(TagEnd::Paragraph) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
+            }
             Event::Start(Tag::Item) => {
-                flush_block(&mut blocks, &mut current, &mut kind);
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 kind = "bullet".into();
                 current.push_str("* ");
                 list_depth += 1;
             }
             Event::End(TagEnd::Item) => {
-                flush_block(&mut blocks, &mut current, &mut kind);
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 list_depth = list_depth.saturating_sub(1);
             }
             Event::Start(Tag::CodeBlock(_)) => {
-                flush_block(&mut blocks, &mut current, &mut kind);
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 kind = "code".into();
             }
-            Event::End(TagEnd::CodeBlock) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::End(TagEnd::CodeBlock) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                kind = "image".into();
+                image_path = Some(dest_url.to_string());
+            }
+            Event::End(TagEnd::Image) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
+            }
             Event::Text(text) | Event::Code(text) => current.push_str(&text),
             Event::SoftBreak | Event::HardBreak => current.push('\n'),
             Event::Rule => {
-                flush_block(&mut blocks, &mut current, &mut kind);
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 blocks.push(ParsedBlock {
                     text: "---".into(),
                     kind: "rule".into(),
+                    image_path: None,
                 });
             }
             Event::Start(Tag::List(_)) => {
                 if list_depth == 0 {
-                    flush_block(&mut blocks, &mut current, &mut kind);
+                    flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
                 }
             }
-            Event::End(TagEnd::List(_)) => flush_block(&mut blocks, &mut current, &mut kind),
+            Event::End(TagEnd::List(_)) => {
+                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
+            }
             _ => {}
         }
     }
-    flush_block(&mut blocks, &mut current, &mut kind);
+    flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
     blocks
 }
 
-fn flush_block(blocks: &mut Vec<ParsedBlock>, current: &mut String, kind: &mut String) {
+fn flush_block(
+    blocks: &mut Vec<ParsedBlock>,
+    current: &mut String,
+    kind: &mut String,
+    image_path: &mut Option<String>,
+) {
     let text = current.trim_end_matches('\n').to_owned();
-    if !text.is_empty() {
+    if !text.is_empty() || image_path.is_some() {
         blocks.push(ParsedBlock {
             text,
             kind: kind.clone(),
+            image_path: image_path.take(),
         });
     }
     current.clear();
     *kind = "paragraph".into();
+    *image_path = None;
 }
 
 #[cfg(test)]
@@ -1688,6 +1727,13 @@ mod tests {
         assert_eq!(blocks[1].text, "* one");
         assert_eq!(blocks[2].text, "* two");
         assert_eq!(blocks[3].kind, "code");
+    }
+
+    #[test]
+    fn markdown_blocks_capture_image_destinations() {
+        let blocks = markdown_blocks("![diagram](C:/repo/output.png)");
+        assert_eq!(blocks[0].kind, "image");
+        assert_eq!(blocks[0].image_path.as_deref(), Some("C:/repo/output.png"));
     }
 
     #[test]

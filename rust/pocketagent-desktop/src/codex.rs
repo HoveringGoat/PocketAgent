@@ -654,6 +654,10 @@ fn render_item(item: &Value) -> Option<String> {
             .get("query")
             .and_then(Value::as_str)
             .map(|query| format!("Web search: {query}")),
+        "imageView" => item
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| format!("![Image]({path})")),
         _ => None,
     }
 }
@@ -857,5 +861,15 @@ mod tests {
             json!({ "items": [{ "type": "agentMessage", "text": "second" }] }),
         ]);
         assert_eq!(text, "first\n\nsecond");
+    }
+
+    #[test]
+    fn image_view_items_become_markdown_images() {
+        let text = thread_text(&json!({
+            "thread": { "items": [
+                { "type": "imageView", "path": "C:/repo/output.png" }
+            ] }
+        }));
+        assert_eq!(text, "![Image](C:/repo/output.png)");
     }
 }
