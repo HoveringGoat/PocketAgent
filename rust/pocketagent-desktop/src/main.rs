@@ -569,18 +569,18 @@ fn start_codex_worker(
             let mut archive_timer = tokio::time::interval(std::time::Duration::from_secs(600));
             archive_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             archive_timer.tick().await;
-            sync_host_conversations(&host_conversations, &store);
-            sync_host_schedules(&host_schedules, &store);
-            set_scheduled_items(&weak, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
                 diagnostics::record("conversation", "auto_archived_stale");
                 let _ = store.save();
             }
+            sync_host_conversations(&host_conversations, &store);
+            sync_host_schedules(&host_schedules, &store);
+            set_scheduled_items(&weak, &store);
             set_sessions(&weak, store.display_sessions());
             for schedule in store
                 .schedules
                 .iter()
-                .filter(|item| item.status == "pending")
+                .filter(|item| schedule_pending(&store, &item.id))
             {
                 queue_schedule(
                     &scheduler,
@@ -849,6 +849,9 @@ fn start_codex_worker(
                         {
                             diagnostics::record("conversation", "archived");
                             let _ = store.save();
+                            sync_host_conversations(&host_conversations, &store);
+                            sync_host_schedules(&host_schedules, &store);
+                            set_scheduled_items(&weak, &store);
                             clear_selected_conversation(&mut session, &mut selected_id, &weak);
                             set_sessions(&weak, visible_sessions(&store, showing_archived));
                         }
@@ -859,6 +862,9 @@ fn start_codex_worker(
                         {
                             diagnostics::record("conversation", "restored");
                             let _ = store.save();
+                            sync_host_conversations(&host_conversations, &store);
+                            sync_host_schedules(&host_schedules, &store);
+                            set_scheduled_items(&weak, &store);
                             set_sessions(&weak, visible_sessions(&store, showing_archived));
                         }
                     }
@@ -1274,6 +1280,8 @@ fn start_codex_worker(
                             if store.set_archived(&conversation_id, archived) {
                                 let _ = store.save();
                                 sync_host_conversations(&host_conversations, &store);
+                                sync_host_schedules(&host_schedules, &store);
+                                set_scheduled_items(&weak, &store);
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
                                 if archived
                                     && selected_id.as_deref() == Some(conversation_id.as_str())
@@ -1621,10 +1629,13 @@ fn queue_schedule(
 }
 
 fn schedule_pending(store: &DesktopStore, schedule_id: &str) -> bool {
-    store
-        .schedules
-        .iter()
-        .any(|schedule| schedule.id == schedule_id && schedule.status == "pending")
+    store.schedules.iter().any(|schedule| {
+        schedule.id == schedule_id
+            && schedule.status == "pending"
+            && store.conversations.iter().any(|conversation| {
+                conversation.id == schedule.conversation_id && !conversation.archived
+            })
+    })
 }
 
 async fn refresh_sessions(
@@ -2534,6 +2545,7 @@ mod tests {
     #[test]
     fn canceled_schedule_is_not_pending_for_dispatch() {
         let mut store = DesktopStore::default();
+        store.register_thread("thread-1".into(), "Test thread".into());
         store.schedules.push(ScheduledMessage {
             id: "job-1".into(),
             conversation_id: "thread-1".into(),
@@ -2544,6 +2556,10 @@ mod tests {
             status: "pending".into(),
         });
         assert!(schedule_pending(&store, "job-1"));
+        // Old stores could contain an archived conversation with a pending job.
+        store.conversations[0].archived = true;
+        assert!(!schedule_pending(&store, "job-1"));
+        store.conversations[0].archived = false;
         store.schedules[0].status = "canceled".into();
         assert!(!schedule_pending(&store, "job-1"));
     }

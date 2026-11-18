@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.2
+
+- Skip automatic archive for conversations with pending messages. Manual archive cancels queued messages, and restoring a conversation keeps those jobs canceled.
+
 ## Rust desktop preview 0.1.1 - 2026-11-17
 
 - Persisted relay enrollment now includes a shared application-session key and is displayed by the running relay panel for local peer provisioning.

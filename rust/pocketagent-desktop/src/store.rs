@@ -183,6 +183,13 @@ impl DesktopStore {
         let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
             return false;
         };
+        if archived || conversation.archived {
+            for schedule in &mut self.schedules {
+                if schedule.conversation_id == id && schedule.status == "pending" {
+                    schedule.status = "canceled".into();
+                }
+            }
+        }
         conversation.archived = archived;
         true
     }
@@ -238,12 +245,22 @@ impl DesktopStore {
     }
 
     pub fn archive_stale(&mut self, cutoff_unix: i64) -> usize {
+        let pending_threads: std::collections::HashSet<_> = self
+            .schedules
+            .iter()
+            .filter(|schedule| schedule.status == "pending")
+            .map(|schedule| schedule.conversation_id.as_str())
+            .collect();
         let mut archived = 0;
         for conversation in &mut self.conversations {
             let activity = conversation
                 .last_activity_unix
                 .unwrap_or(conversation.created_at_unix);
-            if !conversation.archived && !conversation.pinned && activity < cutoff_unix {
+            if !conversation.archived
+                && !conversation.pinned
+                && activity < cutoff_unix
+                && !pending_threads.contains(conversation.id.as_str())
+            {
                 conversation.archived = true;
                 archived += 1;
             }
@@ -439,6 +456,29 @@ mod tests {
         assert!(store.conversations[0].archived);
         assert!(!store.conversations[1].archived);
         assert!(!store.conversations[2].archived);
+    }
+
+    #[test]
+    fn archive_respects_pending_jobs_and_restore_does_not_requeue_them() {
+        let mut store = DesktopStore::default();
+        let id = "queued-thread";
+        store.register_thread(id.into(), "Queued thread".into());
+        store.conversations[0].created_at_unix = 1;
+        let job = store.add_schedule(id.into(), "later".into(), 20, None, None);
+        assert_eq!(store.archive_stale(10), 0);
+        assert!(!store.conversations[0].archived);
+
+        assert!(store.set_archived(id, true));
+        assert_eq!(store.schedules[0].id, job);
+        assert_eq!(store.schedules[0].status, "canceled");
+        assert!(store.set_archived(id, false));
+        assert_eq!(store.schedules[0].status, "canceled");
+
+        // Older versions could leave queued jobs on an already archived thread.
+        store.conversations[0].archived = true;
+        store.schedules[0].status = "pending".into();
+        assert!(store.set_archived(id, false));
+        assert_eq!(store.schedules[0].status, "canceled");
     }
 
     #[test]

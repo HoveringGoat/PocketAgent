@@ -113,6 +113,8 @@ Conversation metadata is stored locally, but transcript history is owned by the 
 The Rust desktop relay panel now exposes the persisted enrollment bundle and shared application-session key needed to provision one attached host/device pair. Native Android/WPF relay clients and multi-enrollment management remain open.
 
 The Rust desktop writes category-only lifecycle diagnostics under the user-local PocketAgent-rust data directory; it never records message bodies, provider stderr, pairing tokens, or relay secrets. `Build-RustDesktop.ps1 -Installer` packages the executable into a per-user Windows installer while leaving that runtime state outside the replaceable install directory.
+
+The Rust conversation store excludes threads with pending jobs from inactivity archiving. Manual archive through the desktop or device updates the archive flag and cancels pending jobs in the same store operation. Startup and dispatch require a pending job with an active conversation record. Restore cancels any pending job left behind by an older build before making that thread active again.
 - `scripts`: repeatable builds, signing, publishing, connector acquisition and local launch.
 - `tests`: isolated deterministic protocol/security/scheduler checks and emulator tests. Live inference requires explicit opt-in.
 
