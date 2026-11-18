@@ -768,6 +768,57 @@ fn start_codex_worker(
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
                             }
                         }
+                        HostAction::Create {
+                            device_id,
+                            title,
+                            model,
+                            effort,
+                            response,
+                        } => {
+                            let result = async {
+                                let Some(current) = session.as_mut() else {
+                                    return Err("Codex is disconnected.".to_owned());
+                                };
+                                let id = current
+                                    .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                                let title = if title.trim().is_empty() {
+                                    "New conversation".to_owned()
+                                } else {
+                                    title.trim().to_owned()
+                                };
+                                store.merge_threads([(id.clone(), title.clone())]);
+                                let _ = store.set_model_options(
+                                    &id,
+                                    (!model.trim().is_empty()).then_some(model.clone()),
+                                    (!effort.trim().is_empty()).then_some(effort.clone()),
+                                );
+                                let _ = store.save();
+                                sync_host_conversations(&host_conversations, &store);
+                                host_registry
+                                    .grant_conversation(id.clone(), device_id)
+                                    .map_err(|error| error.to_string())?;
+                                selected_id = Some(id.clone());
+                                set_selected_session(&weak, id.clone());
+                                set_host_devices(&weak, &host_registry, &id);
+                                set_transcript(&weak, "New conversation ready".into());
+                                set_sessions(&weak, visible_sessions(&store, showing_archived));
+                                Ok(serde_json::json!({
+                                    "id": id,
+                                    "title": title,
+                                    "status": "idle",
+                                    "items": [],
+                                    "requests": [],
+                                    "archived": false,
+                                    "pinned": false,
+                                    "model": if model.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(model) },
+                                    "reasoningEffort": if effort.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(effort) }
+                                }))
+                            }
+                            .await;
+                            let _ = response.send(result);
+                        }
                         HostAction::Schedule {
                             conversation_id,
                             text,

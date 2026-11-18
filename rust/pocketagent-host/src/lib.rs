@@ -61,6 +61,13 @@ pub enum HostAction {
         conversation_id: String,
         title: String,
     },
+    Create {
+        device_id: Uuid,
+        title: String,
+        model: String,
+        effort: String,
+        response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     Schedule {
         conversation_id: String,
         text: String,
@@ -470,6 +477,14 @@ struct MessageInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateInput {
+    title: Option<String>,
+    model: Option<String>,
+    #[serde(rename = "reasoningEffort")]
+    reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct PinInput {
     pinned: bool,
 }
@@ -501,7 +516,10 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/", get(root))
         .route("/api/session", get(session))
         .route("/api/devices/pair", post(pair))
-        .route("/api/conversations", get(list_conversations))
+        .route(
+            "/api/conversations",
+            get(list_conversations).post(create_conversation),
+        )
         .route("/api/conversations/{id}", get(get_conversation))
         .route("/api/conversations/{id}/history", get(get_history))
         .route("/api/conversations/{id}/images", get(get_image))
@@ -550,6 +568,35 @@ async fn pair(
         )
             .into_response(),
         Err(error) => auth_error(StatusCode::UNAUTHORIZED, error),
+    }
+}
+
+async fn create_conversation(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Json(input): Json<CreateInput>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if state
+        .actions
+        .send(HostAction::Create {
+            device_id: identity.id,
+            title: input.title.unwrap_or_default(),
+            model: input.model.unwrap_or_default(),
+            effort: input.reasoning_effort.unwrap_or_default(),
+            response: sender,
+        })
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await {
+        Ok(Ok(Ok(snapshot))) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
 
@@ -1082,6 +1129,33 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+        let create_app = router(state.clone());
+        let create_token = token.clone();
+        let create_task = tokio::spawn(async move {
+            create_app
+                .oneshot(
+                    axum::http::Request::post("/api/conversations")
+                        .header("authorization", format!("Bearer {create_token}"))
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(
+                            serde_json::json!({"title": "Remote"}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        let create_action = received.recv().await.unwrap();
+        if let HostAction::Create { response, .. } = create_action {
+            response
+                .send(Ok(
+                    serde_json::json!({ "id": "created", "title": "Remote" }),
+                ))
+                .unwrap();
+        } else {
+            panic!("expected create action");
+        }
+        assert_eq!(create_task.await.unwrap().status(), StatusCode::OK);
         let denied = app
             .clone()
             .oneshot(
