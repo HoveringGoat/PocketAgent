@@ -4,8 +4,12 @@
 //! methods, paths, headers and bodies are authenticated end-to-end with the
 //! session key shared by the device and target host.
 
+use crate::transport::{RelayTransportClient, TransportError};
 use pocketagent_crypto::{CryptoError, SessionKey, open, seal};
-use pocketagent_protocol::{ApplicationRequest, ApplicationResponse, RelayRequest, RelayResponse};
+use pocketagent_protocol::{
+    ApplicationRequest, ApplicationResponse, RelayFrame, RelayFrameEnvelope, RelayRequest,
+    RelayResponse,
+};
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 use uuid::Uuid;
@@ -20,6 +24,62 @@ pub enum ApplicationError {
     UnsupportedVersion,
     #[error("application route does not match the envelope route")]
     RouteMismatch,
+    #[error("relay transport failed: {0}")]
+    Transport(#[from] TransportError),
+}
+
+pub struct RelayApplicationClient {
+    transport: RelayTransportClient,
+    key: SessionKey,
+    host_id: Uuid,
+    device_id: Uuid,
+}
+
+impl RelayApplicationClient {
+    pub async fn connect(
+        url: &str,
+        host_id: Uuid,
+        device_id: Uuid,
+        token: Vec<u8>,
+        key: SessionKey,
+    ) -> Result<Self, ApplicationError> {
+        let transport = RelayTransportClient::connect_client(url, device_id, token).await?;
+        Ok(Self {
+            transport,
+            key,
+            host_id,
+            device_id,
+        })
+    }
+
+    pub async fn request(
+        &mut self,
+        request: ApplicationRequest,
+    ) -> Result<ApplicationResponse, ApplicationError> {
+        let request_id = Uuid::new_v4();
+        let wire = encode_request(
+            &self.key,
+            self.host_id,
+            self.device_id,
+            request_id,
+            &request,
+        )?;
+        self.transport
+            .send_frame(RelayFrameEnvelope::new(RelayFrame::ClientRequest(wire)))
+            .await?;
+        loop {
+            let frame = self.transport.recv_frame().await?;
+            if let RelayFrame::HostResponse(response) = frame.frame
+                && response.request_id == request_id
+            {
+                return decode_response(&self.key, self.host_id, self.device_id, &response);
+            }
+        }
+    }
+
+    pub fn session_id(&self) -> Uuid {
+        self.transport.session_id()
+    }
 }
 
 fn associated_data(host_id: Uuid, device_id: Uuid, request_id: Uuid) -> Vec<u8> {
