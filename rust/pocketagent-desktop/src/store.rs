@@ -155,6 +155,14 @@ impl DesktopStore {
         true
     }
 
+    pub fn set_pinned(&mut self, id: &str, pinned: bool) -> bool {
+        let Some(conversation) = self.conversations.iter_mut().find(|item| item.id == id) else {
+            return false;
+        };
+        conversation.pinned = pinned;
+        true
+    }
+
     pub fn rename(&mut self, id: &str, title: &str) -> bool {
         let title = title.trim();
         if title.is_empty() {

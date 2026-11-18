@@ -35,6 +35,12 @@ try {
     if (!($texts -contains 'Relay is running') -or !($texts | Where-Object { $_ -like 'ws://*' })) {
         throw 'Relay did not enter the running state with a visible endpoint.'
     }
+    $hostEndpoint = $texts | Where-Object { $_ -like 'http://*' } | Select-Object -First 1
+    if ($null -eq $hostEndpoint) { throw 'Desktop host endpoint was not exposed.' }
+    $hostResponse = Invoke-WebRequest -Uri $hostEndpoint -UseBasicParsing
+    if ($hostResponse.StatusCode -ne 200 -or $hostResponse.Content -notlike '*PocketAgent Rust Host*') {
+        throw 'Desktop host endpoint did not return its health response.'
+    }
     $relayConfigPath = Join-Path $env:LOCALAPPDATA 'PocketAgent-rust/relay.json'
     if (!(Test-Path -LiteralPath $relayConfigPath)) { throw 'Relay identity was not persisted.' }
     $firstRelayHost = (Get-Content -LiteralPath $relayConfigPath -Raw | ConvertFrom-Json).host_id

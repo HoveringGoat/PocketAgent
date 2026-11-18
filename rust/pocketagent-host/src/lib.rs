@@ -4,18 +4,89 @@
 //! credentials and are granted access to individual conversations; possession of a
 //! host or relay connection alone does not grant conversation access.
 
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{Arc, Mutex},
+    fs, io,
+    path::{Path as FsPath, PathBuf},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostConversation {
+    pub id: String,
+    pub title: String,
+    pub archived: bool,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum HostAction {
+    Send {
+        conversation_id: String,
+        text: String,
+    },
+    Archive {
+        conversation_id: String,
+        archived: bool,
+    },
+    Pin {
+        conversation_id: String,
+        pinned: bool,
+    },
+    Rename {
+        conversation_id: String,
+        title: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub authenticated: bool,
+    pub device_name: Option<String>,
+    pub repository: Option<String>,
+    pub host_name: String,
+    pub version: String,
+}
+
+type SessionProvider = dyn Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + Sync;
+
+#[derive(Clone)]
+pub struct HostHttpState {
+    pub registry: DeviceRegistry,
+    pub conversations: Arc<RwLock<Vec<HostConversation>>>,
+    pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
+    pub session: Arc<SessionProvider>,
+}
+
+impl HostHttpState {
+    pub fn new(
+        registry: DeviceRegistry,
+        actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
+        session: impl Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            registry,
+            conversations: Arc::new(RwLock::new(Vec::new())),
+            actions,
+            session: Arc::new(session),
+        }
+    }
+}
 
 const PAIRING_LIFETIME: Duration = Duration::from_secs(10 * 60);
 const TOKEN_LIFETIME: Duration = Duration::from_secs(365 * 24 * 60 * 60);
@@ -35,6 +106,13 @@ pub struct PairingDisplay {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceAccess {
+    pub id: Uuid,
+    pub name: String,
+    pub authorized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PairedDevice {
     pub identity: DeviceIdentity,
     /// Returned only once, from the pairing operation. Store it on the client.
@@ -51,10 +129,12 @@ pub enum HostAuthError {
     InvalidToken,
     #[error("device is not authorized for this conversation")]
     ConversationDenied,
+    #[error("could not persist device authorization")]
+    Persistence,
 }
 
-#[derive(Debug)]
-struct State {
+#[derive(Debug, Serialize, Deserialize)]
+struct RegistryState {
     code: String,
     expires_at_unix: i64,
     consumed: bool,
@@ -63,7 +143,7 @@ struct State {
     conversations: HashMap<String, HashSet<Uuid>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeviceRecord {
     identity: DeviceIdentity,
     token_digest: [u8; 32],
@@ -72,7 +152,8 @@ struct DeviceRecord {
 
 #[derive(Clone, Debug)]
 pub struct DeviceRegistry {
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<RegistryState>>,
+    persistence_path: Option<Arc<PathBuf>>,
 }
 
 impl Default for DeviceRegistry {
@@ -85,7 +166,7 @@ impl DeviceRegistry {
     pub fn new() -> Self {
         let now = now_unix();
         Self {
-            state: Arc::new(Mutex::new(State {
+            state: Arc::new(Mutex::new(RegistryState {
                 code: new_pairing_code(),
                 expires_at_unix: now + PAIRING_LIFETIME.as_secs() as i64,
                 consumed: false,
@@ -93,7 +174,35 @@ impl DeviceRegistry {
                 devices: HashMap::new(),
                 conversations: HashMap::new(),
             })),
+            persistence_path: None,
         }
+    }
+
+    pub fn load(path: impl AsRef<FsPath>) -> io::Result<Self> {
+        let path = path.as_ref().to_owned();
+        if !path.exists() {
+            return Ok(Self {
+                persistence_path: Some(Arc::new(path)),
+                ..Self::new()
+            });
+        }
+        let bytes = fs::read(&path)?;
+        let state = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        Ok(Self {
+            state: Arc::new(Mutex::new(state)),
+            persistence_path: Some(Arc::new(path)),
+        })
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        let Some(path) = self.persistence_path.as_deref() else {
+            return Ok(());
+        };
+        let state = self
+            .state
+            .lock()
+            .expect("registry lock should not be poisoned");
+        save_state(path, &state)
     }
 
     pub fn pairing_display(&self) -> PairingDisplay {
@@ -116,6 +225,7 @@ impl DeviceRegistry {
         state.expires_at_unix = now_unix() + PAIRING_LIFETIME.as_secs() as i64;
         state.consumed = false;
         state.attempts.clear();
+        let _ = self.save_state(&state);
         PairingDisplay {
             code: state.code.clone(),
             expires_at_unix: state.expires_at_unix,
@@ -165,14 +275,18 @@ impl DeviceRegistry {
                 revoked: false,
             },
         );
-        Ok(PairedDevice {
+        let paired = PairedDevice {
             identity: DeviceIdentity {
                 id,
                 name: name.to_owned(),
                 expires_at_unix,
             },
             token,
-        })
+        };
+        if self.save_state(&state).is_err() {
+            return Err(HostAuthError::Persistence);
+        }
+        Ok(paired)
     }
 
     pub fn authenticate(&self, token: &str) -> Option<DeviceIdentity> {
@@ -205,6 +319,7 @@ impl DeviceRegistry {
         for devices in state.conversations.values_mut() {
             devices.remove(&device_id);
         }
+        let _ = self.save_state(&state);
         true
     }
 
@@ -225,16 +340,23 @@ impl DeviceRegistry {
             .entry(conversation_id.into())
             .or_default()
             .insert(device_id);
+        let _ = self.save_state(&state);
         Ok(())
     }
 
     pub fn revoke_conversation(&self, conversation_id: &str, device_id: Uuid) -> bool {
-        self.state
+        let mut state = self
+            .state
             .lock()
-            .expect("registry lock should not be poisoned")
+            .expect("registry lock should not be poisoned");
+        let changed = state
             .conversations
             .get_mut(conversation_id)
-            .is_some_and(|devices| devices.remove(&device_id))
+            .is_some_and(|devices| devices.remove(&device_id));
+        if changed {
+            let _ = self.save_state(&state);
+        }
+        changed
     }
 
     pub fn can_access(&self, conversation_id: &str, device_id: Uuid) -> bool {
@@ -260,6 +382,276 @@ impl DeviceRegistry {
             .map(|(id, _)| id.clone())
             .collect()
     }
+
+    pub fn device_access(&self, conversation_id: &str) -> Vec<DeviceAccess> {
+        let state = self
+            .state
+            .lock()
+            .expect("registry lock should not be poisoned");
+        let authorized = state.conversations.get(conversation_id);
+        state
+            .devices
+            .values()
+            .filter(|device| !device.revoked && device.identity.expires_at_unix > now_unix())
+            .map(|device| DeviceAccess {
+                id: device.identity.id,
+                name: device.identity.name.clone(),
+                authorized: authorized.is_some_and(|devices| devices.contains(&device.identity.id)),
+            })
+            .collect()
+    }
+}
+
+impl DeviceRegistry {
+    fn save_state(&self, state: &RegistryState) -> io::Result<()> {
+        let Some(path) = self.persistence_path.as_deref() else {
+            return Ok(());
+        };
+        save_state(path, state)
+    }
+}
+
+fn save_state(path: &FsPath, state: &RegistryState) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
+    )?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(path)?;
+            fs::rename(temporary, path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PairInput {
+    code: Option<String>,
+    #[serde(rename = "deviceName")]
+    device_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageInput {
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PinInput {
+    pinned: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameInput {
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ArchivedQuery {
+    archived: Option<bool>,
+}
+
+pub fn router(state: HostHttpState) -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/api/session", get(session))
+        .route("/api/devices/pair", post(pair))
+        .route("/api/conversations", get(list_conversations))
+        .route("/api/conversations/{id}/messages", post(send_message))
+        .route("/api/conversations/{id}/archive", post(archive))
+        .route("/api/conversations/{id}/restore", post(restore))
+        .route("/api/conversations/{id}/pin", post(pin))
+        .route("/api/conversations/{id}/rename", post(rename))
+        .with_state(state)
+}
+
+async fn root() -> impl IntoResponse {
+    Json(serde_json::json!({ "application": "PocketAgent Rust Host" }))
+}
+
+async fn session(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
+    let identity = authenticate_headers(&state.registry, &headers);
+    Json((state.session)(identity.as_ref()))
+}
+
+async fn pair(
+    State(state): State<HostHttpState>,
+    Json(input): Json<PairInput>,
+) -> impl IntoResponse {
+    let Some(code) = input.code.as_deref() else {
+        return auth_error(StatusCode::UNAUTHORIZED, HostAuthError::InvalidPairingCode);
+    };
+    let Some(name) = input.device_name.as_deref() else {
+        return auth_error(StatusCode::BAD_REQUEST, HostAuthError::InvalidDeviceName);
+    };
+    match state.registry.pair(name, code) {
+        Ok(paired) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "token": paired.token,
+                "deviceId": paired.identity.id,
+                "expiresAt": paired.identity.expires_at_unix,
+                "deviceName": paired.identity.name
+            })),
+        )
+            .into_response(),
+        Err(error) => auth_error(StatusCode::UNAUTHORIZED, error),
+    }
+}
+
+async fn list_conversations(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Query(query): Query<ArchivedQuery>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let archived = query.archived.unwrap_or(false);
+    let items = state
+        .conversations
+        .read()
+        .expect("conversation lock should not be poisoned")
+        .iter()
+        .filter(|conversation| {
+            conversation.archived == archived
+                && state.registry.can_access(&conversation.id, identity.id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Json(items).into_response()
+}
+
+async fn send_message(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<MessageInput>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(text) = input.text.filter(|text| !text.trim().is_empty()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if state
+        .actions
+        .send(HostAction::Send {
+            conversation_id: id,
+            text,
+        })
+        .is_ok()
+    {
+        StatusCode::ACCEPTED.into_response()
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE.into_response()
+    }
+}
+
+async fn archive(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    mutate(&state, headers, id, HostActionKind::Archive(true))
+}
+
+async fn restore(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    mutate(&state, headers, id, HostActionKind::Archive(false))
+}
+
+async fn pin(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<PinInput>,
+) -> impl IntoResponse {
+    mutate(&state, headers, id, HostActionKind::Pin(input.pinned))
+}
+
+async fn rename(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<RenameInput>,
+) -> impl IntoResponse {
+    let Some(title) = input.title.filter(|title| !title.trim().is_empty()) else {
+        return StatusCode::BAD_REQUEST;
+    };
+    mutate(&state, headers, id, HostActionKind::Rename(title))
+}
+
+enum HostActionKind {
+    Archive(bool),
+    Pin(bool),
+    Rename(String),
+}
+
+fn mutate(
+    state: &HostHttpState,
+    headers: HeaderMap,
+    id: String,
+    kind: HostActionKind,
+) -> StatusCode {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND;
+    }
+    let action = match kind {
+        HostActionKind::Archive(value) => HostAction::Archive {
+            conversation_id: id,
+            archived: value,
+        },
+        HostActionKind::Pin(value) => HostAction::Pin {
+            conversation_id: id,
+            pinned: value,
+        },
+        HostActionKind::Rename(value) => HostAction::Rename {
+            conversation_id: id,
+            title: value,
+        },
+    };
+    if state.actions.send(action).is_ok() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+fn authenticate_headers(registry: &DeviceRegistry, headers: &HeaderMap) -> Option<DeviceIdentity> {
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let token = value.strip_prefix("Bearer ")?;
+    registry.authenticate(token)
+}
+
+fn require_identity(registry: &DeviceRegistry, headers: &HeaderMap) -> Option<DeviceIdentity> {
+    authenticate_headers(registry, headers)
+}
+
+fn auth_error(status: StatusCode, error: HostAuthError) -> axum::response::Response {
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string() })),
+    )
+        .into_response()
 }
 
 fn new_pairing_code() -> String {
@@ -293,6 +685,8 @@ fn now_unix() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
 
     #[test]
     fn pairing_is_single_use_and_tokens_authenticate() {
@@ -336,5 +730,103 @@ mod tests {
         assert!(registry.revoke(paired.identity.id));
         assert_eq!(registry.authenticate(&paired.token), None);
         assert!(!registry.can_access("thread-1", paired.identity.id));
+    }
+
+    #[test]
+    fn persisted_registry_restores_tokens_and_access() {
+        let path = std::env::temp_dir().join(format!("pocketagent-host-{}.json", Uuid::new_v4()));
+        let registry = DeviceRegistry::load(&path).unwrap();
+        let display = registry.pairing_display();
+        let paired = registry.pair("phone", &display.code).unwrap();
+        registry
+            .grant_conversation("thread-1", paired.identity.id)
+            .unwrap();
+        let restored = DeviceRegistry::load(&path).unwrap();
+        assert_eq!(
+            restored.authenticate(&paired.token),
+            Some(paired.identity.clone())
+        );
+        assert!(restored.can_access("thread-1", paired.identity.id));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn http_routes_require_access_and_forward_authorized_actions() {
+        let registry = DeviceRegistry::new();
+        let display = registry.pairing_display();
+        let (actions, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let state = HostHttpState::new(registry.clone(), actions, |_| SessionInfo {
+            authenticated: false,
+            device_name: None,
+            repository: None,
+            host_name: "test-host".into(),
+            version: "test".into(),
+        });
+        state.conversations.write().unwrap().push(HostConversation {
+            id: "thread-1".into(),
+            title: "Test".into(),
+            archived: false,
+            pinned: false,
+        });
+        let app = router(state.clone());
+        let pair = app
+            .clone()
+            .oneshot(
+                axum::http::Request::post("/api/devices/pair")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"code": display.code, "deviceName": "phone"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pair.status(), StatusCode::OK);
+        let token = serde_json::from_slice::<serde_json::Value>(
+            &pair.into_body().collect().await.unwrap().to_bytes(),
+        )
+        .unwrap()["token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let denied = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/api/conversations")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::OK);
+        let body = denied.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<Vec<HostConversation>>(&body)
+                .unwrap()
+                .len(),
+            0
+        );
+        let identity = registry.authenticate(&token).unwrap();
+        registry
+            .grant_conversation("thread-1", identity.id)
+            .unwrap();
+        let accepted = app
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/messages")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"text": "hello"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        assert!(
+            matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text } if conversation_id == "thread-1" && text == "hello")
+        );
     }
 }

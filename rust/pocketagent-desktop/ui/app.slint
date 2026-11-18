@@ -10,6 +10,12 @@ export struct SessionItem {
     title: string,
 }
 
+export struct HostDeviceItem {
+    id: string,
+    name: string,
+    authorized: bool,
+}
+
 export component AppWindow inherits Window {
     title: "PocketAgent Rust Desktop";
     preferred-width: 820px;
@@ -32,6 +38,10 @@ export component AppWindow inherits Window {
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
     in-out property <bool> relay-running: false;
+    in-out property <string> host-status: "Host API is stopped";
+    in-out property <string> host-endpoint: "No host endpoint";
+    in-out property <string> host-pairing: "Pairing code unavailable";
+    in-out property <[HostDeviceItem]> host-devices: [];
     callback connect-codex(string, string);
     callback new-conversation(string, string);
     callback refresh-sessions();
@@ -47,6 +57,7 @@ export component AppWindow inherits Window {
     callback stop-work();
     callback start-relay(string);
     callback stop-relay();
+    callback set-device-access(string, string, bool);
 
     background: #18271f;
 
@@ -185,8 +196,25 @@ export component AppWindow inherits Window {
             }
         }
 
+        GroupBox {
+            title: "Desktop host API";
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: host-status; color: #a7b7aa; font-size: 13px; }
+                Text { text: host-endpoint; color: #c1daa6; font-size: 13px; }
+                Text { text: host-pairing; color: #f3d28a; font-size: 13px; }
+                Text { text: current-session-id == "" ? "Select a conversation to manage access." : "Conversation access"; color: #a7b7aa; font-size: 12px; }
+                for device in host-devices : Button {
+                    text: (device.authorized ? "Remove  " : "Add  ") + device.name;
+                    enabled: current-session-id != "";
+                    clicked => { set-device-access(current-session-id, device.id, !device.authorized); }
+                }
+            }
+        }
+
         Text {
-            text: "Local Codex mode does not require a relay. Approval handling and mobile adapters remain next.";
+            text: "Local Codex mode does not require a relay. The host API is opt-in for remote clients.";
             color: #8fa294;
             font-size: 13px;
         }

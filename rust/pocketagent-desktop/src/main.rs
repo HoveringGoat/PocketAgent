@@ -3,6 +3,9 @@ mod diagnostics;
 mod store;
 
 use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
+use pocketagent_host::{
+    DeviceRegistry, HostAction, HostConversation, HostHttpState, SessionInfo, router as host_router,
+};
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
@@ -69,7 +72,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             InteractionState::respond(&interaction, response);
         });
     }
-    let codex_commands = start_codex_worker(window.as_weak(), interaction.clone());
+    let host_registry_path = DesktopStore::path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("devices.json");
+    let host_registry = DeviceRegistry::load(&host_registry_path).unwrap_or_default();
+    host_registry.renew_pairing();
+    let host_pairing = host_registry.pairing_display();
+    let host_conversations = Arc::new(std::sync::RwLock::new(Vec::<HostConversation>::new()));
+    let (host_actions, mut host_action_receiver) = mpsc::unbounded_channel::<HostAction>();
+    let host_state_registry = host_registry.clone();
+    let host_state = HostHttpState::new(host_state_registry, host_actions, move |identity| {
+        SessionInfo {
+            authenticated: identity.is_some(),
+            device_name: identity.map(|item| item.name.clone()),
+            repository: None,
+            host_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into()),
+            version: env!("CARGO_PKG_VERSION").into(),
+        }
+    });
+    host_state
+        .conversations
+        .write()
+        .expect("host conversation lock should not be poisoned")
+        .clear();
+    let host_endpoint = start_host_server(host_state.clone());
+    window.set_host_status("Host API is running".into());
+    window.set_host_endpoint(host_endpoint.into());
+    window.set_host_pairing(format!("Pairing code: {} (single use)", host_pairing.code).into());
+    let codex_commands = start_codex_worker(
+        window.as_weak(),
+        interaction.clone(),
+        host_conversations.clone(),
+        host_registry.clone(),
+    );
+    let host_commands = codex_commands.clone();
+    std::thread::spawn(move || {
+        while let Some(action) = host_action_receiver.blocking_recv() {
+            if host_commands.send(CodexCommand::Host(action)).is_err() {
+                break;
+            }
+        }
+    });
+    {
+        let registry = host_registry.clone();
+        let weak = window.as_weak();
+        window.on_set_device_access(move |conversation_id, device_id, authorized| {
+            let Ok(device_id) = uuid::Uuid::parse_str(device_id.as_str()) else {
+                return;
+            };
+            if authorized {
+                let _ = registry.grant_conversation(conversation_id.to_string(), device_id);
+            } else {
+                let _ = registry.revoke_conversation(conversation_id.as_str(), device_id);
+            }
+            set_host_devices(&weak, &registry, conversation_id.as_str());
+        });
+    }
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     {
         let commands = codex_commands.clone();
@@ -295,12 +354,15 @@ enum CodexCommand {
         effort: String,
         delay: String,
     },
+    Host(HostAction),
     Stop,
 }
 
 fn start_codex_worker(
     weak: slint::Weak<AppWindow>,
     interaction: SharedInteraction,
+    host_conversations: Arc<std::sync::RwLock<Vec<HostConversation>>>,
+    host_registry: DeviceRegistry,
 ) -> UnboundedSender<CodexCommand> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let scheduler = sender.clone();
@@ -320,6 +382,7 @@ fn start_codex_worker(
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
             let mut showing_archived = false;
+            sync_host_conversations(&host_conversations, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
                 diagnostics::record("conversation", "auto_archived_stale");
                 let _ = store.save();
@@ -401,6 +464,7 @@ fn start_codex_worker(
                                 diagnostics::record("conversation", "created");
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
+                                set_host_devices(&weak, &host_registry, &id);
                                 store.merge_threads([(id, "New conversation".into())]);
                                 let _ = store.set_model_options(
                                     selected_id.as_deref().unwrap_or_default(),
@@ -409,7 +473,8 @@ fn start_codex_worker(
                                 );
                                 let _ = store.save();
                                 set_transcript(&weak, "New conversation ready".into());
-                                refresh_sessions(current, &weak, &mut store).await;
+                                refresh_sessions(current, &weak, &mut store, &host_conversations)
+                                    .await;
                             }
                             Err(error) => set_codex_error(&weak, error.to_string()),
                         }
@@ -419,7 +484,7 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        refresh_sessions(current, &weak, &mut store).await;
+                        refresh_sessions(current, &weak, &mut store, &host_conversations).await;
                     }
                     CodexCommand::SelectSession(id) => {
                         let Some(current) = session.as_mut() else {
@@ -441,7 +506,8 @@ fn start_codex_worker(
                         {
                             Ok(history) => {
                                 selected_id = Some(id.clone());
-                                set_selected_session(&weak, id);
+                                set_selected_session(&weak, id.clone());
+                                set_host_devices(&weak, &host_registry, &id);
                                 set_transcript(
                                     &weak,
                                     if history.is_empty() {
@@ -526,6 +592,7 @@ fn start_codex_worker(
                             }
                             selected_id = Some(target.to_owned());
                             set_selected_session(&weak, target.to_owned());
+                            set_host_devices(&weak, &host_registry, target);
                         }
                         if let Some(id) = selected_id.as_deref()
                             && store.set_model_options(
@@ -585,7 +652,8 @@ fn start_codex_worker(
                                 if let Ok(usage) = current.usage_summary().await {
                                     set_usage(&weak, usage);
                                 }
-                                refresh_sessions(current, &weak, &mut store).await;
+                                refresh_sessions(current, &weak, &mut store, &host_conversations)
+                                    .await;
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
                                 diagnostics::record("turn", "stopped");
@@ -645,6 +713,50 @@ fn start_codex_worker(
                         );
                         set_codex_status(&weak, "Prompt scheduled".into(), None);
                     }
+                    CodexCommand::Host(action) => match action {
+                        HostAction::Send {
+                            conversation_id,
+                            text,
+                        } => {
+                            let _ = scheduler.send(CodexCommand::Prompt {
+                                prompt: text,
+                                model: String::new(),
+                                effort: String::new(),
+                                schedule_id: None,
+                                conversation_id: Some(conversation_id),
+                            });
+                        }
+                        HostAction::Archive {
+                            conversation_id,
+                            archived,
+                        } => {
+                            if store.set_archived(&conversation_id, archived) {
+                                let _ = store.save();
+                                sync_host_conversations(&host_conversations, &store);
+                                set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                        }
+                        HostAction::Pin {
+                            conversation_id,
+                            pinned,
+                        } => {
+                            if store.set_pinned(&conversation_id, pinned) {
+                                let _ = store.save();
+                                sync_host_conversations(&host_conversations, &store);
+                                set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                        }
+                        HostAction::Rename {
+                            conversation_id,
+                            title,
+                        } => {
+                            if store.rename(&conversation_id, &title) {
+                                let _ = store.save();
+                                sync_host_conversations(&host_conversations, &store);
+                                set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                        }
+                    },
                     CodexCommand::Stop => {}
                 }
             }
@@ -679,15 +791,36 @@ async fn refresh_sessions(
     session: &mut CodexSession,
     weak: &slint::Weak<AppWindow>,
     store: &mut DesktopStore,
+    host_conversations: &Arc<std::sync::RwLock<Vec<HostConversation>>>,
 ) {
     match session.list_threads().await {
         Ok(sessions) => {
             store.merge_threads(sessions);
             let _ = store.save();
+            sync_host_conversations(host_conversations, store);
             set_sessions(weak, store.display_sessions());
         }
         Err(error) => set_codex_error(weak, error.to_string()),
     }
+}
+
+fn sync_host_conversations(
+    snapshot: &Arc<std::sync::RwLock<Vec<HostConversation>>>,
+    store: &DesktopStore,
+) {
+    let mut target = snapshot
+        .write()
+        .expect("host conversation lock should not be poisoned");
+    *target = store
+        .conversations
+        .iter()
+        .map(|conversation| HostConversation {
+            id: conversation.id.clone(),
+            title: conversation.title.clone(),
+            archived: conversation.archived,
+            pinned: conversation.pinned,
+        })
+        .collect();
 }
 
 fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {
@@ -792,6 +925,25 @@ fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) 
     });
 }
 
+fn set_host_devices(
+    weak: &slint::Weak<AppWindow>,
+    registry: &DeviceRegistry,
+    conversation_id: &str,
+) {
+    let items = registry
+        .device_access(conversation_id)
+        .into_iter()
+        .map(|device| HostDeviceItem {
+            id: device.id.to_string().into(),
+            name: device.name.into(),
+            authorized: device.authorized,
+        })
+        .collect::<Vec<_>>();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_host_devices(slint::ModelRc::new(slint::VecModel::from(items)));
+    });
+}
+
 fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_current_session_id(id.into()));
 }
@@ -856,6 +1008,52 @@ fn set_relay_error(weak: &slint::Weak<AppWindow>, message: String) {
         window.set_relay_status(message.into());
         window.set_relay_endpoint("No endpoint".into());
     });
+}
+
+fn start_host_server(state: HostHttpState) -> String {
+    let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
+    if requested
+        .parse::<std::net::SocketAddr>()
+        .map(|address| !address.ip().is_loopback())
+        .unwrap_or(false)
+        && env::var("POCKETAGENT_HOST_ALLOW_INSECURE_REMOTE").as_deref() != Ok("1")
+    {
+        diagnostics::record("host", "remote_bind_rejected_without_tls");
+        return "Host API unavailable: non-loopback HTTP requires explicit insecure opt-in".into();
+    }
+    let listener = match std::net::TcpListener::bind(&requested) {
+        Ok(listener) => listener,
+        Err(error) => {
+            diagnostics::record("host", "bind_failed");
+            return format!("Host API unavailable: {error}");
+        }
+    };
+    let _ = listener.set_nonblocking(true);
+    let endpoint = listener
+        .local_addr()
+        .map(|address| format!("http://{address}"))
+        .unwrap_or_else(|_| format!("http://{requested}"));
+    let display_endpoint = endpoint.clone();
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            diagnostics::record("host", "runtime_failed");
+            return;
+        };
+        runtime.block_on(async move {
+            let Ok(listener) = TcpListener::from_std(listener) else {
+                diagnostics::record("host", "listener_failed");
+                return;
+            };
+            diagnostics::record("host", "ready");
+            if let Err(error) = axum::serve(listener, host_router(state)).await {
+                diagnostics::record("host", &format!("stopped_{error}"));
+            }
+        });
+    });
+    display_endpoint
 }
 
 struct ParsedBlock {
