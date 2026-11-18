@@ -23,6 +23,14 @@ pub struct SteerRequest {
     pub expected_turn_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UsageStatus {
+    pub available: bool,
+    pub exhausted: bool,
+    pub next_reset_at_unix: Option<i64>,
+    pub summary: String,
+}
+
 pub struct PromptControl<'a> {
     pub cancel: &'a mut watch::Receiver<bool>,
     pub steers: &'a mut mpsc::UnboundedReceiver<SteerRequest>,
@@ -508,7 +516,14 @@ impl CodexSession {
         &mut self,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let result = self.request("account/rateLimits/read", json!({})).await?;
-        Ok(rate_limit_summary(&result))
+        Ok(rate_limit_status(&result).summary)
+    }
+
+    pub async fn usage_status(
+        &mut self,
+    ) -> Result<UsageStatus, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self.request("account/rateLimits/read", json!({})).await?;
+        Ok(rate_limit_status(&result))
     }
 
     async fn ensure_thread(&mut self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -675,7 +690,7 @@ fn format_item(label: &str, first: Option<&str>, second: Option<&str>) -> String
     .join("\n")
 }
 
-fn rate_limit_summary(result: &Value) -> String {
+fn rate_limit_status(result: &Value) -> UsageStatus {
     let mut bucket = result
         .get("rateLimitsByLimitId")
         .and_then(|value| value.get("codex"))
@@ -683,6 +698,8 @@ fn rate_limit_summary(result: &Value) -> String {
     if bucket.get("primary").is_none() && bucket.get("secondary").is_none() {
         bucket = result.get("rateLimits").unwrap_or(result);
     }
+    let mut exhausted = false;
+    let mut reset_times = Vec::new();
     let windows = [bucket.get("primary"), bucket.get("secondary")]
         .into_iter()
         .flatten()
@@ -693,6 +710,14 @@ fn rate_limit_summary(result: &Value) -> String {
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             let remaining = (100 - used).clamp(0, 100);
+            if remaining == 0 {
+                exhausted = true;
+                if let Some(reset) = window.get("resetsAt").and_then(Value::as_i64)
+                    && reset > chrono::Utc::now().timestamp()
+                {
+                    reset_times.push(reset);
+                }
+            }
             let label = if minutes >= 10_000 {
                 "weekly"
             } else {
@@ -702,9 +727,17 @@ fn rate_limit_summary(result: &Value) -> String {
         })
         .collect::<Vec<_>>();
     if windows.is_empty() {
-        "Usage unavailable".into()
+        UsageStatus {
+            summary: "Usage unavailable".into(),
+            ..UsageStatus::default()
+        }
     } else {
-        windows.join("  -  ")
+        UsageStatus {
+            available: true,
+            exhausted,
+            next_reset_at_unix: reset_times.into_iter().max(),
+            summary: windows.join("  -  "),
+        }
     }
 }
 
@@ -845,15 +878,30 @@ mod tests {
 
     #[test]
     fn rate_limit_summary_exposes_only_remaining_windows() {
-        let summary = rate_limit_summary(&json!({
+        let summary = rate_limit_status(&json!({
             "rateLimits": {
                 "primary": { "usedPercent": 20, "windowDurationMins": 300 },
                 "secondary": { "usedPercent": 5, "windowDurationMins": 10080 }
             },
             "accountId": "must-not-be-rendered"
         }));
-        assert_eq!(summary, "5-hour 80%  -  weekly 95%");
-        assert!(!summary.contains("account"));
+        assert_eq!(summary.summary, "5-hour 80%  -  weekly 95%");
+        assert!(!summary.summary.contains("account"));
+    }
+
+    #[test]
+    fn rate_limit_status_marks_exhaustion_and_reset() {
+        let reset = chrono::Utc::now().timestamp() + 300;
+        let status = rate_limit_status(&json!({
+            "rateLimits": {
+                "primary": { "usedPercent": 100, "windowDurationMins": 300, "resetsAt": reset },
+                "secondary": { "usedPercent": 20, "windowDurationMins": 10080 }
+            }
+        }));
+        assert!(status.available);
+        assert!(status.exhausted);
+        assert_eq!(status.next_reset_at_unix, Some(reset));
+        assert_eq!(status.summary, "5-hour 0%  -  weekly 80%");
     }
 
     #[test]

@@ -855,6 +855,72 @@ fn start_codex_worker(
                         {
                             let _ = store.save();
                         }
+                        if let Ok(usage) = current.usage_status().await {
+                            *host_usage
+                                .write()
+                                .expect("usage lock should not be poisoned") = usage.summary.clone();
+                            set_usage(&weak, usage.summary.clone());
+                            if usage.exhausted {
+                                let due_at = usage
+                                    .next_reset_at_unix
+                                    .unwrap_or_else(|| now_unix().saturating_add(5 * 60));
+                                let delay = due_at
+                                    .saturating_sub(now_unix())
+                                    .max(1) as u64;
+                                if let Some(schedule_id) = schedule_id.clone() {
+                                    let _ = store.set_schedule_status(&schedule_id, "pending");
+                                    let _ = store.save();
+                                    sync_host_schedules(&host_schedules, &store);
+                                    set_scheduled_items(&weak, &store);
+                                    queue_schedule(
+                                        &scheduler,
+                                        host_schedules.clone(),
+                                        delay,
+                                        QueuedSchedule {
+                                            id: schedule_id,
+                                            conversation_id: selected_id.clone().unwrap_or_default(),
+                                            prompt: prompt.clone(),
+                                            model: model.clone(),
+                                            effort: effort.clone(),
+                                        },
+                                    );
+                                    set_codex_status(
+                                        &weak,
+                                        "Prompt waiting for usage reset".into(),
+                                        None,
+                                    );
+                                } else if let Some(conversation_id) = selected_id.clone() {
+                                    let id = store.add_schedule(
+                                        conversation_id.clone(),
+                                        prompt.clone(),
+                                        due_at,
+                                        (!model.trim().is_empty()).then_some(model.clone()),
+                                        (!effort.trim().is_empty()).then_some(effort.clone()),
+                                    );
+                                    let _ = store.save();
+                                    sync_host_schedules(&host_schedules, &store);
+                                    set_scheduled_items(&weak, &store);
+                                    queue_schedule(
+                                        &scheduler,
+                                        host_schedules.clone(),
+                                        delay,
+                                        QueuedSchedule {
+                                            id,
+                                            conversation_id,
+                                            prompt: prompt.clone(),
+                                            model: model.clone(),
+                                            effort: effort.clone(),
+                                        },
+                                    );
+                                    set_codex_status(
+                                        &weak,
+                                        "Prompt queued until usage reset".into(),
+                                        None,
+                                    );
+                                }
+                                continue;
+                            }
+                        }
                         if let Some(schedule_id) = schedule_id.as_deref() {
                             let _ = store.set_schedule_status(schedule_id, "sent");
                             let _ = store.save();
