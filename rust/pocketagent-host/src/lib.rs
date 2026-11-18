@@ -91,6 +91,8 @@ pub enum HostAction {
     },
     Read {
         conversation_id: String,
+        before: Option<String>,
+        limit: usize,
         response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     },
 }
@@ -538,6 +540,12 @@ struct ScheduleInput {
     due_at: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct HistoryQuery {
+    before: Option<String>,
+    limit: Option<usize>,
+}
+
 pub fn router(state: HostHttpState) -> Router {
     Router::new()
         .route("/", get(root))
@@ -742,15 +750,16 @@ async fn get_conversation(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    read_conversation(state, headers, id, false).await
+    read_conversation(state, headers, id, None).await
 }
 
 async fn get_history(
     State(state): State<HostHttpState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
 ) -> impl IntoResponse {
-    read_conversation(state, headers, id, true).await
+    read_conversation(state, headers, id, Some(query)).await
 }
 
 async fn get_image(
@@ -940,7 +949,7 @@ async fn read_conversation(
     state: HostHttpState,
     headers: HeaderMap,
     id: String,
-    history_only: bool,
+    history: Option<HistoryQuery>,
 ) -> axum::response::Response {
     let Some(identity) = require_identity(&state.registry, &headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -953,6 +962,12 @@ async fn read_conversation(
         .actions
         .send(HostAction::Read {
             conversation_id: id,
+            before: history.as_ref().and_then(|query| query.before.clone()),
+            limit: history
+                .as_ref()
+                .and_then(|query| query.limit)
+                .unwrap_or(50)
+                .clamp(1, 100),
             response: sender,
         })
         .is_err()
@@ -961,15 +976,15 @@ async fn read_conversation(
     }
     match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await {
         Ok(Ok(Ok(snapshot))) => {
-            if history_only {
+            if history.is_some() {
                 let items = snapshot
                     .get("items")
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!([]));
                 Json(serde_json::json!({
                     "items": items,
-                    "hasMore": false,
-                    "before": null
+                    "hasMore": snapshot.get("historyTruncated").cloned().unwrap_or(serde_json::json!(false)),
+                    "before": snapshot.get("historyBefore").cloned().unwrap_or(serde_json::Value::Null)
                 }))
                 .into_response()
             } else {

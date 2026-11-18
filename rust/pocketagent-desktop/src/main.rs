@@ -958,6 +958,8 @@ fn start_codex_worker(
                         }
                         HostAction::Read {
                             conversation_id,
+                            before,
+                            limit,
                             response,
                         } => {
                             let result = async {
@@ -987,18 +989,21 @@ fn start_codex_worker(
                                 else {
                                     return Err("Conversation not found.".to_owned());
                                 };
+                                let history_items = history_items(&record.id, &history);
+                                let end = before
+                                    .as_deref()
+                                    .and_then(|cursor| history_items.iter().position(|item| item["id"] == cursor))
+                                    .unwrap_or(history_items.len());
+                                let start = end.saturating_sub(limit.clamp(1, 100));
+                                let page = history_items[start..end].to_vec();
+                                let history_truncated = start > 0;
+                                let history_before = history_truncated.then(|| page.first().and_then(|item| item["id"].as_str()).unwrap_or_default().to_owned());
                                 Ok(serde_json::json!({
                                     "id": record.id,
                                     "title": record.title,
                                     "status": "idle",
                                     "activeTurnId": null,
-                                    "items": [{
-                                        "id": format!("history-{}", record.id),
-                                        "type": "assistant",
-                                        "text": history,
-                                        "detail": "",
-                                        "status": "completed"
-                                    }],
+                                    "items": page,
                                     "requests": [],
                                     "error": null,
                                     "repository": std::path::Path::new(&store.repository_path)
@@ -1015,8 +1020,8 @@ fn start_codex_worker(
                                     "model": record.model,
                                     "archived": record.archived,
                                     "reasoningEffort": record.reasoning_effort,
-                                    "historyTruncated": false,
-                                    "historyBefore": null,
+                                    "historyTruncated": history_truncated,
+                                    "historyBefore": history_before,
                                     "pinned": record.pinned,
                                     "lastMessageAt": null
                                 }))
@@ -1108,6 +1113,26 @@ fn sync_host_schedules(snapshot: &Arc<std::sync::RwLock<Vec<HostSchedule>>>, sto
             status: schedule.status.clone(),
         })
         .collect();
+}
+
+fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value> {
+    let chars = history.chars().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    chars
+        .chunks(8_000)
+        .enumerate()
+        .map(|(index, chunk)| {
+            serde_json::json!({
+                "id": format!("history-{conversation_id}-{index}"),
+                "type": "assistant",
+                "text": chunk.iter().collect::<String>(),
+                "detail": "",
+                "status": "completed"
+            })
+        })
+        .collect()
 }
 
 fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {
