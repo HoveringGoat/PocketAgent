@@ -293,7 +293,37 @@ impl CodexSession {
         }
         let result = self.request("thread/resume", parameters).await?;
         self.thread_id = Some(thread_id.to_owned());
-        Ok(thread_text(&result))
+        let thread = result.get("thread").cloned().unwrap_or(Value::Null);
+        if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
+            let mut turns = Vec::new();
+            let mut cursor = None::<String>;
+            loop {
+                let mut parameters = json!({
+                    "threadId": thread_id,
+                    "limit": 100,
+                    "sortDirection": "asc",
+                    "itemsView": "full"
+                });
+                if let Some(cursor_value) = cursor.as_deref() {
+                    parameters["cursor"] = json!(cursor_value);
+                }
+                let page = self.request("thread/turns/list", parameters).await?;
+                if let Some(data) = page.get("data").and_then(Value::as_array) {
+                    turns.extend(data.iter().cloned());
+                }
+                cursor = page
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            Ok(turns_text(&turns))
+        } else {
+            Ok(thread_text(&result))
+        }
     }
 
     pub async fn current_thread_text(
@@ -309,7 +339,37 @@ impl CodexSession {
                 json!({ "threadId": thread_id, "includeTurns": true }),
             )
             .await?;
-        Ok(thread_text(&result))
+        let thread = result.get("thread").cloned().unwrap_or(Value::Null);
+        if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
+            let mut turns = Vec::new();
+            let mut cursor = None::<String>;
+            loop {
+                let mut parameters = json!({
+                    "threadId": thread_id,
+                    "limit": 100,
+                    "sortDirection": "asc",
+                    "itemsView": "full"
+                });
+                if let Some(cursor_value) = cursor.as_deref() {
+                    parameters["cursor"] = json!(cursor_value);
+                }
+                let page = self.request("thread/turns/list", parameters).await?;
+                if let Some(data) = page.get("data").and_then(Value::as_array) {
+                    turns.extend(data.iter().cloned());
+                }
+                cursor = page
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            Ok(turns_text(&turns))
+        } else {
+            Ok(thread_text(&result))
+        }
     }
 
     pub async fn list_threads(
@@ -473,6 +533,15 @@ fn thread_text(result: &Value) -> String {
     items
         .iter()
         .filter_map(render_item)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn turns_text(turns: &[Value]) -> String {
+    turns
+        .iter()
+        .filter_map(|turn| turn.get("items").and_then(Value::as_array))
+        .flat_map(|items| items.iter().filter_map(render_item))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -696,5 +765,14 @@ mod tests {
         }));
         assert_eq!(summary, "5-hour 80%  -  weekly 95%");
         assert!(!summary.contains("account"));
+    }
+
+    #[test]
+    fn paginated_turns_render_all_items_in_order() {
+        let text = turns_text(&[
+            json!({ "items": [{ "type": "userMessage", "text": "first" }] }),
+            json!({ "items": [{ "type": "agentMessage", "text": "second" }] }),
+        ]);
+        assert_eq!(text, "first\n\nsecond");
     }
 }
