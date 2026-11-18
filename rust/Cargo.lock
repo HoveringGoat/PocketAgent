@@ -3780,7 +3780,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "pocketagent-crypto",
  "pocketagent-host",
+ "pocketagent-protocol",
  "pocketagent-relay",
  "pulldown-cmark",
  "serde",
@@ -3788,6 +3790,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tokio",
+ "tower",
  "uuid",
 ]
 

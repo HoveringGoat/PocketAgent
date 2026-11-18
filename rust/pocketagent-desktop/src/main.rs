@@ -3,11 +3,13 @@ mod diagnostics;
 mod store;
 
 use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
+use pocketagent_crypto::SessionKey;
 use pocketagent_host::{
     DeviceRegistry, HostAction, HostConversation, HostHttpState, HostSchedule, SessionInfo,
     router as host_router,
 };
 use pocketagent_relay::RelayNode;
+use pocketagent_relay::application::RelayApplicationHost;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -22,6 +24,8 @@ use tokio::{
     net::TcpListener,
     sync::{oneshot, watch},
 };
+use tower::ServiceExt;
+use uuid::Uuid;
 
 slint::include_modules!();
 
@@ -111,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("host conversation lock should not be poisoned")
         .clear();
     let host_endpoint = start_host_server(host_state.clone());
+    start_relay_host(host_state.clone());
     window.set_host_status("Host API is running".into());
     window.set_host_endpoint(host_endpoint.into());
     window.set_host_pairing(format!("Pairing code: {} (single use)", host_pairing.code).into());
@@ -1420,6 +1425,124 @@ fn start_host_server(state: HostHttpState) -> String {
     display_endpoint
 }
 
+fn start_relay_host(state: HostHttpState) {
+    let Ok(url) = env::var("POCKETAGENT_RELAY_HOST_URL") else {
+        return;
+    };
+    let Ok(host_id) = env::var("POCKETAGENT_RELAY_HOST_ID")
+        .ok()
+        .and_then(|value| Uuid::parse_str(&value).ok())
+        .ok_or(())
+    else {
+        diagnostics::record("relay_host", "invalid_host_id");
+        return;
+    };
+    let Ok(token) = env::var("POCKETAGENT_RELAY_HOST_TOKEN") else {
+        diagnostics::record("relay_host", "missing_token");
+        return;
+    };
+    let Some(key) = env::var("POCKETAGENT_RELAY_SESSION_KEY")
+        .ok()
+        .and_then(|value| parse_session_key(&value))
+    else {
+        diagnostics::record("relay_host", "invalid_session_key");
+        return;
+    };
+    diagnostics::record("relay_host", "connecting");
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            diagnostics::record("relay_host", "runtime_failed");
+            return;
+        };
+        runtime.block_on(async move {
+            let handler_state = state;
+            let host = RelayApplicationHost::connect(
+                &url,
+                host_id,
+                token.into_bytes(),
+                key,
+                move |request| {
+                    let state = handler_state.clone();
+                    async move {
+                        let mut builder = axum::http::Request::builder()
+                            .method(request.method.as_str())
+                            .uri(request.path.as_str());
+                        for (name, value) in request.headers {
+                            if let (Ok(name), Ok(value)) = (
+                                axum::http::header::HeaderName::from_bytes(name.as_bytes()),
+                                axum::http::HeaderValue::from_str(&value),
+                            ) {
+                                builder = builder.header(name, value);
+                            }
+                        }
+                        let Ok(http_request) = builder.body(axum::body::Body::from(request.body))
+                        else {
+                            return pocketagent_protocol::ApplicationResponse::new(
+                                400,
+                                "text/plain",
+                                b"invalid relay request".to_vec(),
+                            );
+                        };
+                        let response = match host_router(state).oneshot(http_request).await {
+                            Ok(response) => response,
+                            Err(error) => {
+                                return pocketagent_protocol::ApplicationResponse::new(
+                                    502,
+                                    "text/plain",
+                                    error.to_string().into_bytes(),
+                                );
+                            }
+                        };
+                        let status = response.status().as_u16();
+                        let content_type = response
+                            .headers()
+                            .get(axum::http::header::CONTENT_TYPE)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("application/octet-stream")
+                            .to_owned();
+                        let body = match axum::body::to_bytes(
+                            response.into_body(),
+                            16 * 1024 * 1024,
+                        )
+                        .await
+                        {
+                            Ok(body) => body.to_vec(),
+                            Err(error) => error.to_string().into_bytes(),
+                        };
+                        pocketagent_protocol::ApplicationResponse::new(status, content_type, body)
+                    }
+                },
+            )
+            .await;
+            match host {
+                Ok(host) => {
+                    diagnostics::record("relay_host", "ready");
+                    if let Err(error) = host.serve().await {
+                        diagnostics::record("relay_host", &format!("stopped_{error}"));
+                    }
+                }
+                Err(error) => diagnostics::record("relay_host", &format!("connect_failed_{error}")),
+            }
+        });
+    });
+}
+
+fn parse_session_key(value: &str) -> Option<SessionKey> {
+    let (id, bytes) = value.split_once(':')?;
+    let id = Uuid::parse_str(id).ok()?;
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut decoded = [0u8; 32];
+    for (index, chunk) in bytes.as_bytes().chunks(2).enumerate() {
+        decoded[index] = u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
+    }
+    Some(SessionKey::from_bytes(id, decoded))
+}
+
 struct ParsedBlock {
     text: String,
     kind: String,
@@ -1499,7 +1622,8 @@ fn flush_block(blocks: &mut Vec<ParsedBlock>, current: &mut String, kind: &mut S
 
 #[cfg(test)]
 mod tests {
-    use super::markdown_blocks;
+    use super::{markdown_blocks, parse_session_key};
+    use uuid::Uuid;
 
     #[test]
     fn markdown_blocks_preserve_headings_bullets_and_code() {
@@ -1508,5 +1632,15 @@ mod tests {
         assert_eq!(blocks[1].text, "* one");
         assert_eq!(blocks[2].text, "* two");
         assert_eq!(blocks[3].kind, "code");
+    }
+
+    #[test]
+    fn relay_session_key_parser_requires_uuid_and_32_bytes() {
+        let id = Uuid::new_v4();
+        let value = format!("{id}:{}", "ab".repeat(32));
+        let key = parse_session_key(&value).expect("valid relay key should parse");
+        assert_eq!(key.id(), id);
+        assert!(parse_session_key("not-a-key").is_none());
+        assert!(parse_session_key(&format!("{id}:00")).is_none());
     }
 }

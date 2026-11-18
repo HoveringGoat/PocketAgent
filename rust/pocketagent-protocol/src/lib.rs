@@ -15,6 +15,8 @@ pub struct ApplicationRequest {
     pub method: String,
     pub path: String,
     pub body: Vec<u8>,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
 }
 
 impl ApplicationRequest {
@@ -24,7 +26,13 @@ impl ApplicationRequest {
             method: method.into(),
             path: path.into(),
             body,
+            headers: Vec::new(),
         }
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
     }
 }
 
