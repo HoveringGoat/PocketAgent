@@ -115,6 +115,10 @@ The Rust desktop relay panel now exposes the persisted enrollment bundle and sha
 The Rust desktop writes category-only lifecycle diagnostics under the user-local PocketAgent-rust data directory; it never records message bodies, provider stderr, pairing tokens, or relay secrets. `Build-RustDesktop.ps1 -Installer` packages the executable into a per-user Windows installer while leaving that runtime state outside the replaceable install directory.
 
 The Rust conversation store excludes threads with pending jobs from inactivity archiving. Manual archive through the desktop or device updates the archive flag and cancels pending jobs in the same store operation. Startup and dispatch require a pending job with an active conversation record. Restore cancels any pending job left behind by an older build before making that thread active again.
+
+Rust Sessions shows selected state on the tab surface and puts pinned tabs first. The creation panel accepts an existing folder or lets the user navigate its parent and child folders, and offers a model selector. The Queue panel filters pending jobs to the current conversation and exposes cancellation. Session drafts live in memory across navigation. The desktop clears the matching draft after a successful turn-start response, an accepted steer response, or a persisted schedule. The worker keeps the same provider future running across timer ticks and incoming commands. Unrelated conversation operations can still wait behind an active turn.
+
+On Windows, run `tests/rust-sessions-smoke.ps1 -Executable rust/target/release/pocketagent-desktop.exe` after building the preview. The script uses Node.js with the deterministic Codex fixture in an isolated profile. It exercises conversation creation, pinning, schedule validation and cancellation, send, steer, and interrupt through the rendered controls.
 - `scripts`: repeatable builds, signing, publishing, connector acquisition and local launch.
 - `tests`: isolated deterministic protocol/security/scheduler checks and emulator tests. Live inference requires explicit opt-in.
 

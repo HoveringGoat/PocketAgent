@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::{io, path::Path, sync::Arc};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{Notify, mpsc, watch},
 };
@@ -19,6 +19,7 @@ pub struct PromptRequest {
 pub struct SteerRequest {
     pub prompt: String,
     pub expected_turn_id: Option<String>,
+    pub from_desktop: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub struct PromptControl<'a> {
     pub cancel: &'a mut watch::Receiver<bool>,
     pub steers: &'a mut mpsc::UnboundedReceiver<SteerRequest>,
     pub on_turn_started: &'a dyn Fn(Option<String>),
+    pub on_steer_response: &'a dyn Fn(&str, bool),
 }
 
 #[derive(Default)]
@@ -74,7 +76,7 @@ impl InteractionState {
 pub struct CodexSession {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdout: Lines<BufReader<ChildStdout>>,
     repository: String,
     next_id: u64,
     thread_id: Option<String>,
@@ -141,7 +143,7 @@ impl CodexSession {
         let mut session = Self {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            stdout: BufReader::new(stdout).lines(),
             repository: repository.to_owned(),
             next_id: 0,
             thread_id: None,
@@ -165,6 +167,7 @@ impl CodexSession {
         let thread_id = self.ensure_thread().await?;
         let mut parameters = json!({
             "threadId": thread_id,
+            "cwd": self.repository,
             "input": [{ "type": "text", "text": prompt, "text_elements": [] }]
         });
         if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
@@ -182,6 +185,7 @@ impl CodexSession {
         (control.on_turn_started)(turn_id.clone());
 
         let mut output = String::new();
+        let mut pending_steers = std::collections::HashMap::new();
         let mut interrupted = false;
         loop {
             let message = if interrupted {
@@ -213,10 +217,12 @@ impl CodexSession {
                     changed = control.cancel.changed() => {
                         if changed.is_ok() && *control.cancel.borrow() {
                             if let Some(turn_id) = turn_id.as_deref() {
-                                let _ = self.notify("turn/interrupt", json!({
-                                    "threadId": thread_id,
-                                    "turnId": turn_id,
-                                })).await;
+                                self.next_id += 1;
+                                self.write_message(json!({
+                                    "id": self.next_id,
+                                    "method": "turn/interrupt",
+                                    "params": { "threadId": thread_id, "turnId": turn_id },
+                                })).await?;
                             }
                             InteractionState::clear(&interaction);
                             interrupted = true;
@@ -225,12 +231,24 @@ impl CodexSession {
                     }
                     steer = control.steers.recv() => {
                         if let Some(steer) = steer {
-                            self.send_steer(&thread_id, turn_id.as_deref(), &steer).await?;
+                            match self.send_steer(&thread_id, turn_id.as_deref(), &steer).await {
+                                Ok(id) if steer.from_desktop => { pending_steers.insert(id, steer.prompt); }
+                                Err(_) if steer.from_desktop => (control.on_steer_response)(&steer.prompt, false),
+                                Ok(_) => {}
+                                Err(error) => return Err(error),
+                            }
                         }
                         continue;
                     }
                 }
             };
+            if message.get("method").is_none()
+                && let Some(id) = message.get("id").and_then(Value::as_u64)
+                && let Some(prompt) = pending_steers.remove(&id)
+            {
+                (control.on_steer_response)(&prompt, message.get("result").is_some());
+                continue;
+            }
             match message.get("method").and_then(Value::as_str) {
                 Some("item/agentMessage/delta") => {
                     if let Some(delta) = message
@@ -242,11 +260,11 @@ impl CodexSession {
                     }
                 }
                 Some("turn/completed") => {
-                    if let Some(error) = turn_failure(&message) {
-                        return Err(io::Error::other(error).into());
-                    }
                     if interrupted {
                         return Err(io::Error::other("Turn stopped by user").into());
+                    }
+                    if let Some(error) = turn_failure(&message) {
+                        return Err(io::Error::other(error).into());
                     }
                     if output.is_empty()
                         && let Some(items) = message
@@ -297,7 +315,7 @@ impl CodexSession {
         thread_id: &str,
         expected_turn_id: Option<&str>,
         steer: &SteerRequest,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let expected_turn_id = steer
             .expected_turn_id
             .as_deref()
@@ -310,7 +328,8 @@ impl CodexSession {
             "method": "turn/steer",
             "params": input,
         }))
-        .await
+        .await?;
+        Ok(self.next_id)
     }
 
     fn steer_parameters(thread_id: &str, expected_turn_id: &str, steer: &SteerRequest) -> Value {
@@ -581,12 +600,11 @@ impl CodexSession {
     }
 
     async fn read_message(&mut self) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-        let mut line = String::new();
-        if self.stdout.read_line(&mut line).await? == 0 {
+        let Some(line) = self.stdout.next_line().await? else {
             let status = self.child.wait().await?;
             return Err(io::Error::other(format!("Codex exited with {status}")).into());
-        }
-        Ok(serde_json::from_str(line.trim())?)
+        };
+        Ok(serde_json::from_str(&line)?)
     }
 }
 
@@ -835,11 +853,89 @@ fn prompt_request(message: &Value, method: &str) -> PromptRequest {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Node.js and the Windows provider wrapper"]
+    fn fixture_reports_accepted_and_rejected_steers() {
+        let root = std::env::temp_dir().join(format!("pocketagent-turn-{}", uuid::Uuid::new_v4()));
+        let fixture = root.join("node_modules/@openai/codex/bin/codex.js");
+        std::fs::create_dir_all(fixture.parent().unwrap()).unwrap();
+        std::fs::write(&fixture, "import('./fixture.mjs');").unwrap();
+        std::fs::write(
+            fixture.with_file_name("fixture.mjs"),
+            include_str!("../../../tests/fixtures/codex.mjs"),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut session = CodexSession::connect(
+                    root.join("codex.ps1").to_str().unwrap(),
+                    root.to_str().unwrap(),
+                )
+                .await
+                .unwrap();
+                session.new_thread(None).await.unwrap();
+                let (cancel, mut cancel_rx) = watch::channel(false);
+                let (send, mut receive) = mpsc::unbounded_channel();
+                let outcomes = std::cell::RefCell::new(Vec::new());
+                let on_start = |turn_id: Option<String>| {
+                    assert!(turn_id.is_some());
+                    for (prompt, expected_turn_id) in
+                        [("accepted", None), ("rejected", Some("stale-id".into()))]
+                    {
+                        send.send(SteerRequest {
+                            prompt: prompt.into(),
+                            expected_turn_id,
+                            from_desktop: true,
+                        })
+                        .unwrap();
+                    }
+                };
+                let on_response = |prompt: &str, accepted| {
+                    let mut outcomes = outcomes.borrow_mut();
+                    outcomes.push((prompt.to_owned(), accepted));
+                    if outcomes.len() == 2 {
+                        cancel.send(true).unwrap();
+                    }
+                };
+                let error = session
+                    .send_prompt(
+                        "hold",
+                        None,
+                        None,
+                        PromptControl {
+                            cancel: &mut cancel_rx,
+                            steers: &mut receive,
+                            on_turn_started: &on_start,
+                            on_steer_response: &on_response,
+                        },
+                        InteractionState::shared(),
+                        |_| {},
+                    )
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.to_string(), "Turn stopped by user");
+                assert_eq!(
+                    outcomes.into_inner(),
+                    vec![("accepted".into(), true), ("rejected".into(), false)]
+                );
+            })
+            .await
+        });
+        let _ = std::fs::remove_dir_all(root);
+        result.expect("fixture turn must finish");
+    }
+
     #[test]
     fn steer_parameters_bind_the_observed_turn_without_overrides() {
         let steer = SteerRequest {
             prompt: "continue with the tests".into(),
             expected_turn_id: None,
+            from_desktop: false,
         };
         let parameters = CodexSession::steer_parameters("thread-1", "turn-2", &steer);
         assert_eq!(parameters["threadId"], "thread-1");

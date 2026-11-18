@@ -160,22 +160,28 @@ impl DesktopStore {
         }
     }
 
-    pub fn display_sessions(&self) -> Vec<(String, String)> {
+    pub fn display_sessions(&self) -> Vec<(String, String, bool)> {
         self.display_filtered(false)
     }
 
-    pub fn display_archived_sessions(&self) -> Vec<(String, String)> {
+    pub fn display_archived_sessions(&self) -> Vec<(String, String, bool)> {
         self.display_filtered(true)
     }
 
-    fn display_filtered(&self, archived: bool) -> Vec<(String, String)> {
+    fn display_filtered(&self, archived: bool) -> Vec<(String, String, bool)> {
         let mut sessions = self
             .conversations
             .iter()
             .filter(|conversation| conversation.archived == archived)
-            .map(|conversation| (conversation.id.clone(), conversation.title.clone()))
+            .map(|conversation| {
+                (
+                    conversation.id.clone(),
+                    conversation.title.clone(),
+                    conversation.pinned,
+                )
+            })
             .collect::<Vec<_>>();
-        sessions.sort_by(|left, right| left.1.cmp(&right.1));
+        sessions.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.1.cmp(&right.1)));
         sessions
     }
 
@@ -456,6 +462,21 @@ mod tests {
         assert!(store.conversations[0].archived);
         assert!(!store.conversations[1].archived);
         assert!(!store.conversations[2].archived);
+    }
+
+    #[test]
+    fn displays_pinned_tabs_first_and_exposes_pin_state() {
+        let mut store = DesktopStore::default();
+        store.register_thread("a".into(), "Alpha".into());
+        store.register_thread("z".into(), "Zulu".into());
+        assert!(store.toggle_pinned("z"));
+        assert_eq!(
+            store.display_sessions(),
+            vec![
+                ("z".into(), "Zulu".into(), true),
+                ("a".into(), "Alpha".into(), false)
+            ]
+        );
     }
 
     #[test]

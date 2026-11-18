@@ -187,6 +187,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       reply({ thread, ...permissions });
       break;
     }
+    case 'thread/list':
+      reply({ data: Object.values(threads), nextCursor: null });
+      break;
     case 'thread/read':
       if (!threads[params.threadId]) {
         write({ id: request.id, error: { code: -32000, message: 'thread not loaded' } });

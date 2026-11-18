@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.3
+
+- Add selectable session tabs with visible pin state, a dedicated usage line, and folder/model choices when creating a conversation.
+- Keep in-memory drafts per session, clear accepted submissions only when the composer still matches, and add a per-session view for reviewing and canceling pending messages.
+
 ### Rust desktop preview 0.1.2
 
 - Skip automatic archive for conversations with pending messages. Manual archive cancels queued messages, and restoring a conversation keeps those jobs canceled.

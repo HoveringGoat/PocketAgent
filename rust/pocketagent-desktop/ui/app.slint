@@ -10,6 +10,7 @@ export struct MarkdownBlock {
 export struct SessionItem {
     id: string,
     title: string,
+    pinned: bool,
 }
 
 export struct HostDeviceItem {
@@ -20,9 +21,47 @@ export struct HostDeviceItem {
 
 export struct ScheduledItem {
     id: string,
+    conversation-id: string,
     text: string,
     due-at: string,
     status: string,
+}
+
+component SessionTab inherits Rectangle {
+    in property <string> title;
+    in property <bool> selected;
+    in property <bool> pinned;
+    callback activated();
+    width: clamp(label.preferred-width + 24px, 96px, 220px);
+    height: 35px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    background: selected ? #294633 : touch.has-hover ? #203328 : #18271f;
+    border-width: 1px;
+    border-color: keys.has-focus ? #c1daa6 : #47604b;
+    accessible-role: tab;
+    accessible-label: label.text;
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-action-default => { root.activated(); }
+
+    label := Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: (root.pinned ? "Pinned · " : "") + root.title;
+        vertical-alignment: center;
+        overflow: elide;
+        color: root.selected ? #e8f1e6 : #c1daa6;
+    }
+    Rectangle { y: parent.height - 2px; height: 2px; background: root.selected ? #c1daa6 : transparent; }
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea { clicked => { keys.focus(); root.activated(); } }
 }
 
 export component AppWindow inherits Window {
@@ -63,6 +102,13 @@ export component AppWindow inherits Window {
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <[HostDeviceItem]> host-devices: [];
     in-out property <[ScheduledItem]> scheduled-items: [];
+    in-out property <bool> creating-session: false;
+    in-out property <string> composer-draft: "";
+    in-out property <string> schedule-delay: "";
+    in-out property <string> submission-warning: "";
+    in-out property <string> new-session-folder: "";
+    in-out property <[string]> folder-choices: [];
+    property <bool> reviewing-schedules: false;
 
     callback connect-codex(string, string);
     callback new-conversation(string, string, string);
@@ -86,6 +132,8 @@ export component AppWindow inherits Window {
     callback renew-pairing();
     callback cancel-schedule(string);
     callback navigate(string);
+    callback switch-draft(string);
+    callback browse-folders(string);
 
     background: #111b17;
 
@@ -93,27 +141,28 @@ export component AppWindow inherits Window {
         padding: 22px;
         spacing: 0px;
 
-        // Compact two-line context header with right-aligned page controls.
+        // Allow the header to grow to fit its title, context, and usage rows.
         HorizontalBox {
-            height: 60px;
+            min-height: 68px;
+            padding-bottom: 8px;
             spacing: 16px;
             VerticalBox {
                 horizontal-stretch: 1;
                 spacing: 2px;
                 Text { text: "PocketAgent"; color: #c1daa6; font-size: 22px; font-weight: 700; }
-                HorizontalBox {
-                    spacing: 5px;
-                    Text { text: server-name; color: #a7baa7; font-size: 11px; horizontal-stretch: 0; }
-                    Text { text: "/"; color: #53665a; font-size: 11px; horizontal-stretch: 0; }
-                    Text { text: current-working-directory == "" ? "No folder selected" : current-working-directory; color: #8fbc8f; font-size: 11px; overflow: elide; horizontal-stretch: 0; }
+                Text {
+                    text: server-name + " · " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
+                    color: #a7baa7;
+                    font-size: 11px;
+                    overflow: elide;
                 }
                 Text { text: usage-summary; color: #c1daa6; font-size: 11px; overflow: elide; }
             }
             HorizontalBox {
                 spacing: 4px;
-                Button { text: "Sessions"; enabled: current-page != "sessions"; clicked => { navigate("sessions"); } }
-                Button { text: "Devices"; enabled: current-page != "devices"; clicked => { navigate("devices"); } }
-                Button { text: "Settings"; enabled: current-page != "settings"; clicked => { navigate("settings"); } }
+                Button { height: 36px; text: "Sessions"; enabled: current-page != "sessions"; clicked => { navigate("sessions"); } }
+                Button { height: 36px; text: "Devices"; enabled: current-page != "devices"; clicked => { navigate("devices"); } }
+                Button { height: 36px; text: "Settings"; enabled: current-page != "settings"; clicked => { navigate("settings"); } }
                 Rectangle {
                     width: 64px;
                     height: 26px;
@@ -132,7 +181,8 @@ export component AppWindow inherits Window {
 
             // Conversation tabs and actions share one row, as in the .NET app.
             HorizontalBox {
-                height: 46px;
+                height: 48px;
+                padding: 0px;
                 spacing: 6px;
                 Rectangle {
                     horizontal-stretch: 1;
@@ -141,20 +191,50 @@ export component AppWindow inherits Window {
                     border-color: #20382b;
                     ScrollView {
                         HorizontalBox {
-                            spacing: 6px;
-                            for session in session-items : Button {
-                                text: session.title;
-                                clicked => { select-session(session.id); }
+                            padding: 0px;
+                            spacing: 3px;
+                            accessible-role: tab-list;
+                            for session in session-items : SessionTab {
+                                title: session.title;
+                                selected: session.id == current-session-id;
+                                pinned: session.pinned;
+                                activated => { select-session(session.id); reviewing-schedules = false; }
                             }
                         }
                     }
                 }
-                Button { text: "+"; clicked => { new-conversation(model.current-value, effort.text, new-folder.text); } }
+                Button {
+                    text: "+";
+                    clicked => {
+                        creating-session = !creating-session;
+                        if creating-session { new-session-folder = repository-path; }
+                    }
+                }
                 Button { text: "Edit"; enabled: current-session-id != ""; clicked => { rename-session(rename.text); } }
-                Button { text: "Pin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
                 Button { text: showing-archived ? "Restore" : "Archive"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
                 Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
                 rename := LineEdit { width: 180px; placeholder-text: "Rename selected"; visible: current-session-id != ""; }
+            }
+
+            if creating-session : GroupBox {
+                title: "New conversation";
+                VerticalBox {
+                    spacing: 6px;
+                    HorizontalBox {
+                        LineEdit { placeholder-text: "Working folder"; text <=> new-session-folder; }
+                        Button { text: "Browse folders"; clicked => { browse-folders(new-session-folder); } }
+                    }
+                    if folder-choices.length > 0 : ComboBox {
+                        model: folder-choices;
+                        selected(path) => { if path != "Choose a folder…" { new-session-folder = path; browse-folders(path); } }
+                    }
+                    new-model := ComboBox { model: model-options; }
+                    HorizontalBox {
+                        Button { text: "Create conversation"; enabled: codex-available; clicked => { new-conversation(new-model.current-value, "", new-session-folder); } }
+                        Button { text: "Cancel"; clicked => { creating-session = false; } }
+                    }
+                }
             }
 
             GroupBox {
@@ -245,27 +325,40 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 prompt := TextEdit {
                     vertical-stretch: 1;
-                    text: "";
+                    text <=> composer-draft;
                     placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
                     enabled: codex-available;
                 }
                 VerticalBox {
                     width: 104px;
                     spacing: 8px;
-                    Button { text: "Send"; height: 44px; enabled: codex-available && prompt.text != ""; clicked => { send-prompt(prompt.text, model.current-value, effort.text); prompt.text = ""; } }
-                    Button { text: "Timer"; height: 36px; enabled: codex-available && prompt.text != ""; clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); prompt.text = ""; delay.text = ""; } }
+                    Button { text: "Send"; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, model.current-value, effort.text); } }
+                    Button { text: "Timer"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); } }
                 }
             }
+            if submission-warning != "" : Text { text: submission-warning; color: #f3b8a5; wrap: word-wrap; }
 
             HorizontalBox {
                 height: 32px;
                 spacing: 8px;
                 model := ComboBox { width: 220px; enabled: codex-status != "Codex is working..."; model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
                 effort := LineEdit { width: 220px; enabled: codex-status != "Codex is working..."; text: selected-effort; placeholder-text: "Reasoning effort (optional)"; edited => { selected-effort = self.text; } }
-                delay := LineEdit { width: 120px; placeholder-text: "Delay seconds"; }
+                delay := LineEdit { width: 120px; placeholder-text: "Delay seconds"; text <=> schedule-delay; }
+                Button { text: "Queue"; enabled: current-session-id != ""; clicked => { reviewing-schedules = !reviewing-schedules; } }
                 Text { text: model-catalog; color: #8fa294; font-size: 11px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             }
-            new-folder := LineEdit { placeholder-text: "Working folder for a new conversation (optional)"; visible: false; }
+            if reviewing-schedules : GroupBox {
+                title: "Pending messages for this conversation";
+                ScrollView {
+                    height: 100px;
+                    VerticalBox {
+                        for job in scheduled-items : HorizontalBox {
+                            if job.conversation-id == current-session-id && job.status == "pending" : Text { text: job.due-at + " · " + job.text; color: #c1daa6; horizontal-stretch: 1; overflow: elide; }
+                            if job.conversation-id == current-session-id && job.status == "pending" : Button { text: "Cancel message"; clicked => { cancel-schedule(job.id); } }
+                        }
+                    }
+                }
+            }
         }
 
         if current-page == "devices" : ScrollView {

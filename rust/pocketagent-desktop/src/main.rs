@@ -36,6 +36,36 @@ slint::include_modules!();
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::record("startup", "desktop_launch");
     let window = AppWindow::new()?;
+    {
+        let drafts = std::cell::RefCell::new(std::collections::HashMap::new());
+        let weak = window.as_weak();
+        window.on_switch_draft(move |id| {
+            let Some(window) = weak.upgrade() else { return };
+            let mut drafts = drafts.borrow_mut();
+            let previous = window.get_current_session_id();
+            if previous != id {
+                drafts.insert(previous, window.get_composer_draft());
+                window.set_composer_draft(drafts.remove(&id).unwrap_or_default());
+                window.set_schedule_delay("".into());
+                window.set_current_session_id(id);
+                window.set_submission_warning("".into());
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_browse_folders(move |folder| {
+            let Some(window) = weak.upgrade() else { return };
+            match folder_choices(std::path::Path::new(folder.as_str())) {
+                Ok(choices) => {
+                    window.set_folder_choices(slint::ModelRc::new(slint::VecModel::from(choices)));
+                    window.set_submission_warning("".into());
+                }
+                Err(error) => window
+                    .set_submission_warning(format!("Could not browse folder: {error}").into()),
+            }
+        });
+    }
     let interaction = InteractionState::shared();
     let store = DesktopStore::load();
     let repository = if !store.repository_path.is_empty()
@@ -705,6 +735,7 @@ fn start_codex_worker(
                                 diagnostics::record("conversation", "created");
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
+                                let _ = weak.upgrade_in_event_loop(|window| window.set_creating_session(false));
                                 set_current_working_directory(&weak, working_directory.clone());
                                 set_host_devices(&weak, &host_registry, &id);
                                 let title = std::path::Path::new(&working_directory)
@@ -902,6 +933,7 @@ fn start_codex_worker(
                         {
                             continue;
                         }
+                        let from_desktop = schedule_id.is_none() && conversation_id.is_none();
                         diagnostics::record("turn", "start");
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
@@ -1002,7 +1034,14 @@ fn start_codex_worker(
                                         (!model.trim().is_empty()).then_some(model.clone()),
                                         (!effort.trim().is_empty()).then_some(effort.clone()),
                                     );
-                                    let _ = store.save();
+                                    if let Err(error) = store.save() {
+                                        store.schedules.retain(|job| job.id != id);
+                                        set_codex_error(&weak, format!("Could not save queued prompt: {error}"));
+                                        continue;
+                                    }
+                                    if from_desktop {
+                                        acknowledge_draft(&weak, &conversation_id, &prompt, None);
+                                    }
                                     sync_host_schedules(&host_schedules, &store);
                                     set_scheduled_items(&weak, &store);
                                     queue_schedule(
@@ -1048,6 +1087,9 @@ fn start_codex_worker(
                         let active_turn_started_at_state = host_active_turn_started_at_ms.clone();
                         let active_turn_started_at_ms = now_millis();
                         let on_turn_started = |turn_id: Option<String>| {
+                            if from_desktop {
+                                acknowledge_draft(&weak, &active_conversation_id, &prompt, None);
+                            }
                             *active_turn_state
                                 .write()
                                 .expect("active turn lock should not be poisoned") =
@@ -1059,26 +1101,38 @@ fn start_codex_worker(
                                     (active_conversation_id.clone(), turn_id)
                                 });
                         };
-                        let result = loop {
-                            tokio::select! {
+                        let on_steer_response = |text: &str, accepted: bool| {
+                            if accepted {
+                                acknowledge_draft(&weak, &active_conversation_id, text, None);
+                            } else {
+                                let _ = weak.upgrade_in_event_loop(|window| {
+                                    window.set_submission_warning("Codex did not accept the steer.".into());
+                                });
+                            }
+                        };
+                        let result = {
+                            let turn = current.send_prompt(
+                                &prompt,
+                                (!model.trim().is_empty()).then_some(model.as_str()),
+                                (!effort.trim().is_empty()).then_some(effort.as_str()),
+                                PromptControl {
+                                    cancel: &mut stop_rx,
+                                    steers: &mut steer_rx,
+                                    on_turn_started: &on_turn_started,
+                                    on_steer_response: &on_steer_response,
+                                },
+                                interaction.clone(),
+                                {
+                                    let weak = weak.clone();
+                                    move |request| set_pending_interaction(&weak, request)
+                                },
+                            );
+                            tokio::pin!(turn);
+                            loop { tokio::select! {
                                 _ = timing_interval.tick() => {
                                     set_work_timing(&weak, format!("working {}", format_elapsed(turn_started.elapsed())));
                                 }
-                                result = current.send_prompt(
-                                    &prompt,
-                                    (!model.trim().is_empty()).then_some(model.as_str()),
-                                    (!effort.trim().is_empty()).then_some(effort.as_str()),
-                                    PromptControl {
-                                        cancel: &mut stop_rx,
-                                        steers: &mut steer_rx,
-                                        on_turn_started: &on_turn_started,
-                                    },
-                                    interaction.clone(),
-                                    {
-                                        let weak = weak.clone();
-                                        move |request| set_pending_interaction(&weak, request)
-                                    },
-                                ) => break Some(result),
+                                result = &mut turn => break Some(result),
                                 command = receiver.recv() => match command {
                                     Some(CodexCommand::Stop) => {
                                         let _ = stop_tx.send(true);
@@ -1102,12 +1156,13 @@ fn start_codex_worker(
                                         let _ = steer_tx.send(SteerRequest {
                                             prompt: steer_prompt,
                                             expected_turn_id,
+                                            from_desktop: conversation_id.is_none(),
                                         });
                                     }
                                     Some(command) => deferred_commands.push_back(command),
                                     None => break None,
                                 },
-                            }
+                            } }
                         };
                         let completed_at_ms = now_millis();
                         if let Some(started_at_ms) = *host_active_turn_started_at_ms
@@ -1219,6 +1274,14 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Enter a prompt and a positive delay.".into());
                             continue;
                         }
+                        let Some(due_at) = i64::try_from(delay)
+                            .ok()
+                            .and_then(|seconds| now_unix().checked_add(seconds))
+                            .filter(|due_at| chrono::DateTime::from_timestamp(*due_at, 0).is_some())
+                        else {
+                            set_codex_error(&weak, "Schedule delay is too large.".into());
+                            continue;
+                        };
                         let Some(conversation_id) = selected_id.clone() else {
                             set_codex_error(
                                 &weak,
@@ -1229,11 +1292,16 @@ fn start_codex_worker(
                         let id = store.add_schedule(
                             conversation_id.clone(),
                             prompt.clone(),
-                            now_unix() + delay as i64,
+                            due_at,
                             (!model.trim().is_empty()).then_some(model.clone()),
                             (!effort.trim().is_empty()).then_some(effort.clone()),
                         );
-                        let _ = store.save();
+                        if let Err(error) = store.save() {
+                            store.schedules.retain(|job| job.id != id);
+                            set_codex_error(&weak, format!("Could not save scheduled prompt: {error}"));
+                            continue;
+                        }
+                        acknowledge_draft(&weak, &conversation_id, &prompt, Some(delay));
                         sync_host_schedules(&host_schedules, &store);
                         set_scheduled_items(&weak, &store);
                         queue_schedule(
@@ -1700,6 +1768,7 @@ fn set_scheduled_items(weak: &slint::Weak<AppWindow>, store: &DesktopStore) {
         .iter()
         .map(|schedule| ScheduledItem {
             id: schedule.id.clone().into(),
+            conversation_id: schedule.conversation_id.clone().into(),
             text: schedule.prompt.clone().into(),
             due_at: chrono::DateTime::<chrono::Utc>::from_timestamp(schedule.due_at_unix, 0)
                 .map(|value| value.to_rfc3339())
@@ -1785,7 +1854,7 @@ fn now_millis() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {
+fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String, bool)> {
     if showing_archived {
         store.display_archived_sessions()
     } else {
@@ -1959,12 +2028,13 @@ fn image_from_bytes(bytes: &[u8]) -> Option<slint::Image> {
     Some(slint::Image::from_rgba8(buffer))
 }
 
-fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) {
+fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String, bool)>) {
     let items = sessions
         .into_iter()
-        .map(|(id, title)| SessionItem {
+        .map(|(id, title, pinned)| SessionItem {
             id: id.into(),
             title: title.into(),
+            pinned,
         })
         .collect::<Vec<_>>();
     let _ = weak.upgrade_in_event_loop(move |window| {
@@ -2009,7 +2079,40 @@ fn refresh_host_devices_for_selection(weak: &slint::Weak<AppWindow>, registry: &
 }
 
 fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
-    let _ = weak.upgrade_in_event_loop(move |window| window.set_current_session_id(id.into()));
+    let _ = weak.upgrade_in_event_loop(move |window| window.invoke_switch_draft(id.into()));
+}
+
+fn folder_choices(folder: &std::path::Path) -> std::io::Result<Vec<slint::SharedString>> {
+    let folder = std::path::absolute(folder)?;
+    let mut children = std::fs::read_dir(&folder)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    children.sort_unstable();
+    Ok(std::iter::once("Choose a folder…".into())
+        .chain(
+            folder
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .into_iter()
+                .chain(children)
+                .map(|path| path.to_string_lossy().as_ref().into()),
+        )
+        .collect())
+}
+
+fn acknowledge_draft(weak: &slint::Weak<AppWindow>, id: &str, text: &str, delay: Option<u64>) {
+    let id = id.to_owned();
+    let text = text.to_owned();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        if window.get_current_session_id() == id && window.get_composer_draft() == text {
+            window.set_composer_draft("".into());
+            if delay.is_some() && window.get_schedule_delay().trim().parse::<u64>().ok() == delay {
+                window.set_schedule_delay("".into());
+            }
+        }
+    });
 }
 
 fn set_current_working_directory(weak: &slint::Weak<AppWindow>, directory: String) {
