@@ -21,13 +21,45 @@ component ActionButton inherits Rectangle {
     forward-focus: focus;
     accessible-action-default => { if enabled { root.clicked(); } }
 
+    icon-path := Path {
+        x: root.label == "" ? (parent.width - 18px) / 2 : 8px;
+        y: 9px;
+        width: 18px;
+        height: 18px;
+        commands: (root.icon == "sessions" || root.icon == "\u{25a4}") ? "M3 4 H21 V7 H3 Z M3 10 H21 V13 H3 Z M3 16 H21 V19 H3 Z" :
+            (root.icon == "devices" || root.icon == "\u{25a6}") ? "M5 3 H19 V21 H5 Z M8 6 H16 V8 H8 Z M8 11 H16 V13 H8 Z M8 16 H13 V18 H8 Z" :
+            (root.icon == "settings" || root.icon == "⚙") ? "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 Z" :
+            (root.icon == "power" || root.icon == "\u{23fb}") ? "M12 3 V12 M6 6 A8 8 0 1 0 18 6" :
+            (root.icon == "new" || root.icon == "+") ? "M12 3 V21 M3 12 H21" :
+            (root.icon == "pin" || root.icon == "\u{1f4cc}") ? "M16 12 V4 H17 V2 H7 V4 H8 V12 L6 14 V16 H11 V22 H13 V16 H18 V14 Z" :
+            (root.icon == "archive" || root.icon == "\u{21a5}" || root.icon == "\u{25a3}" || root.icon == "\u{21c4}") ? "M4 5 L6 3 H18 L20 5 V19 H4 Z M8 13 L12 17 L16 13 M12 9 V17" :
+            root.icon == "restore" ? "M4 5 L6 3 H18 L20 5 V19 H4 Z M8 11 L12 7 L16 11 M12 7 V17" :
+            root.icon == "history" ? "M4 8 A8 8 0 1 1 6 18 M4 8 V3 M4 8 H9 M12 8 V12 H16" :
+            (root.icon == "rename" || root.icon == "\u{270e}") ? "M3 17 V21 H7 L19 9 L15 5 Z M16 4 L20 8" :
+            (root.icon == "folder" || root.icon == "\u{1f4c1}") ? "M3 5 H10 L12 7 H21 V19 H3 Z" :
+            (root.icon == "create" || root.icon == "\u{1f4ac}") ? "M4 4 H20 V16 H13 L8 20 V16 H4 Z" :
+            (root.icon == "send" || root.icon == "\u{27a4}") ? "M3 12 H18 M12 6 L18 12 L12 18" :
+            (root.icon == "schedule" || root.icon == "\u{23f1}") ? "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 H16" :
+            (root.icon == "review" || root.icon == "\u{2637}") ? "M4 5 H20 M4 12 H20 M4 19 H20" :
+            (root.icon == "approve" || root.icon == "\u{2713}") ? "M4 12 L9 17 L20 6" :
+            (root.icon == "deny" || root.icon == "\u{2298}" || root.icon == "\u{2297}") ? "M4 4 L20 20 M20 4 L4 20" :
+            (root.icon == "connect" || root.icon == "\u{21bb}" || root.icon == "\u{21c4}") ? "M4 8 A8 8 0 0 1 18 6 L20 8 M20 8 V3 M20 8 H15 M20 16 A8 8 0 0 1 6 18 L4 16 M4 16 V21 M4 16 H9" :
+            (root.icon == "cancel" || root.icon == "stop" || root.icon == "\u{25a0}" || root.icon == "\u{00d7}") ? "M6 6 H18 V18 H6 Z" :
+            (root.icon == "remove" || root.icon == "\u{2212}") ? "M4 12 H20" :
+            "M12 3 V21 M3 12 H21";
+        fill: transparent;
+        stroke: root.active || root.primary ? #111b17 : #c1daa6;
+        stroke-width: 1.8px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
     icon-label := Text {
-        x: 8px;
-        width: parent.width - 16px;
+        x: root.label == "" ? 0px : 30px;
+        width: root.label == "" ? parent.width : parent.width - 34px;
         height: parent.height;
-        text: root.icon + (root.label == "" ? "" : "  " + root.label);
+        text: root.label;
         color: root.active || root.primary ? #111b17 : #c1daa6;
-        font-size: root.label == "" ? 18px : 13px;
+        font-size: 13px;
         font-weight: root.active || root.primary ? 700 : 600;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -205,10 +237,10 @@ export component AppWindow inherits Window {
             }
             HorizontalBox {
                 spacing: 6px;
-                ActionButton { icon: "\u{25a4}"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
-                ActionButton { icon: "\u{25a6}"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
-                ActionButton { icon: "\u{2699}"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
-                ActionButton { icon: "\u{23fb}"; label: host-status == "Host API is running" ? "ON" : "OFF"; tooltip: "Server power"; primary: host-status == "Host API is running"; clicked => { } }
+                ActionButton { icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
+                ActionButton { icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
+                ActionButton { icon: "settings"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
+                ActionButton { icon: "power"; label: host-status == "Host API is running" ? "ON" : "OFF"; tooltip: "Server power"; primary: host-status == "Host API is running"; clicked => { } }
             }
         }
 
@@ -241,20 +273,20 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                ActionButton { icon: "+"; label: ""; tooltip: "New conversation"; primary: creating-session; clicked => {
+                ActionButton { icon: "new"; label: ""; tooltip: "New conversation"; primary: creating-session; clicked => {
                         creating-session = !creating-session;
                         if creating-session { new-session-folder = repository-path; }
                     } }
-                ActionButton { icon: "\u{1f4cc}"; label: ""; tooltip: "Pin conversation"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
-                ActionButton { icon: showing-archived ? "\u{21a5}" : "\u{25a3}"; label: ""; tooltip: showing-archived ? "Restore conversation" : "Archive conversation"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
-                ActionButton { icon: "\u{21c4}"; label: ""; tooltip: showing-archived ? "Show active conversations" : "Show archived conversations"; active: showing-archived; clicked => { toggle-archived(); } }
+                ActionButton { icon: "pin"; label: ""; tooltip: "Pin conversation"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                ActionButton { icon: showing-archived ? "restore" : "archive"; label: ""; tooltip: showing-archived ? "Restore conversation" : "Archive conversation"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
+                ActionButton { icon: "history"; label: ""; tooltip: showing-archived ? "Show active conversations" : "Show archived conversations"; active: showing-archived; clicked => { toggle-archived(); } }
             }
 
             if current-session-id != "" : HorizontalBox {
                 height: 34px;
                 spacing: 6px;
                 rename := LineEdit { horizontal-stretch: 1; placeholder-text: "Rename selected conversation"; }
-                ActionButton { icon: "\u{270e}"; label: "Rename"; tooltip: "Save conversation name"; clicked => { rename-session(rename.text); } }
+                ActionButton { icon: "rename"; label: "Rename"; tooltip: "Save conversation name"; clicked => { rename-session(rename.text); } }
             }
 
             if creating-session : GroupBox {
@@ -263,7 +295,7 @@ export component AppWindow inherits Window {
                     spacing: 6px;
                     HorizontalBox {
                         LineEdit { placeholder-text: "Working folder"; text <=> new-session-folder; }
-                        ActionButton { icon: "\u{1f4c1}"; label: "Browse"; tooltip: "Browse folders"; clicked => { browse-folders(new-session-folder); } }
+                        ActionButton { icon: "folder"; label: "Browse"; tooltip: "Browse folders"; clicked => { browse-folders(new-session-folder); } }
                     }
                     if folder-choices.length > 0 : ComboBox {
                         model: folder-choices;
@@ -271,8 +303,8 @@ export component AppWindow inherits Window {
                     }
                     new-model := ComboBox { model: model-options; }
                     HorizontalBox {
-                        ActionButton { icon: "\u{1f4ac}"; label: "Create"; tooltip: "Create conversation"; enabled: codex-available; clicked => { new-conversation(new-model.current-value, "", new-session-folder); } }
-                        ActionButton { icon: "\u{00d7}"; label: "Cancel"; tooltip: "Cancel new conversation"; clicked => { creating-session = false; } }
+                        ActionButton { icon: "create"; label: "Create"; tooltip: "Create conversation"; enabled: codex-available; clicked => { new-conversation(new-model.current-value, "", new-session-folder); } }
+                        ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel new conversation"; clicked => { creating-session = false; } }
                     }
                 }
             }
