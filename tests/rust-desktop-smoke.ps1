@@ -63,6 +63,9 @@ try {
     ($buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 300
 
+    $relayConnect = $buttons | Where-Object { $_.Current.Name -eq 'Connect this desktop through relay' }
+    if ($null -eq $relayConnect) { throw 'Outbound relay host connection control was not exposed.' }
+
     $editCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Edit)
