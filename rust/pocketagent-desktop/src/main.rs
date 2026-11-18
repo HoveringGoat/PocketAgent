@@ -121,8 +121,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .clear();
     let host_endpoint = start_host_server(host_state.clone());
     start_relay_host(host_state.clone());
-    window.set_host_status("Host API is running".into());
-    window.set_host_endpoint(host_endpoint.into());
+    match host_endpoint {
+        Ok(endpoint) => {
+            window.set_host_status("Host API is running".into());
+            window.set_host_endpoint(endpoint.into());
+        }
+        Err(error) => {
+            window.set_host_status(format!("Host API unavailable: {error}").into());
+            window.set_host_endpoint("No endpoint".into());
+        }
+    }
     window.set_host_pairing(format!("Pairing code: {} (single use)", host_pairing.code).into());
     let codex_commands = start_codex_worker(
         window.as_weak(),
@@ -1663,7 +1671,7 @@ fn set_relay_host_status(weak: &slint::Weak<AppWindow>, message: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_relay_host_status(message.into()));
 }
 
-fn start_host_server(state: HostHttpState) -> String {
+fn start_host_server(state: HostHttpState) -> Result<String, String> {
     let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
     if requested
         .parse::<std::net::SocketAddr>()
@@ -1672,13 +1680,13 @@ fn start_host_server(state: HostHttpState) -> String {
         && env::var("POCKETAGENT_HOST_ALLOW_INSECURE_REMOTE").as_deref() != Ok("1")
     {
         diagnostics::record("host", "remote_bind_rejected_without_tls");
-        return "Host API unavailable: non-loopback HTTP requires explicit insecure opt-in".into();
+        return Err("non-loopback HTTP requires explicit insecure opt-in".into());
     }
     let listener = match std::net::TcpListener::bind(&requested) {
         Ok(listener) => listener,
         Err(error) => {
             diagnostics::record("host", "bind_failed");
-            return format!("Host API unavailable: {error}");
+            return Err(error.to_string());
         }
     };
     let _ = listener.set_nonblocking(true);
@@ -1706,7 +1714,7 @@ fn start_host_server(state: HostHttpState) -> String {
             }
         });
     });
-    display_endpoint
+    Ok(display_endpoint)
 }
 
 fn start_relay_host(state: HostHttpState) {
