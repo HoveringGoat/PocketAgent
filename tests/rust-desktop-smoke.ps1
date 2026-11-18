@@ -64,13 +64,46 @@ try {
         }
     }
 
+    function Assert-CompactHeader([string]$sizeLabel) {
+        $headerTextCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Text)
+        $texts = @($window.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $headerTextCondition))
+        $appName = $texts | Where-Object { $_.Current.Name -eq 'PocketAgent' } |
+            Sort-Object { $_.Current.BoundingRectangle.Top } | Select-Object -First 1
+        $location = $texts | Where-Object {
+            $_.Current.Name -match '\s\|\s' -or $_.Current.Name -like '*No folder selected*'
+        } | Select-Object -First 1
+        $usage = $texts | Where-Object {
+            $_.Current.Name -eq 'Usage unavailable' -or
+            $_.Current.Name -match '5-hour|weekly|usage'
+        } | Select-Object -First 1
+        if ($null -eq $appName -or $null -eq $location -or $null -eq $usage) {
+            throw "Compact header fields were not exposed at $sizeLabel."
+        }
+
+        $appRect = $appName.Current.BoundingRectangle
+        $locationRect = $location.Current.BoundingRectangle
+        $usageRect = $usage.Current.BoundingRectangle
+        $topDelta = [Math]::Max(
+            [Math]::Abs($appRect.Top - $locationRect.Top),
+            [Math]::Abs($appRect.Top - $usageRect.Top))
+        if ($topDelta -gt 3 -or $locationRect.Left -le $appRect.Left -or $usageRect.Left -le $locationRect.Left) {
+            throw "Compact header fields are not aligned left-to-right at $sizeLabel."
+        }
+    }
+
     $transform = $window.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
     $transform.Resize(800, 580)
     Start-Sleep -Milliseconds 300
     Assert-VisibleControls '800x580'
+    Assert-CompactHeader '800x580'
     $transform.Resize(1150, 820)
     Start-Sleep -Milliseconds 300
     Assert-VisibleControls '1150x820'
+    Assert-CompactHeader '1150x820'
 
     if ($RequireCodex) {
         $codexReady = $false

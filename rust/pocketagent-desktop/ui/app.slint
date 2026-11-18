@@ -219,21 +219,33 @@ export component AppWindow inherits Window {
         padding: 16px;
         spacing: 8px;
 
-        // Allow the header to grow to fit its title, context, and usage rows.
+        // Keep identity, location, and usage on one compact line.
         HorizontalBox {
-            min-height: 74px;
+            height: 46px;
             spacing: 12px;
-            VerticalBox {
+            Text {
+                width: 170px;
+                text: "PocketAgent";
+                color: #c1daa6;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
                 horizontal-stretch: 1;
-                spacing: 1px;
-                Text { text: "PocketAgent"; color: #c1daa6; font-size: 22px; font-weight: 700; }
-                Text {
-                    text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
-                    color: #a7baa7;
-                    font-size: 11px;
-                    overflow: elide;
-                }
-                Text { text: usage-summary; color: #c1daa6; font-size: 11px; overflow: elide; }
+                text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
+                color: #a7baa7;
+                font-size: 11px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                width: 210px;
+                text: usage-summary;
+                color: #c1daa6;
+                font-size: 11px;
+                vertical-alignment: center;
+                overflow: elide;
             }
             HorizontalBox {
                 spacing: 6px;
