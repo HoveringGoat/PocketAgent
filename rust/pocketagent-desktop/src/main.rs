@@ -197,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &weak,
                     "Device revoked; its token is no longer valid.".into(),
                 );
-                set_host_devices(&weak, &registry, "");
+                refresh_host_devices_for_selection(&weak, &registry);
             }
         });
     }
@@ -1942,6 +1942,23 @@ fn set_host_devices(
         })
         .collect::<Vec<_>>();
     let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_host_devices(slint::ModelRc::new(slint::VecModel::from(items)));
+    });
+}
+
+fn refresh_host_devices_for_selection(weak: &slint::Weak<AppWindow>, registry: &DeviceRegistry) {
+    let registry = registry.clone();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        let conversation_id = window.get_current_session_id().to_string();
+        let items = registry
+            .device_access(&conversation_id)
+            .into_iter()
+            .map(|device| HostDeviceItem {
+                id: device.id.to_string().into(),
+                name: device.name.into(),
+                authorized: device.authorized,
+            })
+            .collect::<Vec<_>>();
         window.set_host_devices(slint::ModelRc::new(slint::VecModel::from(items)));
     });
 }
