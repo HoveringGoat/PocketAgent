@@ -8,6 +8,7 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 - Match the .NET Codex executable discovery order and launch the Windows desktop/provider processes without console windows.
 - Replace Rust text-only controls with accessible icon actions and clear filled-green selected/primary states.
+- Embed the generated PocketAgent icon in the Rust Windows executable and keep it aligned with the installer icon.
 - Rework the Sessions layout to keep tabs scrollable and visible, place machine/directory and usage context consistently, move model/reasoning selection above the composer, and filter provider activity out of conversation history.
 - Add focused regressions for Codex resolution and transcript filtering, plus resize/overflow visual verification for the packaged desktop shell.
 

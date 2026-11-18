@@ -24,3 +24,6 @@ uuid = "1"
 
 [build-dependencies]
 slint-build = "1.14"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

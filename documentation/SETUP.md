@@ -16,7 +16,7 @@ android/PocketAgent-0.2.2-android.apk
 android/PocketAgent-0.2.2-android.apk.sha256
 ```
 
-Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. This release includes a pocket/terminal icon.
+Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. The Rust executable and installer use the committed PocketAgent pocket/terminal icon.
 
 Finish active work and close the old desktop before starting the new version. Saved state is under LocalAppData/PocketAgent, outside release folders. Closing a server ends its provider process; pending schedules wait for startup. An upgrade does not preserve in-flight execution. The running 0.1.9 artifact folder was left at its original path because it is in use; older artifacts were grouped without deletion. GitHub Releases and built-in update checks remain future work.
 
