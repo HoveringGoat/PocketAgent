@@ -52,6 +52,7 @@ export component AppWindow inherits Window {
     in-out property <[MarkdownBlock]> transcript-blocks: [];
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
+    in-out property <string> relay-enrollment: "Relay enrollment is not loaded";
     in-out property <bool> relay-running: false;
     in-out property <string> relay-host-status: "Outbound host connection is not configured";
     in-out property <bool> relay-host-connected: false;
@@ -246,6 +247,7 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 Text { text: relay-status; color: #a7b7aa; font-size: 13px; }
                 Text { text: relay-endpoint; color: #c1daa6; font-size: 13px; }
+                Text { text: relay-enrollment; color: #f3d28a; font-size: 12px; wrap: word-wrap; }
                 HorizontalBox {
                     spacing: 8px;
                     relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }

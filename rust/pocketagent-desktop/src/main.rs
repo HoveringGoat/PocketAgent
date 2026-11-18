@@ -384,7 +384,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (shutdown_tx, shutdown_rx) = oneshot::channel();
                     *relay_shutdown.lock().expect("relay state lock should work") =
                         Some(shutdown_tx);
-                    set_relay_running(&weak, address.to_string(), config.host_id.to_string());
+                    set_relay_running(&weak, address.to_string(), &config);
                     let server = RelayTransportServer::new(RelayNode::new(), auth);
                     let result = server.serve_until(listener, shutdown_rx).await;
                     *relay_shutdown.lock().expect("relay state lock should work") = None;
@@ -1797,8 +1797,12 @@ fn relay_config_path() -> PathBuf {
 fn load_relay_config() -> Result<RelayConfig, Box<dyn std::error::Error + Send + Sync>> {
     let path = relay_config_path();
     if let Ok(contents) = fs::read_to_string(&path)
-        && let Ok(config) = serde_json::from_str(&contents)
+        && let Ok(mut config) = serde_json::from_str::<RelayConfig>(&contents)
     {
+        if config.session_key.is_empty() {
+            config.session_key = SessionKey::random().to_wire();
+            fs::write(&path, serde_json::to_vec_pretty(&config)?)?;
+        }
         return Ok(config);
     }
     let config = RelayConfig::new();
@@ -2055,11 +2059,20 @@ fn format_elapsed(duration: std::time::Duration) -> String {
     }
 }
 
-fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: String) {
+fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, config: &RelayConfig) {
+    let enrollment = format!(
+        "Host ID: {}\nHost token: {}\nClient ID: {}\nClient token: {}\nSession key: {}",
+        config.host_id,
+        config.host_token,
+        config.client_id,
+        config.client_token,
+        config.session_key,
+    );
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_relay_running(true);
         window.set_relay_status("Relay is running".into());
-        window.set_relay_endpoint(format!("ws://{endpoint}  |  host {host_id}").into());
+        window.set_relay_endpoint(format!("ws://{endpoint}").into());
+        window.set_relay_enrollment(enrollment.into());
     });
 }
 
@@ -2068,6 +2081,7 @@ fn set_relay_stopped(weak: &slint::Weak<AppWindow>) {
         window.set_relay_running(false);
         window.set_relay_status("Relay is stopped".into());
         window.set_relay_endpoint("No endpoint".into());
+        window.set_relay_enrollment("Relay enrollment is not loaded".into());
     });
 }
 
@@ -2076,6 +2090,7 @@ fn set_relay_error(weak: &slint::Weak<AppWindow>, message: String) {
         window.set_relay_running(false);
         window.set_relay_status(message.into());
         window.set_relay_endpoint("No endpoint".into());
+        window.set_relay_enrollment("Relay enrollment is not loaded".into());
     });
 }
 

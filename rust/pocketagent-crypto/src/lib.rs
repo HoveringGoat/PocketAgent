@@ -48,6 +48,41 @@ impl SessionKey {
     pub fn id(&self) -> Uuid {
         self.id
     }
+
+    /// Returns the out-of-band enrollment form used by relay configuration.
+    /// The value is intentionally opaque to the relay; it is shared only with
+    /// the host and device that need to open application envelopes.
+    pub fn to_wire(&self) -> String {
+        let mut bytes = String::with_capacity(64);
+        for byte in self.bytes {
+            use std::fmt::Write;
+            write!(&mut bytes, "{byte:02x}").expect("writing to a string cannot fail");
+        }
+        format!("{}:{bytes}", self.id)
+    }
+
+    pub fn from_wire(value: &str) -> Option<Self> {
+        let (id, encoded) = value.trim().split_once(':')?;
+        if encoded.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0_u8; 32];
+        let encoded = encoded.as_bytes();
+        for (index, slot) in bytes.iter_mut().enumerate() {
+            let offset = index * 2;
+            *slot = (hex_digit(encoded[offset])? << 4) | hex_digit(encoded[offset + 1])?;
+        }
+        Some(Self::from_bytes(id.parse().ok()?, bytes))
+    }
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub fn seal(key: &SessionKey, associated_data: &[u8], plaintext: &[u8]) -> OpaqueEnvelope {
@@ -137,5 +172,16 @@ mod tests {
             open(&key, b"route", &envelope),
             Err(CryptoError::AuthenticationFailed)
         );
+    }
+
+    #[test]
+    fn session_key_wire_form_round_trips_and_rejects_bad_values() {
+        let key = SessionKey::random();
+        let wire = key.to_wire();
+        let restored = SessionKey::from_wire(&wire).expect("wire key should parse");
+        assert_eq!(restored.id(), key.id());
+        assert!(SessionKey::from_wire("not-a-key").is_none());
+        assert!(SessionKey::from_wire(&format!("{}:00", key.id())).is_none());
+        assert!(SessionKey::from_wire(&format!("{}:{}z", key.id(), "00".repeat(32))).is_none());
     }
 }

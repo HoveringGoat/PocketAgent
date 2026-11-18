@@ -1,3 +1,4 @@
+use pocketagent_crypto::SessionKey;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -10,6 +11,8 @@ pub struct RelayConfig {
     pub host_token: String,
     pub client_id: Uuid,
     pub client_token: String,
+    #[serde(default)]
+    pub session_key: String,
 }
 
 impl RelayConfig {
@@ -19,6 +22,7 @@ impl RelayConfig {
             host_token: Uuid::new_v4().to_string(),
             client_id: Uuid::new_v4(),
             client_token: Uuid::new_v4().to_string(),
+            session_key: SessionKey::random().to_wire(),
         }
     }
 }
@@ -39,5 +43,21 @@ mod tests {
         let encoded = serde_json::to_string_pretty(&config).expect("config should serialize");
         let decoded: RelayConfig = serde_json::from_str(&encoded).expect("config should parse");
         assert_eq!(decoded, config);
+        assert!(SessionKey::from_wire(&decoded.session_key).is_some());
+    }
+
+    #[test]
+    fn old_config_without_session_key_can_be_migrated() {
+        let config = RelayConfig::new();
+        let mut value = serde_json::to_value(config).expect("config should serialize");
+        value
+            .as_object_mut()
+            .expect("config should be an object")
+            .remove("session_key");
+        let mut migrated: RelayConfig = serde_json::from_value(value).expect("old config parses");
+        if migrated.session_key.is_empty() {
+            migrated.session_key = SessionKey::random().to_wire();
+        }
+        assert!(SessionKey::from_wire(&migrated.session_key).is_some());
     }
 }
