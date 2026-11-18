@@ -187,9 +187,8 @@ export component AppWindow inherits Window {
                         enabled: (codex-status == "Codex is ready" || codex-status == "Codex is working...") && prompt.text != "";
                         clicked => { send-prompt(prompt.text, model.current-value, effort.text); }
                     }
-                    Button {
+                    if codex-status == "Codex is working..." : Button {
                         text: "Stop";
-                        enabled: codex-status == "Codex is working...";
                         clicked => { stop-work(); }
                     }
                 }
