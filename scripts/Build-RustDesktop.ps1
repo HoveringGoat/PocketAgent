@@ -39,7 +39,10 @@ if ($Installer) {
     }
     if (!$isccPath) { throw 'Inno Setup 6 was not found. Install it or omit -Installer.' }
     $installerOutput = Join-Path (Split-Path $output -Parent) 'PocketAgent-RustDesktop-Setup.exe'
-    $version = '0.1.0'
+    $cargoManifest = Get-Content -LiteralPath (Join-Path (Get-Location) 'rust/pocketagent-desktop/Cargo.toml') -Raw
+    $versionMatch = [regex]::Match($cargoManifest, '(?m)^version\s*=\s*"([^"]+)"')
+    if (!$versionMatch.Success) { throw 'The Rust desktop Cargo.toml does not define a package version.' }
+    $version = $versionMatch.Groups[1].Value
     $installerBaseName = [IO.Path]::GetFileNameWithoutExtension($installerOutput)
     & $isccPath "/DAppVersion=$version" "/DSourceDir=$output" "/DOutputDir=$(Split-Path $installerOutput -Parent)" "/DOutputBaseFilename=$installerBaseName" "/DProjectRoot=$(Get-Location)" (Join-Path (Get-Location) 'installer/PocketAgentRustDesktop.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Rust desktop installer build failed.' }
