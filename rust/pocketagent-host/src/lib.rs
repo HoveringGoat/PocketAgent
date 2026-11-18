@@ -128,6 +128,8 @@ pub struct HostHttpState {
     pub usage: Arc<RwLock<String>>,
     pub provider_status: Arc<RwLock<String>>,
     pub active_turn: Arc<RwLock<Option<(String, String)>>>,
+    pub active_turn_started_at_ms: Arc<RwLock<Option<i64>>>,
+    pub last_work_duration_ms: Arc<RwLock<HashMap<String, i64>>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
 }
@@ -148,6 +150,8 @@ impl HostHttpState {
             usage: Arc::new(RwLock::new(String::new())),
             provider_status: Arc::new(RwLock::new("disconnected".into())),
             active_turn: Arc::new(RwLock::new(None)),
+            active_turn_started_at_ms: Arc::new(RwLock::new(None)),
+            last_work_duration_ms: Arc::new(RwLock::new(HashMap::new())),
             actions,
             session: Arc::new(session),
         }
@@ -1084,6 +1088,15 @@ async fn read_conversation(
     {
         snapshot["status"] = serde_json::json!("working");
         snapshot["activeTurnId"] = serde_json::json!(active_turn_id);
+        let started_at = *state
+            .active_turn_started_at_ms
+            .read()
+            .expect("active turn start lock should not be poisoned");
+        snapshot["activeTurnStartedAt"] = serde_json::json!(
+            started_at
+                .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+                .map(|value| value.to_rfc3339())
+        );
         return Json(snapshot).into_response();
     }
     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -1606,6 +1619,7 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         *state.active_turn.write().unwrap() = Some(("thread-1".into(), "turn-7".into()));
+        *state.active_turn_started_at_ms.write().unwrap() = Some(1_700_000_000_000);
         state.snapshots.write().unwrap().insert(
             "thread-1".into(),
             serde_json::json!({
@@ -1629,6 +1643,10 @@ mod tests {
         let live_snapshot: serde_json::Value = serde_json::from_slice(&live_body).unwrap();
         assert_eq!(live_snapshot["status"], "working");
         assert_eq!(live_snapshot["activeTurnId"], "turn-7");
+        assert_eq!(
+            live_snapshot["activeTurnStartedAt"],
+            "2023-11-14T22:13:20+00:00"
+        );
         let accepted = app
             .oneshot(
                 axum::http::Request::post("/api/conversations/thread-1/messages")

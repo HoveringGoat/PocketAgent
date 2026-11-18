@@ -35,6 +35,7 @@ export component AppWindow inherits Window {
     in-out property <string> repository-path: "";
     in-out property <string> codex-executable: "codex";
     in-out property <string> codex-status: "Codex is disconnected";
+    in-out property <string> work-timing: "";
     in-out property <[SessionItem]> session-items: [];
     in-out property <string> current-session-id: "";
     in-out property <string> current-working-directory: "";
@@ -179,6 +180,7 @@ export component AppWindow inherits Window {
                 HorizontalBox {
                     spacing: 8px;
                     Text { text: codex-status; color: #c1daa6; font-size: 13px; vertical-alignment: center; }
+                    Text { text: work-timing; color: #8fa294; font-size: 12px; vertical-alignment: center; }
                     Text { text: current-session-id == "" ? "No conversation selected" : current-working-directory; color: #8fa294; font-size: 12px; vertical-alignment: center; overflow: elide; }
                 }
                 HorizontalBox {

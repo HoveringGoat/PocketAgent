@@ -109,6 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_usage = host_state.usage.clone();
     let host_provider_status = host_state.provider_status.clone();
     let host_active_turn = host_state.active_turn.clone();
+    let host_active_turn_started_at_ms = host_state.active_turn_started_at_ms.clone();
+    let host_last_work_duration_ms = host_state.last_work_duration_ms.clone();
     let host_snapshots = host_state.snapshots.clone();
     *host_state
         .image_root
@@ -143,6 +145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             usage: host_usage,
             provider_status: host_provider_status,
             active_turn: host_active_turn,
+            active_turn_started_at_ms: host_active_turn_started_at_ms,
+            last_work_duration_ms: host_last_work_duration_ms,
             snapshots: host_snapshots,
         },
     );
@@ -431,6 +435,8 @@ struct HostSharedState {
     usage: Arc<std::sync::RwLock<String>>,
     provider_status: Arc<std::sync::RwLock<String>>,
     active_turn: Arc<std::sync::RwLock<Option<(String, String)>>>,
+    active_turn_started_at_ms: Arc<std::sync::RwLock<Option<i64>>>,
+    last_work_duration_ms: Arc<std::sync::RwLock<std::collections::HashMap<String, i64>>>,
     snapshots: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
@@ -447,6 +453,8 @@ fn start_codex_worker(
         usage: host_usage,
         provider_status: host_provider_status,
         active_turn: host_active_turn,
+        active_turn_started_at_ms: host_active_turn_started_at_ms,
+        last_work_duration_ms: host_last_work_duration_ms,
         snapshots: host_snapshots,
     } = host;
     let (sender, mut receiver) = mpsc::unbounded_channel();
@@ -707,8 +715,14 @@ fn start_codex_worker(
                                     .iter()
                                     .find(|conversation| conversation.id == id)
                                 {
-                                    let snapshot =
+                                    let mut snapshot =
                                         host_snapshot(record, &history, &store.repository_path, None);
+                                    let duration = host_last_work_duration_ms
+                                        .read()
+                                        .expect("work duration lock should not be poisoned")
+                                        .get(&id)
+                                        .copied();
+                                    apply_snapshot_timing(&mut snapshot, None, duration);
                                     host_snapshots
                                         .write()
                                         .expect("snapshot lock should not be poisoned")
@@ -833,20 +847,33 @@ fn start_codex_worker(
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
                         set_codex_status(&weak, "Codex is working...".into(), None);
+                        let turn_started = std::time::Instant::now();
+                        let mut timing_interval =
+                            tokio::time::interval(std::time::Duration::from_secs(1));
+                        set_work_timing(&weak, format!("working {}", format_elapsed(turn_started.elapsed())));
                         let (stop_tx, mut stop_rx) = watch::channel(false);
                         let (steer_tx, mut steer_rx) = mpsc::unbounded_channel::<SteerRequest>();
                         let active_conversation_id = selected_id.clone().unwrap_or_default();
                         let active_turn_state = host_active_turn.clone();
+                        let active_turn_started_at_state = host_active_turn_started_at_ms.clone();
+                        let active_turn_started_at_ms = now_millis();
                         let on_turn_started = |turn_id: Option<String>| {
                             *active_turn_state
                                 .write()
                                 .expect("active turn lock should not be poisoned") =
                                 turn_id.map(|turn_id| {
+                                    *active_turn_started_at_state
+                                        .write()
+                                        .expect("active turn start lock should not be poisoned") =
+                                        Some(active_turn_started_at_ms);
                                     (active_conversation_id.clone(), turn_id)
                                 });
                         };
                         let result = loop {
                             tokio::select! {
+                                _ = timing_interval.tick() => {
+                                    set_work_timing(&weak, format!("working {}", format_elapsed(turn_started.elapsed())));
+                                }
                                 result = current.send_prompt(
                                     &prompt,
                                     (!model.trim().is_empty()).then_some(model.as_str()),
@@ -894,14 +921,32 @@ fn start_codex_worker(
                                 },
                             }
                         };
+                        let completed_at_ms = now_millis();
+                        if let Some(started_at_ms) = *host_active_turn_started_at_ms
+                            .read()
+                            .expect("active turn start lock should not be poisoned")
+                        {
+                            host_last_work_duration_ms
+                                .write()
+                                .expect("work duration lock should not be poisoned")
+                                .insert(
+                                    active_conversation_id.clone(),
+                                    completed_at_ms.saturating_sub(started_at_ms),
+                                );
+                        }
+                        *host_active_turn_started_at_ms
+                            .write()
+                            .expect("active turn start lock should not be poisoned") = None;
                         *host_active_turn
                             .write()
                             .expect("active turn lock should not be poisoned") = None;
+                        let turn_elapsed = format_elapsed(turn_started.elapsed());
                         let Some(result) = result else { break };
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
                         match result {
                             Ok(response) => {
+                                set_work_timing(&weak, format!("worked {turn_elapsed}"));
                                 let transcript = current
                                     .current_thread_text()
                                     .await
@@ -921,8 +966,18 @@ fn start_codex_worker(
                                         .iter()
                                         .find(|conversation| conversation.id == id)
                                     {
-                                        let snapshot =
-                                            host_snapshot(record, &transcript, &store.repository_path, None);
+                                        let mut snapshot = host_snapshot(
+                                            record,
+                                            &transcript,
+                                            &store.repository_path,
+                                            None,
+                                        );
+                                        let duration = host_last_work_duration_ms
+                                            .read()
+                                            .expect("work duration lock should not be poisoned")
+                                            .get(id)
+                                            .copied();
+                                        apply_snapshot_timing(&mut snapshot, None, duration);
                                         host_snapshots
                                             .write()
                                             .expect("snapshot lock should not be poisoned")
@@ -939,6 +994,7 @@ fn start_codex_worker(
                                     .await;
                             }
                             Err(error) if error.to_string() == "Turn stopped by user" => {
+                                set_work_timing(&weak, format!("stopped after {turn_elapsed}"));
                                 diagnostics::record("turn", "stopped");
                                 if let Some(schedule_id) = schedule_id.as_deref() {
                                     let _ = store.set_schedule_status(schedule_id, "failed");
@@ -949,6 +1005,7 @@ fn start_codex_worker(
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                             }
                             Err(error) => {
+                                set_work_timing(&weak, format!("failed after {turn_elapsed}"));
                                 diagnostics::record("turn", "failed");
                                 if let Some(schedule_id) = schedule_id.as_deref() {
                                     let _ = store.set_schedule_status(schedule_id, "failed");
@@ -1302,18 +1359,26 @@ fn start_codex_worker(
                                     &store.repository_path,
                                     active_turn_id.as_deref(),
                                 );
+                                let started_at_ms = if active_turn_id.is_some() {
+                                    *host_active_turn_started_at_ms
+                                        .read()
+                                        .expect("active turn start lock should not be poisoned")
+                                } else {
+                                    None
+                                };
+                                let duration = host_last_work_duration_ms
+                                    .read()
+                                    .expect("work duration lock should not be poisoned")
+                                    .get(&record.id)
+                                    .copied();
+                                apply_snapshot_timing(&mut snapshot, started_at_ms, duration);
                                 snapshot["items"] = serde_json::Value::Array(page);
                                 snapshot["historyTruncated"] = serde_json::json!(history_truncated);
                                 snapshot["historyBefore"] = serde_json::json!(history_before);
                                 host_snapshots
                                     .write()
                                     .expect("snapshot lock should not be poisoned")
-                                    .insert(record.id.clone(), host_snapshot(
-                                        record,
-                                        &history,
-                                        &store.repository_path,
-                                        active_turn_id.as_deref(),
-                                    ));
+                                    .insert(record.id.clone(), snapshot.clone());
                                 Ok(snapshot)
                             }
                             .await;
@@ -1499,6 +1564,23 @@ fn host_snapshot(
         "pinned": record.pinned,
         "lastMessageAt": record.last_activity_unix
     })
+}
+
+fn apply_snapshot_timing(
+    snapshot: &mut serde_json::Value,
+    active_started_at_ms: Option<i64>,
+    last_work_duration_ms: Option<i64>,
+) {
+    snapshot["activeTurnStartedAt"] = serde_json::json!(
+        active_started_at_ms
+            .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+            .map(|value| value.to_rfc3339())
+    );
+    snapshot["lastWorkDurationMs"] = serde_json::json!(last_work_duration_ms);
+}
+
+fn now_millis() -> i64 {
+    chrono::Utc::now().timestamp_millis()
 }
 
 fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {
@@ -1716,6 +1798,19 @@ fn clear_pending_interaction(weak: &slint::Weak<AppWindow>) {
 
 fn set_codex_error(weak: &slint::Weak<AppWindow>, message: String) {
     set_codex_status(weak, format!("Codex error: {message}"), None);
+}
+
+fn set_work_timing(weak: &slint::Weak<AppWindow>, timing: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_work_timing(timing.into()));
+}
+
+fn format_elapsed(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    }
 }
 
 fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: String) {
