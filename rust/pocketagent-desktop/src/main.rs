@@ -108,6 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_models = host_state.models.clone();
     let host_usage = host_state.usage.clone();
     let host_provider_status = host_state.provider_status.clone();
+    let host_active_turn = host_state.active_turn.clone();
     *host_state
         .image_root
         .write()
@@ -132,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             models: host_models,
             usage: host_usage,
             provider_status: host_provider_status,
+            active_turn: host_active_turn,
         },
     );
     let host_commands = codex_commands.clone();
@@ -395,6 +397,7 @@ struct HostSharedState {
     models: Arc<std::sync::RwLock<String>>,
     usage: Arc<std::sync::RwLock<String>>,
     provider_status: Arc<std::sync::RwLock<String>>,
+    active_turn: Arc<std::sync::RwLock<Option<(String, String)>>>,
 }
 
 fn start_codex_worker(
@@ -409,6 +412,7 @@ fn start_codex_worker(
         models: host_models,
         usage: host_usage,
         provider_status: host_provider_status,
+        active_turn: host_active_turn,
     } = host;
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let scheduler = sender.clone();
@@ -717,6 +721,16 @@ fn start_codex_worker(
                         set_codex_status(&weak, "Codex is working...".into(), None);
                         let (stop_tx, mut stop_rx) = watch::channel(false);
                         let (steer_tx, mut steer_rx) = mpsc::unbounded_channel::<SteerRequest>();
+                        let active_conversation_id = selected_id.clone().unwrap_or_default();
+                        let active_turn_state = host_active_turn.clone();
+                        let on_turn_started = |turn_id: Option<String>| {
+                            *active_turn_state
+                                .write()
+                                .expect("active turn lock should not be poisoned") =
+                                turn_id.map(|turn_id| {
+                                    (active_conversation_id.clone(), turn_id)
+                                });
+                        };
                         let result = loop {
                             tokio::select! {
                                 result = current.send_prompt(
@@ -726,6 +740,7 @@ fn start_codex_worker(
                                     PromptControl {
                                         cancel: &mut stop_rx,
                                         steers: &mut steer_rx,
+                                        on_turn_started: &on_turn_started,
                                     },
                                     interaction.clone(),
                                     {
@@ -765,6 +780,9 @@ fn start_codex_worker(
                                 },
                             }
                         };
+                        *host_active_turn
+                            .write()
+                            .expect("active turn lock should not be poisoned") = None;
                         let Some(result) = result else { break };
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
@@ -1109,11 +1127,17 @@ fn start_codex_worker(
                                 let page = history_items[start..end].to_vec();
                                 let history_truncated = start > 0;
                                 let history_before = history_truncated.then(|| page.first().and_then(|item| item["id"].as_str()).unwrap_or_default().to_owned());
+                                let active_turn_id = host_active_turn
+                                    .read()
+                                    .expect("active turn lock should not be poisoned")
+                                    .as_ref()
+                                    .filter(|(active_conversation, _)| active_conversation == &record.id)
+                                    .map(|(_, turn_id)| turn_id.clone());
                                 Ok(serde_json::json!({
                                     "id": record.id,
                                     "title": record.title,
-                                    "status": "idle",
-                                    "activeTurnId": null,
+                                    "status": if active_turn_id.is_some() { "working" } else { "idle" },
+                                    "activeTurnId": active_turn_id,
                                     "items": page,
                                     "requests": [],
                                     "error": null,

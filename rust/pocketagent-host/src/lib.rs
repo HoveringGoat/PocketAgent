@@ -122,6 +122,7 @@ pub struct HostHttpState {
     pub models: Arc<RwLock<String>>,
     pub usage: Arc<RwLock<String>>,
     pub provider_status: Arc<RwLock<String>>,
+    pub active_turn: Arc<RwLock<Option<(String, String)>>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
 }
@@ -140,6 +141,7 @@ impl HostHttpState {
             models: Arc::new(RwLock::new(String::new())),
             usage: Arc::new(RwLock::new(String::new())),
             provider_status: Arc::new(RwLock::new("disconnected".into())),
+            active_turn: Arc::new(RwLock::new(None)),
             actions,
             session: Arc::new(session),
         }
@@ -743,6 +745,15 @@ async fn send_message(
     };
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Some(expected_turn_id) = input.expected_turn_id.as_deref() {
+        let active_turn = state
+            .active_turn
+            .read()
+            .expect("active turn lock should not be poisoned");
+        if active_turn.as_ref() != Some(&(id.clone(), expected_turn_id.to_owned())) {
+            return StatusCode::CONFLICT.into_response();
+        }
     }
     let Some(text) = input.text.filter(|text| !text.trim().is_empty()) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1559,6 +1570,7 @@ mod tests {
             invalid_task.await.unwrap().status(),
             StatusCode::BAD_REQUEST
         );
+        *state.active_turn.write().unwrap() = Some(("thread-1".into(), "turn-7".into()));
         let accepted = app
             .oneshot(
                 axum::http::Request::post("/api/conversations/thread-1/messages")
@@ -1576,6 +1588,21 @@ mod tests {
         assert!(
             matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text, expected_turn_id } if conversation_id == "thread-1" && text == "hello" && expected_turn_id.as_deref() == Some("turn-7"))
         );
+        *state.active_turn.write().unwrap() = Some(("thread-1".into(), "turn-8".into()));
+        let stale = router(state.clone())
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/messages")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"text": "stale", "expectedTurnId": "turn-7"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
         let logout = router(state)
             .oneshot(
                 axum::http::Request::post("/api/logout")

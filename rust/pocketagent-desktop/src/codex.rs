@@ -26,6 +26,7 @@ pub struct SteerRequest {
 pub struct PromptControl<'a> {
     pub cancel: &'a mut watch::Receiver<bool>,
     pub steers: &'a mut mpsc::UnboundedReceiver<SteerRequest>,
+    pub on_turn_started: &'a dyn Fn(Option<String>),
 }
 
 #[derive(Default)]
@@ -172,6 +173,7 @@ impl CodexSession {
             .and_then(|turn| turn.get("id"))
             .and_then(Value::as_str)
             .map(str::to_owned);
+        (control.on_turn_started)(turn_id.clone());
 
         let mut output = String::new();
         let mut interrupted = false;
