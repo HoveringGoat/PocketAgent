@@ -3,7 +3,7 @@ use std::{io, path::Path, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{Notify, watch},
+    sync::{Notify, mpsc, watch},
 };
 
 #[derive(Clone, Debug)]
@@ -13,6 +13,18 @@ pub struct PromptRequest {
     pub prompt: String,
     pub decisions: Vec<String>,
     pub question_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SteerRequest {
+    pub prompt: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+pub struct PromptControl<'a> {
+    pub cancel: &'a mut watch::Receiver<bool>,
+    pub steers: &'a mut mpsc::UnboundedReceiver<SteerRequest>,
 }
 
 #[derive(Default)]
@@ -138,7 +150,7 @@ impl CodexSession {
         prompt: &str,
         model: Option<&str>,
         effort: Option<&str>,
-        cancel: &mut watch::Receiver<bool>,
+        control: PromptControl<'_>,
         interaction: SharedInteraction,
         on_request: impl Fn(PromptRequest),
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -189,8 +201,8 @@ impl CodexSession {
                         }
                         continue;
                     }
-                    changed = cancel.changed() => {
-                        if changed.is_ok() && *cancel.borrow() {
+                    changed = control.cancel.changed() => {
+                        if changed.is_ok() && *control.cancel.borrow() {
                             if let Some(turn_id) = turn_id.as_deref() {
                                 let _ = self.notify("turn/interrupt", json!({
                                     "threadId": thread_id,
@@ -199,6 +211,12 @@ impl CodexSession {
                             }
                             InteractionState::clear(&interaction);
                             interrupted = true;
+                        }
+                        continue;
+                    }
+                    steer = control.steers.recv() => {
+                        if let Some(steer) = steer {
+                            self.send_steer(&thread_id, turn_id.as_deref(), &steer).await?;
                         }
                         continue;
                     }
@@ -260,6 +278,48 @@ impl CodexSession {
                 _ => {}
             }
         }
+    }
+
+    async fn send_steer(
+        &mut self,
+        thread_id: &str,
+        expected_turn_id: Option<&str>,
+        steer: &SteerRequest,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let Some(expected_turn_id) = expected_turn_id else {
+            return Err(io::Error::other("Codex did not return an active turn ID").into());
+        };
+        let input = Self::steer_parameters(thread_id, expected_turn_id, steer);
+        self.next_id += 1;
+        self.write_message(json!({
+            "id": self.next_id,
+            "method": "turn/steer",
+            "params": input,
+        }))
+        .await
+    }
+
+    fn steer_parameters(thread_id: &str, expected_turn_id: &str, steer: &SteerRequest) -> Value {
+        let mut input = json!({
+            "threadId": thread_id,
+            "expectedTurnId": expected_turn_id,
+            "input": [{ "type": "text", "text": steer.prompt, "text_elements": [] }]
+        });
+        if let Some(model) = steer
+            .model
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            input["model"] = json!(model);
+        }
+        if let Some(effort) = steer
+            .effort
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            input["effort"] = json!(effort);
+        }
+        input
     }
 
     pub fn set_repository(&mut self, repository: impl Into<String>) {
@@ -708,6 +768,21 @@ fn prompt_request(message: &Value, method: &str) -> PromptRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steer_parameters_bind_the_observed_turn_and_preserve_options() {
+        let steer = SteerRequest {
+            prompt: "continue with the tests".into(),
+            model: Some("gpt-test".into()),
+            effort: Some("high".into()),
+        };
+        let parameters = CodexSession::steer_parameters("thread-1", "turn-2", &steer);
+        assert_eq!(parameters["threadId"], "thread-1");
+        assert_eq!(parameters["expectedTurnId"], "turn-2");
+        assert_eq!(parameters["input"][0]["text"], "continue with the tests");
+        assert_eq!(parameters["model"], "gpt-test");
+        assert_eq!(parameters["effort"], "high");
+    }
 
     #[test]
     fn approval_request_preserves_id_reason_and_decisions() {

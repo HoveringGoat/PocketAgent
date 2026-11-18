@@ -156,11 +156,14 @@ export component AppWindow inherits Window {
                 Text { text: model-catalog; color: #8fa294; font-size: 12px; wrap: word-wrap; }
                 HorizontalBox {
                     spacing: 8px;
-                    prompt := LineEdit { placeholder-text: "Send a prompt"; enabled: codex-status == "Codex is ready"; }
+                    prompt := LineEdit {
+                        placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
+                        enabled: codex-status == "Codex is ready" || codex-status == "Codex is working...";
+                    }
                     Button {
                         text: "Send";
-                        enabled: codex-status == "Codex is ready" && prompt.text != "";
-                        clicked => { send-prompt(prompt.text, model.text, effort.text); prompt.text = ""; }
+                        enabled: (codex-status == "Codex is ready" || codex-status == "Codex is working...") && prompt.text != "";
+                        clicked => { send-prompt(prompt.text, model.text, effort.text); }
                     }
                     Button {
                         text: "Stop";

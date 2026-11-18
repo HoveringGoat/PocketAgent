@@ -2,7 +2,9 @@ mod codex;
 mod diagnostics;
 mod store;
 
-use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
+use codex::{
+    CodexSession, InteractionState, PromptControl, PromptRequest, SharedInteraction, SteerRequest,
+};
 use pocketagent_crypto::SessionKey;
 use pocketagent_host::{
     DeviceRegistry, HostAction, HostConversation, HostHttpState, HostSchedule, SessionInfo,
@@ -695,13 +697,17 @@ fn start_codex_worker(
                         clear_pending_interaction(&weak);
                         set_codex_status(&weak, "Codex is working...".into(), None);
                         let (stop_tx, mut stop_rx) = watch::channel(false);
+                        let (steer_tx, mut steer_rx) = mpsc::unbounded_channel::<SteerRequest>();
                         let result = loop {
                             tokio::select! {
                                 result = current.send_prompt(
                                     &prompt,
                                     (!model.trim().is_empty()).then_some(model.as_str()),
                                     (!effort.trim().is_empty()).then_some(effort.as_str()),
-                                    &mut stop_rx,
+                                    PromptControl {
+                                        cancel: &mut stop_rx,
+                                        steers: &mut steer_rx,
+                                    },
                                     interaction.clone(),
                                     {
                                         let weak = weak.clone();
@@ -716,6 +722,22 @@ fn start_codex_worker(
                                         if selected_id.as_deref() == Some(conversation_id.as_str()) =>
                                     {
                                         let _ = stop_tx.send(true);
+                                    }
+                                    Some(CodexCommand::Prompt {
+                                        prompt: steer_prompt,
+                                        model: steer_model,
+                                        effort: steer_effort,
+                                        schedule_id: None,
+                                        conversation_id,
+                                    }) if conversation_id
+                                        .as_deref()
+                                        .is_none_or(|id| selected_id.as_deref() == Some(id)) =>
+                                    {
+                                        let _ = steer_tx.send(SteerRequest {
+                                            prompt: steer_prompt,
+                                            model: (!steer_model.trim().is_empty()).then_some(steer_model),
+                                            effort: (!steer_effort.trim().is_empty()).then_some(steer_effort),
+                                        });
                                     }
                                     Some(command) => deferred_commands.push_back(command),
                                     None => break None,
