@@ -152,10 +152,10 @@ impl DesktopStore {
                 .conversations
                 .iter_mut()
                 .find(|conversation| conversation.id == id)
+                && existing.title == "Untitled"
+                && title != "Untitled"
             {
-                if existing.title == "Untitled" && title != "Untitled" {
-                    existing.title = title;
-                }
+                existing.title = title;
             }
         }
     }
