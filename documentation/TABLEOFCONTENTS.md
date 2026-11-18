@@ -4,6 +4,7 @@
 - [Repository overview and current state](../README.md)
 - [Working agreement](../AGENTS.md)
 - [Code and flow audit](AUDIT.md)
+- [Desktop UI audit — 2026-11-18](DESKTOP-AUDIT-2026-11-18.md)
 - [Changelog index](../CHANGELOG.md)
   - [Desktop and server](../CHANGELOG-desktop.md)
   - [Android](../CHANGELOG-android.md)
