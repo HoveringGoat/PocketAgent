@@ -1346,11 +1346,16 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
 }
 
 fn image_from_markdown_path(path: &str) -> Option<slint::Image> {
-    let path = path
-        .strip_prefix("file:///")
-        .or_else(|| path.strip_prefix("file://"))
-        .unwrap_or(path);
-    slint::Image::load_from_path(std::path::Path::new(path)).ok()
+    let path = if let Some(path) = path.strip_prefix("file:///") {
+        if path.as_bytes().get(1) == Some(&b':') {
+            path.to_owned()
+        } else {
+            format!("/{path}")
+        }
+    } else {
+        path.strip_prefix("file://").unwrap_or(path).to_owned()
+    };
+    slint::Image::load_from_path(std::path::Path::new(&path)).ok()
 }
 
 fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) {
