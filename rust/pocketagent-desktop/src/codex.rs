@@ -30,6 +30,12 @@ pub struct UsageStatus {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelCatalog {
+    pub entries: Vec<String>,
+    pub default_model: Option<String>,
+}
+
 pub struct PromptControl<'a> {
     pub cancel: &'a mut watch::Receiver<bool>,
     pub steers: &'a mut mpsc::UnboundedReceiver<SteerRequest>,
@@ -487,42 +493,56 @@ impl CodexSession {
 
     pub async fn list_models(
         &mut self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ModelCatalog, Box<dyn std::error::Error + Send + Sync>> {
         let result = self
             .request(
                 "model/list",
                 json!({ "limit": 100, "includeHidden": false }),
             )
             .await?;
-        Ok(result
+        Ok(Self::model_catalog(&result))
+    }
+
+    fn model_catalog(result: &Value) -> ModelCatalog {
+        let mut catalog = ModelCatalog::default();
+        for model in result
             .get("data")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|model| {
-                let id = model.get("model").and_then(Value::as_str)?;
-                let display = model
-                    .get("displayName")
-                    .and_then(Value::as_str)
-                    .unwrap_or(id);
-                let efforts = model
-                    .get("supportedReasoningEfforts")
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(|value| {
-                                value.get("reasoningEffort").and_then(Value::as_str)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    })
-                    .filter(|value| !value.is_empty())
-                    .map(|value| format!(" [{value}]"))
-                    .unwrap_or_default();
-                Some(format!("{id} - {display}{efforts}"))
-            })
-            .collect())
+        {
+            let Some(id) = model.get("model").and_then(Value::as_str) else {
+                continue;
+            };
+            let display = model
+                .get("displayName")
+                .and_then(Value::as_str)
+                .unwrap_or(id);
+            let efforts = model
+                .get("supportedReasoningEfforts")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.get("reasoningEffort").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .filter(|value| !value.is_empty())
+                .map(|value| format!(" [{value}]"))
+                .unwrap_or_default();
+            catalog.entries.push(format!("{id} - {display}{efforts}"));
+            if model.get("isDefault").and_then(Value::as_bool) == Some(true) {
+                catalog.default_model = Some(id.to_owned());
+            }
+        }
+        if catalog.default_model.is_none() {
+            catalog.default_model = catalog
+                .entries
+                .first()
+                .and_then(|entry| entry.split_once(" - ").map(|(id, _)| id.to_owned()));
+        }
+        catalog
     }
 
     pub async fn usage_summary(
@@ -966,6 +986,18 @@ mod tests {
         assert!(text.contains("hello"));
         assert!(!text.contains("Command: cargo test"));
         assert!(text.contains("done"));
+    }
+
+    #[test]
+    fn model_catalog_preserves_provider_default() {
+        let catalog = CodexSession::model_catalog(&json!({
+            "data": [
+                { "model": "unsupported", "displayName": "Unsupported", "isDefault": false },
+                { "model": "account-default", "displayName": "Account default", "isDefault": true }
+            ]
+        }));
+        assert_eq!(catalog.default_model.as_deref(), Some("account-default"));
+        assert_eq!(catalog.entries[0], "unsupported - Unsupported");
     }
 
     #[test]

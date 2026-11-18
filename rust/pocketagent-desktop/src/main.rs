@@ -35,6 +35,8 @@ use uuid::Uuid;
 
 slint::include_modules!();
 
+const CODEX_DEFAULT_MODEL_LABEL: &str = "Use Codex settings";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::record("startup", "desktop_launch");
     let window = AppWindow::new()?;
@@ -269,7 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let commands = codex_commands.clone();
         window.on_new_conversation(move |model, effort, working_directory| {
             let _ = commands.send(CodexCommand::NewConversation {
-                model: model.to_string(),
+                model: normalize_model_selection(model.as_str()),
                 effort: effort.to_string(),
                 working_directory: working_directory.to_string(),
             });
@@ -345,7 +347,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.on_send_prompt(move |prompt, model, effort| {
         let _ = codex_commands.send(CodexCommand::Prompt {
             prompt: prompt.to_string(),
-            model: model.to_string(),
+            model: normalize_model_selection(model.as_str()),
             effort: effort.to_string(),
             schedule_id: None,
             conversation_id: None,
@@ -357,7 +359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.on_schedule_prompt(move |prompt, model, effort, delay| {
             let _ = commands.send(CodexCommand::Schedule {
                 prompt: prompt.to_string(),
-                model: model.to_string(),
+                model: normalize_model_selection(model.as_str()),
                 effort: effort.to_string(),
                 delay: delay.to_string(),
             });
@@ -596,6 +598,7 @@ fn start_codex_worker(
             let mut session: Option<CodexSession> = None;
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
+            let mut provider_default_model = None::<String>;
             let mut showing_archived = false;
             let mut deferred_commands = VecDeque::new();
             let mut archive_timer = tokio::time::interval(std::time::Duration::from_secs(600));
@@ -674,11 +677,17 @@ fn start_codex_worker(
                                     .list_models()
                                     .await
                                 {
-                                    let model_text = models.join("\n");
+                                    let model_text = models.entries.join("\n");
+                                    provider_default_model = models.default_model.clone();
                                     *host_models
                                         .write()
                                         .expect("model lock should not be poisoned") = model_text.clone();
-                                    set_model_catalog(&weak, model_text);
+                                    set_model_catalog(&weak, model_text, models.default_model);
+                                    set_selected_model_options(
+                                        &weak,
+                                        provider_default_model.clone(),
+                                        None,
+                                    );
                                 }
                                 if let Ok(usage) = session
                                     .as_mut()
@@ -728,6 +737,11 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Working folder does not exist.".into());
                             continue;
                         }
+                        let model = if model.trim().is_empty() {
+                            provider_default_model.clone().unwrap_or_default()
+                        } else {
+                            model
+                        };
                         current.set_repository(working_directory.clone());
                         match current
                             .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
@@ -807,6 +821,11 @@ fn start_codex_worker(
                                 )
                             })
                             .unwrap_or_default();
+                        let options = if options.trim().is_empty() {
+                            provider_default_model.clone().unwrap_or_default()
+                        } else {
+                            options
+                        };
                         let working_directory = store
                             .conversations
                             .iter()
@@ -930,6 +949,11 @@ fn start_codex_worker(
                         conversation_id,
                         expected_turn_id: _expected_turn_id,
                     } => {
+                        let model = if model.trim().is_empty() {
+                            provider_default_model.clone().unwrap_or_default()
+                        } else {
+                            model
+                        };
                         if let Some(schedule_id) = schedule_id.as_deref()
                             && !schedule_pending(&store, schedule_id)
                         {
@@ -2195,7 +2219,7 @@ fn set_selected_model_options(
     model: Option<String>,
     effort: Option<String>,
 ) {
-    let model = model.unwrap_or_default();
+    let model = model.unwrap_or_else(|| CODEX_DEFAULT_MODEL_LABEL.to_owned());
     let effort = effort.unwrap_or_default();
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_selected_model(model.into());
@@ -2207,19 +2231,39 @@ fn set_archived_view(weak: &slint::Weak<AppWindow>, showing: bool) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_showing_archived(showing));
 }
 
-fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String) {
+fn normalize_model_selection(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() || value == CODEX_DEFAULT_MODEL_LABEL {
+        String::new()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String, default_model: Option<String>) {
     let value = if models.is_empty() {
         "Provider returned no visible models".to_owned()
     } else {
         models.clone()
     };
-    let options = std::iter::once(String::new())
-        .chain(models.lines().filter_map(|line| {
+    let mut model_options = models
+        .lines()
+        .filter_map(|line| {
             line.split_once(" - ")
                 .map(|(model, _)| model.to_owned())
                 .or_else(|| (!line.trim().is_empty()).then(|| line.trim().to_owned()))
-        }))
+        })
         .collect::<Vec<_>>();
+    if let Some(default_model) = default_model.as_deref()
+        && let Some(index) = model_options
+            .iter()
+            .position(|model| model == default_model)
+    {
+        let default = model_options.remove(index);
+        model_options.insert(0, default);
+    }
+    model_options.push(CODEX_DEFAULT_MODEL_LABEL.to_owned());
+    let options = model_options;
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_model_catalog(value.into());
         let options = options
@@ -2687,7 +2731,8 @@ fn flush_block(
 mod tests {
     use super::{
         can_queue_usage_exhausted, codex_status_available, decode_data_image, image_from_bytes,
-        markdown_blocks, parse_session_key, resolve_codex_from_paths, schedule_pending,
+        markdown_blocks, normalize_model_selection, parse_session_key, resolve_codex_from_paths,
+        schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
@@ -2699,6 +2744,12 @@ mod tests {
         assert_eq!(blocks[1].text, "* one");
         assert_eq!(blocks[2].text, "* two");
         assert_eq!(blocks[3].kind, "code");
+    }
+
+    #[test]
+    fn model_selection_uses_provider_default_label_without_forcing_configured_model() {
+        assert_eq!(normalize_model_selection("Use Codex settings"), "");
+        assert_eq!(normalize_model_selection("gpt-6-astra"), "gpt-6-astra");
     }
 
     #[test]
