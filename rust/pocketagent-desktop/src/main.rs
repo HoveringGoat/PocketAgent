@@ -1494,9 +1494,23 @@ fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String) {
     let value = if models.is_empty() {
         "Provider returned no visible models".to_owned()
     } else {
-        models
+        models.clone()
     };
-    let _ = weak.upgrade_in_event_loop(move |window| window.set_model_catalog(value.into()));
+    let options = std::iter::once(String::new())
+        .chain(models.lines().filter_map(|line| {
+            line.split_once(" - ")
+                .map(|(model, _)| model.to_owned())
+                .or_else(|| (!line.trim().is_empty()).then(|| line.trim().to_owned()))
+        }))
+        .collect::<Vec<_>>();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_model_catalog(value.into());
+        let options = options
+            .into_iter()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>();
+        window.set_model_options(slint::ModelRc::new(slint::VecModel::from(options)));
+    });
 }
 
 fn set_usage(weak: &slint::Weak<AppWindow>, usage: String) {
