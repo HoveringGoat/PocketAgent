@@ -39,6 +39,29 @@ try {
                 throw "Rust desktop control '$($button.Current.Name)' is clipped or outside the window at $sizeLabel."
             }
         }
+
+        $controlTypes = @(
+            [System.Windows.Automation.ControlType]::Button,
+            [System.Windows.Automation.ControlType]::Edit,
+            [System.Windows.Automation.ControlType]::ComboBox
+        )
+        $controls = @($window.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition
+        ) | Where-Object { $controlTypes -contains $_.Current.ControlType })
+        for ($leftIndex = 0; $leftIndex -lt $controls.Count; $leftIndex++) {
+            $left = $controls[$leftIndex].Current.BoundingRectangle
+            if ($left.Width -le 0 -or $left.Height -le 0) { continue }
+            for ($rightIndex = $leftIndex + 1; $rightIndex -lt $controls.Count; $rightIndex++) {
+                $right = $controls[$rightIndex].Current.BoundingRectangle
+                if ($right.Width -le 0 -or $right.Height -le 0) { continue }
+                $overlapWidth = [Math]::Min($left.Left + $left.Width, $right.Left + $right.Width) - [Math]::Max($left.Left, $right.Left)
+                $overlapHeight = [Math]::Min($left.Top + $left.Height, $right.Top + $right.Height) - [Math]::Max($left.Top, $right.Top)
+                if ($overlapWidth -gt 2 -and $overlapHeight -gt 2) {
+                    throw "Rust desktop controls overlap at ${sizeLabel}: '$($controls[$leftIndex].Current.Name)' and '$($controls[$rightIndex].Current.Name)'."
+                }
+            }
+        }
     }
 
     $transform = $window.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
