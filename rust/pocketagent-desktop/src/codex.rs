@@ -562,7 +562,7 @@ fn rate_limit_summary(result: &Value) -> String {
     if windows.is_empty() {
         "Usage unavailable".into()
     } else {
-        windows.join("  ·  ")
+        windows.join("  -  ")
     }
 }
 
@@ -694,7 +694,7 @@ mod tests {
             },
             "accountId": "must-not-be-rendered"
         }));
-        assert_eq!(summary, "5-hour 80%  ·  weekly 95%");
+        assert_eq!(summary, "5-hour 80%  -  weekly 95%");
         assert!(!summary.contains("account"));
     }
 }
