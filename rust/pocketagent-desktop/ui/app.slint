@@ -45,7 +45,7 @@ export component AppWindow inherits Window {
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <[HostDeviceItem]> host-devices: [];
     callback connect-codex(string, string);
-    callback new-conversation(string, string);
+    callback new-conversation(string, string, string);
     callback refresh-sessions();
     callback select-session(string);
     callback archive-session();
@@ -109,7 +109,8 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
-                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(model.text, effort.text); } }
+                    new-folder := LineEdit { placeholder-text: "Working folder (optional)"; }
+                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(model.text, effort.text, new-folder.text); new-folder.text = ""; } }
                     Button { text: "Refresh"; enabled: codex-status == "Codex is ready"; clicked => { refresh-sessions(); } }
                     Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
                     Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }

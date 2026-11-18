@@ -171,10 +171,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let commands = codex_commands.clone();
-        window.on_new_conversation(move |model, effort| {
+        window.on_new_conversation(move |model, effort, working_directory| {
             let _ = commands.send(CodexCommand::NewConversation {
                 model: model.to_string(),
                 effort: effort.to_string(),
+                working_directory: working_directory.to_string(),
             });
         });
     }
@@ -363,6 +364,7 @@ enum CodexCommand {
     NewConversation {
         model: String,
         effort: String,
+        working_directory: String,
     },
     RefreshSessions,
     SelectSession(String),
@@ -541,12 +543,25 @@ fn start_codex_worker(
                             }
                         }
                     }
-                    CodexCommand::NewConversation { model, effort } => {
+                    CodexCommand::NewConversation {
+                        model,
+                        effort,
+                        working_directory,
+                    } => {
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        current.set_repository(store.repository_path.clone());
+                        let working_directory = if working_directory.trim().is_empty() {
+                            store.repository_path.clone()
+                        } else {
+                            working_directory.trim().to_owned()
+                        };
+                        if !std::path::Path::new(&working_directory).is_dir() {
+                            set_codex_error(&weak, "Working folder does not exist.".into());
+                            continue;
+                        }
+                        current.set_repository(working_directory.clone());
                         match current
                             .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
                             .await
@@ -556,7 +571,20 @@ fn start_codex_worker(
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
                                 set_host_devices(&weak, &host_registry, &id);
-                                store.merge_threads([(id, "New conversation".into())]);
+                                let title = std::path::Path::new(&working_directory)
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .filter(|name| !name.is_empty())
+                                    .unwrap_or("New conversation")
+                                    .to_owned();
+                                store.merge_threads([(id.clone(), title)]);
+                                if let Some(conversation) = store
+                                    .conversations
+                                    .iter_mut()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    conversation.working_directory = working_directory;
+                                }
                                 let _ = store.set_model_options(
                                     selected_id.as_deref().unwrap_or_default(),
                                     Some(model),
