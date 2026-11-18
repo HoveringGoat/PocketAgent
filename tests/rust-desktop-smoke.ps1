@@ -43,8 +43,13 @@ try {
     }
     $relayConfigPath = Join-Path $env:LOCALAPPDATA 'PocketAgent-rust/relay.json'
     if (!(Test-Path -LiteralPath $relayConfigPath)) { throw 'Relay identity was not persisted.' }
-    $firstRelayHost = (Get-Content -LiteralPath $relayConfigPath -Raw | ConvertFrom-Json).host_id
+    $firstRelayConfig = Get-Content -LiteralPath $relayConfigPath -Raw | ConvertFrom-Json
+    $firstRelayHost = $firstRelayConfig.host_id
     if ([string]::IsNullOrWhiteSpace($firstRelayHost)) { throw 'Persisted relay identity was empty.' }
+    if ([string]::IsNullOrWhiteSpace($firstRelayConfig.client_id) -or [string]::IsNullOrWhiteSpace($firstRelayConfig.session_key)) {
+        throw 'Persisted relay enrollment bundle was incomplete.'
+    }
+    if (!($texts | Where-Object { $_ -like '*Session key: *' })) { throw 'Relay session key was not exposed for provisioning.' }
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $stop = $buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1
