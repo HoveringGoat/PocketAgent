@@ -94,7 +94,7 @@ component SessionTab inherits Rectangle {
         x: 12px;
         width: parent.width - 24px;
         height: parent.height;
-        text: (root.pinned ? "Pinned · " : "") + root.title;
+        text: (root.pinned ? "Pinned | " : "") + root.title;
         vertical-alignment: center;
         overflow: elide;
         color: root.selected ? #e8f1e6 : #c1daa6;
@@ -196,7 +196,7 @@ export component AppWindow inherits Window {
                 spacing: 1px;
                 Text { text: "PocketAgent"; color: #c1daa6; font-size: 22px; font-weight: 700; }
                 Text {
-                    text: server-name + " · " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
+                    text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
                     color: #a7baa7;
                     font-size: 11px;
                     overflow: elide;
@@ -267,7 +267,7 @@ export component AppWindow inherits Window {
                     }
                     if folder-choices.length > 0 : ComboBox {
                         model: folder-choices;
-                        selected(path) => { if path != "Choose a folder…" { new-session-folder = path; browse-folders(path); } }
+                        selected(path) => { if path != "Choose a folder..." { new-session-folder = path; browse-folders(path); } }
                     }
                     new-model := ComboBox { model: model-options; }
                     HorizontalBox {
@@ -352,7 +352,7 @@ export component AppWindow inherits Window {
                         HorizontalBox {
                             padding: 8px;
                             spacing: 8px;
-                            Text { text: codex-status + (work-timing == "" ? "" : "  •  " + work-timing); color: #c1daa6; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: codex-status + (work-timing == "" ? "" : "  -  " + work-timing); color: #c1daa6; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                             if codex-status == "Codex is working..." : ActionButton { icon: "\u{25a0}"; label: ""; tooltip: "Stop"; clicked => { stop-work(); } }
                         }
                     }
@@ -390,7 +390,7 @@ export component AppWindow inherits Window {
                     height: 100px;
                     VerticalBox {
                         for job in scheduled-items : HorizontalBox {
-                            if job.conversation-id == current-session-id && job.status == "pending" : Text { text: job.due-at + " · " + job.text; color: #c1daa6; horizontal-stretch: 1; overflow: elide; }
+                            if job.conversation-id == current-session-id && job.status == "pending" : Text { text: job.due-at + " | " + job.text; color: #c1daa6; horizontal-stretch: 1; overflow: elide; }
                             if job.conversation-id == current-session-id && job.status == "pending" : ActionButton { icon: "\u{00d7}"; label: ""; tooltip: "Cancel scheduled message"; clicked => { cancel-schedule(job.id); } }
                         }
                     }
