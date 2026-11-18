@@ -1,5 +1,6 @@
 param(
-    [string]$OutputDirectory = "artifacts/rust-desktop-preview"
+    [string]$OutputDirectory = "artifacts/rust-desktop-preview",
+    [switch]$Installer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,3 +25,28 @@ $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvar
 Set-Content -LiteralPath ($archive + '.sha256') -Value "$hash  $(Split-Path $archive -Leaf)"
 Write-Host "Rust desktop preview: $output"
 Write-Host "Archive: $archive"
+
+if ($Installer) {
+    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+    if ($iscc) {
+        $isccPath = $iscc.Source
+    } else {
+        $knownPaths = @()
+        if (${env:ProgramFiles(x86)}) { $knownPaths += (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe') }
+        if ($env:ProgramFiles) { $knownPaths += (Join-Path $env:ProgramFiles 'Inno Setup 6/ISCC.exe') }
+        if (${env:LOCALAPPDATA}) { $knownPaths += (Join-Path ${env:LOCALAPPDATA} 'Programs/Inno Setup 6/ISCC.exe') }
+        $isccPath = $knownPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    }
+    if (!$isccPath) { throw 'Inno Setup 6 was not found. Install it or omit -Installer.' }
+    $installerOutput = Join-Path (Split-Path $output -Parent) 'PocketAgent-RustDesktop-Setup.exe'
+    $version = '0.1.0'
+    $installerBaseName = [IO.Path]::GetFileNameWithoutExtension($installerOutput)
+    & $isccPath "/DAppVersion=$version" "/DSourceDir=$output" "/DOutputDir=$(Split-Path $installerOutput -Parent)" "/DOutputBaseFilename=$installerBaseName" "/DProjectRoot=$(Get-Location)" (Join-Path (Get-Location) 'installer/PocketAgentRustDesktop.iss')
+    if ($LASTEXITCODE -ne 0) { throw 'Rust desktop installer build failed.' }
+    if (!(Test-Path -LiteralPath $installerOutput)) { throw "Rust desktop installer was not produced: $installerOutput" }
+    & (Join-Path (Get-Location) 'tests/rust-desktop-installer-smoke.ps1') -Installer $installerOutput
+    if ($LASTEXITCODE -ne 0) { throw 'Rust desktop installer smoke test failed.' }
+    $installerHash = (Get-FileHash -LiteralPath $installerOutput -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath ($installerOutput + '.sha256') -Value "$installerHash  $(Split-Path $installerOutput -Leaf)"
+    Write-Host "Installer: $installerOutput"
+}

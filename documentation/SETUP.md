@@ -177,7 +177,13 @@ To produce a portable preview directory and ZIP, run:
 .\scripts\Build-RustDesktop.ps1
 ```
 
-The build runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. This preview package is separate from the current WPF installer and is not an app-release channel yet.
+The build runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. To also build and install-test the per-user Rust Windows installer, run:
+
+```powershell
+.\scripts\Build-RustDesktop.ps1 -Installer
+```
+
+That command compiles `installer/PocketAgentRustDesktop.iss`, installs the resulting setup into an isolated temporary directory, launches the installed executable through the same UI smoke test, and uninstalls it. The Rust preview artifacts are separate from the current .NET/WPF release channel and are not publicly uploaded by this local build.
 
 Focused checks for this change:
 
