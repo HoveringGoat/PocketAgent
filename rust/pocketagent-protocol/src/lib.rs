@@ -7,6 +7,45 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const RELAY_PROTOCOL_VERSION: u16 = 1;
+pub const APPLICATION_PROTOCOL_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationRequest {
+    pub version: u16,
+    pub method: String,
+    pub path: String,
+    pub body: Vec<u8>,
+}
+
+impl ApplicationRequest {
+    pub fn new(method: impl Into<String>, path: impl Into<String>, body: Vec<u8>) -> Self {
+        Self {
+            version: APPLICATION_PROTOCOL_VERSION,
+            method: method.into(),
+            path: path.into(),
+            body,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationResponse {
+    pub version: u16,
+    pub status: u16,
+    pub content_type: String,
+    pub body: Vec<u8>,
+}
+
+impl ApplicationResponse {
+    pub fn new(status: u16, content_type: impl Into<String>, body: Vec<u8>) -> Self {
+        Self {
+            version: APPLICATION_PROTOCOL_VERSION,
+            status,
+            content_type: content_type.into(),
+            body,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpaqueEnvelope {

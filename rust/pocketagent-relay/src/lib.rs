@@ -10,6 +10,7 @@ use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+pub mod application;
 pub mod config;
 pub mod transport;
 

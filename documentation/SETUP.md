@@ -187,7 +187,7 @@ node --test tests/direct-internet.test.mjs
 cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- demo
 ```
 
-The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. The `pocketagent-relay demo` command runs the same authenticated encrypted request/response flow as a real process-level smoke check. These checks do not yet prove production certificate enrollment or a real two-desktop deployment.
+The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, encrypted application request/response route binding, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. The `pocketagent-relay demo` command runs the same authenticated encrypted request/response flow as a real process-level smoke check. These checks do not yet prove production certificate enrollment or a real two-desktop application deployment.
 
 For a three-process routing probe, start the relay with explicit test identities and tokens, then run one host and one client in separate terminals:
 
