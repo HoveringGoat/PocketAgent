@@ -77,6 +77,58 @@ component ActionButton inherits Rectangle {
     }
 }
 
+component ServerPower inherits Rectangle {
+    in property <bool> running;
+    callback clicked();
+    width: 64px;
+    height: 26px;
+    border-radius: 13px;
+    background: #0c1410;
+    border-width: 1px;
+    border-color: #46544a;
+    accessible-role: button;
+    accessible-enabled: true;
+    accessible-label: running ? "ON" : "OFF";
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        border-radius: 11px;
+        background: root.running ? #4e7845 : #202c24;
+    }
+    Rectangle {
+        x: root.running ? parent.width - 23px : 3px;
+        y: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        background: #c0ccc0;
+    }
+    Text {
+        x: root.running ? 3px : 27px;
+        width: 34px;
+        height: parent.height;
+        text: root.running ? "ON" : "OFF";
+        color: root.running ? #f0fadf : #a7b5aa;
+        font-size: 11px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
 export struct MarkdownBlock {
     text: string,
     kind: string,
@@ -240,7 +292,7 @@ export component AppWindow inherits Window {
                 overflow: elide;
             }
             Text {
-                width: 210px;
+                width: 130px;
                 text: usage-summary;
                 color: #c1daa6;
                 font-size: 11px;
@@ -248,11 +300,12 @@ export component AppWindow inherits Window {
                 overflow: elide;
             }
             HorizontalBox {
+                width: 370px;
                 spacing: 6px;
-                ActionButton { icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
-                ActionButton { icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
-                ActionButton { icon: "settings"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
-                ActionButton { icon: "power"; label: host-status == "Host API is running" ? "ON" : "OFF"; tooltip: "Server power"; primary: host-status == "Host API is running"; clicked => { } }
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "settings"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
+                ServerPower { running: host-status == "Host API is running"; clicked => { } }
             }
         }
 

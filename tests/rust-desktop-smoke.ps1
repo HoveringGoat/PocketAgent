@@ -95,15 +95,45 @@ try {
         }
     }
 
+    function Assert-HeaderControls([string]$sizeLabel) {
+        $buttonCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button)
+        $buttons = @($window.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $buttonCondition))
+        $sessions = $buttons | Where-Object { $_.Current.Name -eq 'Sessions' } | Select-Object -First 1
+        $devices = $buttons | Where-Object { $_.Current.Name -eq 'Devices' } | Select-Object -First 1
+        $settings = $buttons | Where-Object { $_.Current.Name -eq 'Settings' } | Select-Object -First 1
+        $power = $buttons | Where-Object { $_.Current.Name -in @('ON', 'OFF') } | Select-Object -First 1
+        if ($null -eq $sessions -or $null -eq $devices -or $null -eq $settings -or $null -eq $power) {
+            throw "Header controls were not exposed at $sizeLabel."
+        }
+
+        $navRects = @($sessions, $devices, $settings) | ForEach-Object { $_.Current.BoundingRectangle }
+        $powerRect = $power.Current.BoundingRectangle
+        foreach ($rect in $navRects) {
+            if ($rect.Width -lt 110 -or $rect.Width -gt 130 -or $rect.Height -lt 40 -or $rect.Height -gt 52) {
+                throw "Header navigation control has unexpected size at $sizeLabel."
+            }
+        }
+        if ($powerRect.Width -lt 70 -or $powerRect.Width -gt 95 -or
+            $powerRect.Height -lt 28 -or $powerRect.Height -ge $navRects[0].Height) {
+            throw "Header power control is not the compact pill size at $sizeLabel."
+        }
+    }
+
     $transform = $window.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
     $transform.Resize(800, 580)
     Start-Sleep -Milliseconds 300
     Assert-VisibleControls '800x580'
     Assert-CompactHeader '800x580'
+    Assert-HeaderControls '800x580'
     $transform.Resize(1150, 820)
     Start-Sleep -Milliseconds 300
     Assert-VisibleControls '1150x820'
     Assert-CompactHeader '1150x820'
+    Assert-HeaderControls '1150x820'
 
     if ($RequireCodex) {
         $codexReady = $false
