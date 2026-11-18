@@ -70,6 +70,9 @@ try {
     if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Schedule' })) {
         throw 'Schedule control was not exposed.'
     }
+    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
+        throw 'Pairing renewal control was not exposed.'
+    }
 
     $editCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,

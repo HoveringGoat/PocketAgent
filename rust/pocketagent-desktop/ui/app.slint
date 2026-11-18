@@ -78,6 +78,7 @@ export component AppWindow inherits Window {
     callback disconnect-relay-host();
     callback set-device-access(string, string, bool);
     callback revoke-device(string);
+    callback renew-pairing();
     callback cancel-schedule(string);
 
     background: #18271f;
@@ -275,7 +276,11 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 Text { text: host-status; color: #a7b7aa; font-size: 13px; }
                 Text { text: host-endpoint; color: #c1daa6; font-size: 13px; }
-                Text { text: host-pairing; color: #f3d28a; font-size: 13px; }
+                HorizontalBox {
+                    spacing: 8px;
+                    Text { text: host-pairing; color: #f3d28a; font-size: 13px; vertical-alignment: center; }
+                    Button { text: "Renew pairing"; clicked => { renew-pairing(); } }
+                }
                 Text { text: current-session-id == "" ? "Select a conversation to manage access." : "Conversation access"; color: #a7b7aa; font-size: 12px; }
                 for device in host-devices : Button {
                     text: (device.authorized ? "Remove  " : "Add  ") + device.name;

@@ -134,7 +134,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             window.set_host_endpoint("No endpoint".into());
         }
     }
-    window.set_host_pairing(format!("Pairing code: {} (single use)", host_pairing.code).into());
+    window.set_host_pairing(
+        format!(
+            "Pairing code: {} (single use; expires {})",
+            host_pairing.code,
+            chrono::DateTime::<chrono::Utc>::from_timestamp(host_pairing.expires_at_unix, 0)
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| "soon".into())
+        )
+        .into(),
+    );
     let codex_commands = start_codex_worker(
         window.as_weak(),
         interaction.clone(),
@@ -186,6 +195,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_codex_status(&weak, "Device revoked".into(), None);
                 set_host_devices(&weak, &registry, "");
             }
+        });
+    }
+    {
+        let registry = host_registry.clone();
+        let weak = window.as_weak();
+        window.on_renew_pairing(move || {
+            let pairing = registry.renew_pairing();
+            diagnostics::record("pairing", "renewed");
+            let text = format!(
+                "Pairing code: {} (single use; expires {})",
+                pairing.code,
+                chrono::DateTime::<chrono::Utc>::from_timestamp(pairing.expires_at_unix, 0)
+                    .map(|value| value.to_rfc3339())
+                    .unwrap_or_else(|| "soon".into())
+            );
+            let _ = weak.upgrade_in_event_loop(move |window| window.set_host_pairing(text.into()));
         });
     }
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
