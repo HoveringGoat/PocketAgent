@@ -101,6 +101,9 @@ pub struct HostHttpState {
     pub conversations: Arc<RwLock<Vec<HostConversation>>>,
     pub schedules: Arc<RwLock<Vec<HostSchedule>>>,
     pub image_root: Arc<RwLock<String>>,
+    pub models: Arc<RwLock<String>>,
+    pub usage: Arc<RwLock<String>>,
+    pub provider_status: Arc<RwLock<String>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
 }
@@ -116,6 +119,9 @@ impl HostHttpState {
             conversations: Arc::new(RwLock::new(Vec::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             image_root: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(RwLock::new(String::new())),
+            usage: Arc::new(RwLock::new(String::new())),
+            provider_status: Arc::new(RwLock::new("disconnected".into())),
             actions,
             session: Arc::new(session),
         }
@@ -515,6 +521,9 @@ pub fn router(state: HostHttpState) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/api/session", get(session))
+        .route("/api/provider/status", get(provider_status))
+        .route("/api/models", get(models))
+        .route("/api/usage", get(usage))
         .route("/api/devices/pair", post(pair))
         .route(
             "/api/conversations",
@@ -544,6 +553,46 @@ async fn root() -> impl IntoResponse {
 async fn session(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
     let identity = authenticate_headers(&state.registry, &headers);
     Json((state.session)(identity.as_ref()))
+}
+
+async fn provider_status(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if require_identity(&state.registry, &headers).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let status = state
+        .provider_status
+        .read()
+        .expect("provider status lock should not be poisoned")
+        .clone();
+    Json(serde_json::json!({ "status": status })).into_response()
+}
+
+async fn models(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
+    if require_identity(&state.registry, &headers).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let models = state
+        .models
+        .read()
+        .expect("model lock should not be poisoned")
+        .clone();
+    Json(serde_json::json!({ "models": models.lines().map(str::to_owned).collect::<Vec<_>>() }))
+        .into_response()
+}
+
+async fn usage(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
+    if require_identity(&state.registry, &headers).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let summary = state
+        .usage
+        .read()
+        .expect("usage lock should not be poisoned")
+        .clone();
+    Json(serde_json::json!({ "summary": summary })).into_response()
 }
 
 async fn pair(
@@ -1156,6 +1205,19 @@ mod tests {
             panic!("expected create action");
         }
         assert_eq!(create_task.await.unwrap().status(), StatusCode::OK);
+        for path in ["/api/models", "/api/usage", "/api/provider/status"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::get(path)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
         let denied = app
             .clone()
             .oneshot(

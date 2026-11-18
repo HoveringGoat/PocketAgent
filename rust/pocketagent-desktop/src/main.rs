@@ -93,6 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             version: env!("CARGO_PKG_VERSION").into(),
         }
     });
+    let host_models = host_state.models.clone();
+    let host_usage = host_state.usage.clone();
+    let host_provider_status = host_state.provider_status.clone();
     *host_state
         .image_root
         .write()
@@ -109,9 +112,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let codex_commands = start_codex_worker(
         window.as_weak(),
         interaction.clone(),
-        host_conversations.clone(),
-        host_registry.clone(),
-        host_schedules.clone(),
+        HostSharedState {
+            conversations: host_conversations.clone(),
+            schedules: host_schedules.clone(),
+            registry: host_registry.clone(),
+            models: host_models,
+            usage: host_usage,
+            provider_status: host_provider_status,
+        },
     );
     let host_commands = codex_commands.clone();
     std::thread::spawn(move || {
@@ -364,13 +372,29 @@ enum CodexCommand {
     Stop,
 }
 
+#[derive(Clone)]
+struct HostSharedState {
+    conversations: Arc<std::sync::RwLock<Vec<HostConversation>>>,
+    schedules: Arc<std::sync::RwLock<Vec<HostSchedule>>>,
+    registry: DeviceRegistry,
+    models: Arc<std::sync::RwLock<String>>,
+    usage: Arc<std::sync::RwLock<String>>,
+    provider_status: Arc<std::sync::RwLock<String>>,
+}
+
 fn start_codex_worker(
     weak: slint::Weak<AppWindow>,
     interaction: SharedInteraction,
-    host_conversations: Arc<std::sync::RwLock<Vec<HostConversation>>>,
-    host_registry: DeviceRegistry,
-    host_schedules: Arc<std::sync::RwLock<Vec<HostSchedule>>>,
+    host: HostSharedState,
 ) -> UnboundedSender<CodexCommand> {
+    let HostSharedState {
+        conversations: host_conversations,
+        schedules: host_schedules,
+        registry: host_registry,
+        models: host_models,
+        usage: host_usage,
+        provider_status: host_provider_status,
+    } = host;
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let scheduler = sender.clone();
     std::thread::spawn(move || {
@@ -426,6 +450,9 @@ fn start_codex_worker(
                                 store.repository_path = repository;
                                 store.codex_executable = executable;
                                 session = Some(connected);
+                                *host_provider_status
+                                    .write()
+                                    .expect("provider status lock should not be poisoned") = "ready".into();
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                                 if let Ok(models) = session
                                     .as_mut()
@@ -433,7 +460,11 @@ fn start_codex_worker(
                                     .list_models()
                                     .await
                                 {
-                                    set_model_catalog(&weak, models.join("\n"));
+                                    let model_text = models.join("\n");
+                                    *host_models
+                                        .write()
+                                        .expect("model lock should not be poisoned") = model_text.clone();
+                                    set_model_catalog(&weak, model_text);
                                 }
                                 if let Ok(usage) = session
                                     .as_mut()
@@ -441,6 +472,9 @@ fn start_codex_worker(
                                     .usage_summary()
                                     .await
                                 {
+                                    *host_usage
+                                        .write()
+                                        .expect("usage lock should not be poisoned") = usage.clone();
                                     set_usage(&weak, usage);
                                 }
                                 match sessions {
@@ -455,6 +489,9 @@ fn start_codex_worker(
                             Err(error) => {
                                 diagnostics::record("codex", "connect_failed");
                                 session = None;
+                                *host_provider_status
+                                    .write()
+                                    .expect("provider status lock should not be poisoned") = "disconnected".into();
                                 set_codex_error(&weak, error.to_string());
                             }
                         }
@@ -659,6 +696,9 @@ fn start_codex_worker(
                                     let _ = store.save();
                                 }
                                 if let Ok(usage) = current.usage_summary().await {
+                                    *host_usage
+                                        .write()
+                                        .expect("usage lock should not be poisoned") = usage.clone();
                                     set_usage(&weak, usage);
                                 }
                                 refresh_sessions(current, &weak, &mut store, &host_conversations)
