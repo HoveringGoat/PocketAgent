@@ -49,12 +49,9 @@
         </ToggleButton.Style>
       </ToggleButton></StackPanel>
     </DockPanel>
-    <TabControl x:Name="Navigation" Grid.Row="1" SelectionChanged="NavigationSelectionChanged">
-      <TabControl.Template>
-        <ControlTemplate TargetType="TabControl">
-          <Border Background="Transparent"><ContentPresenter ContentSource="SelectedContent"/></Border>
-        </ControlTemplate>
-      </TabControl.Template>
+    <TabControl x:Name="Navigation" Grid.Row="1" Background="Transparent" BorderThickness="0"
+                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+                SelectionChanged="NavigationSelectionChanged">
       <TabItem Header="Sessions">
         <Grid Margin="0,16,0,0">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Media;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
 
@@ -8,6 +9,11 @@ public partial class App : Application
 {
     public App()
     {
+        // The desktop window must remain visible on hosts where WPF's hardware
+        // compositor produces a blank client surface (RDP/VM and some display
+        // driver combinations). Software rendering keeps the live window and
+        // captured/remote frames consistent with the visual tree.
+        RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
         DesktopDiagnostics.Initialize();
         DispatcherUnhandledException += (_, args) =>
         {
