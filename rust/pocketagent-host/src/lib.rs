@@ -1070,7 +1070,14 @@ async fn read_conversation(
                 Json(snapshot).into_response()
             }
         }
-        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Ok(Ok(Err(error))) => {
+            if error.to_ascii_lowercase().contains("history cursor") {
+                StatusCode::BAD_REQUEST.into_response()
+            } else {
+                StatusCode::BAD_GATEWAY.into_response()
+            }
+        }
+        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
@@ -1521,6 +1528,33 @@ mod tests {
             panic!("expected read action");
         }
         assert_eq!(read_task.await.unwrap().status(), StatusCode::OK);
+        let invalid_app = router(state.clone());
+        let invalid_token = token.clone();
+        let invalid_task = tokio::spawn(async move {
+            invalid_app
+                .oneshot(
+                    axum::http::Request::get(
+                        "/api/conversations/thread-1/history?before=history-missing",
+                    )
+                    .header("authorization", format!("Bearer {invalid_token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        let invalid_action = received.recv().await.unwrap();
+        if let HostAction::Read { response, .. } = invalid_action {
+            response
+                .send(Err("Invalid history cursor.".into()))
+                .unwrap();
+        } else {
+            panic!("expected history action");
+        }
+        assert_eq!(
+            invalid_task.await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
         let accepted = app
             .oneshot(
                 axum::http::Request::post("/api/conversations/thread-1/messages")

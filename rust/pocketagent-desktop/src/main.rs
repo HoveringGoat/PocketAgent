@@ -1052,10 +1052,14 @@ fn start_codex_worker(
                                     return Err("Conversation not found.".to_owned());
                                 };
                                 let history_items = history_items(&record.id, &history);
-                                let end = before
-                                    .as_deref()
-                                    .and_then(|cursor| history_items.iter().position(|item| item["id"] == cursor))
-                                    .unwrap_or(history_items.len());
+                                let end = if let Some(cursor) = before.as_deref() {
+                                    history_items
+                                        .iter()
+                                        .position(|item| item["id"] == cursor)
+                                        .ok_or_else(|| "Invalid history cursor.".to_owned())?
+                                } else {
+                                    history_items.len()
+                                };
                                 let start = end.saturating_sub(limit.clamp(1, 100));
                                 let page = history_items[start..end].to_vec();
                                 let history_truncated = start > 0;
