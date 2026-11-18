@@ -18,6 +18,13 @@ export struct HostDeviceItem {
     authorized: bool,
 }
 
+export struct ScheduledItem {
+    id: string,
+    text: string,
+    due-at: string,
+    status: string,
+}
+
 export component AppWindow inherits Window {
     title: "PocketAgent Rust Desktop";
     preferred-width: 820px;
@@ -49,6 +56,7 @@ export component AppWindow inherits Window {
     in-out property <string> host-endpoint: "No host endpoint";
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <[HostDeviceItem]> host-devices: [];
+    in-out property <[ScheduledItem]> scheduled-items: [];
     callback connect-codex(string, string);
     callback new-conversation(string, string, string);
     callback refresh-sessions();
@@ -66,6 +74,7 @@ export component AppWindow inherits Window {
     callback stop-relay();
     callback connect-relay-host(string, string, string, string);
     callback set-device-access(string, string, bool);
+    callback cancel-schedule(string);
 
     background: #18271f;
 
@@ -201,6 +210,23 @@ export component AppWindow inherits Window {
                         text: "Schedule";
                         enabled: codex-status == "Codex is ready" && prompt.text != "" && delay.text != "";
                         clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); prompt.text = ""; delay.text = ""; }
+                    }
+                }
+                if scheduled-items.length > 0 : GroupBox {
+                    title: "Scheduled messages";
+                    VerticalBox {
+                        spacing: 6px;
+                        for item in scheduled-items : HorizontalBox {
+                            spacing: 8px;
+                            Text { text: item.text; color: #e8f1e6; overflow: elide; }
+                            Text { text: item.due-at; color: #8fa294; overflow: elide; }
+                            Text { text: item.status; color: #a7b7aa; }
+                            Button {
+                                text: "Cancel";
+                                enabled: item.status == "pending";
+                                clicked => { cancel-schedule(item.id); }
+                            }
+                        }
                     }
                 }
             }

@@ -259,6 +259,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = commands.send(CodexCommand::Stop);
         });
     }
+    {
+        let commands = startup_commands.clone();
+        window.on_cancel_schedule(move |id| {
+            let _ = commands.send(CodexCommand::CancelSchedule(id.to_string()));
+        });
+    }
 
     let _ = startup_commands.send(CodexCommand::Connect {
         repository,
@@ -411,6 +417,7 @@ enum CodexCommand {
         effort: String,
         delay: String,
     },
+    CancelSchedule(String),
     Host(HostAction),
     Stop,
 }
@@ -466,6 +473,7 @@ fn start_codex_worker(
             archive_timer.tick().await;
             sync_host_conversations(&host_conversations, &store);
             sync_host_schedules(&host_schedules, &store);
+            set_scheduled_items(&weak, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
                 diagnostics::record("conversation", "auto_archived_stale");
                 let _ = store.save();
@@ -820,6 +828,7 @@ fn start_codex_worker(
                             let _ = store.set_schedule_status(schedule_id, "sent");
                             let _ = store.save();
                             sync_host_schedules(&host_schedules, &store);
+                            set_scheduled_items(&weak, &store);
                         }
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
@@ -935,6 +944,7 @@ fn start_codex_worker(
                                     let _ = store.set_schedule_status(schedule_id, "failed");
                                     let _ = store.save();
                                     sync_host_schedules(&host_schedules, &store);
+                                    set_scheduled_items(&weak, &store);
                                 }
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                             }
@@ -944,6 +954,7 @@ fn start_codex_worker(
                                     let _ = store.set_schedule_status(schedule_id, "failed");
                                     let _ = store.save();
                                     sync_host_schedules(&host_schedules, &store);
+                                    set_scheduled_items(&weak, &store);
                                 }
                                 set_codex_error(&weak, error.to_string());
                             }
@@ -979,6 +990,7 @@ fn start_codex_worker(
                         );
                         let _ = store.save();
                         sync_host_schedules(&host_schedules, &store);
+                        set_scheduled_items(&weak, &store);
                         queue_schedule(
                             &scheduler,
                             host_schedules.clone(),
@@ -992,6 +1004,14 @@ fn start_codex_worker(
                             },
                         );
                         set_codex_status(&weak, "Prompt scheduled".into(), None);
+                    }
+                    CodexCommand::CancelSchedule(id) => {
+                        if store.set_schedule_status(&id, "canceled") {
+                            let _ = store.save();
+                            sync_host_schedules(&host_schedules, &store);
+                            set_scheduled_items(&weak, &store);
+                            set_codex_status(&weak, "Scheduled prompt canceled".into(), None);
+                        }
                     }
                     CodexCommand::Host(action) => match action {
                         HostAction::Send {
@@ -1177,6 +1197,7 @@ fn start_codex_worker(
                             );
                             let _ = store.save();
                             sync_host_schedules(&host_schedules, &store);
+                            set_scheduled_items(&weak, &store);
                             queue_schedule(
                                 &scheduler,
                                 host_schedules.clone(),
@@ -1208,6 +1229,7 @@ fn start_codex_worker(
                             if store.set_schedule_status(&schedule_id, "canceled") {
                                 let _ = store.save();
                                 sync_host_schedules(&host_schedules, &store);
+                                set_scheduled_items(&weak, &store);
                                 let _ = response.send(Ok(()));
                             } else {
                                 let _ = response.send(Err("Schedule not found.".into()));
@@ -1403,6 +1425,25 @@ fn sync_host_schedules(snapshot: &Arc<std::sync::RwLock<Vec<HostSchedule>>>, sto
             status: schedule.status.clone(),
         })
         .collect();
+}
+
+fn set_scheduled_items(weak: &slint::Weak<AppWindow>, store: &DesktopStore) {
+    let items = store
+        .schedules
+        .iter()
+        .map(|schedule| ScheduledItem {
+            id: schedule.id.clone().into(),
+            text: schedule.prompt.clone().into(),
+            due_at: chrono::DateTime::<chrono::Utc>::from_timestamp(schedule.due_at_unix, 0)
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_default()
+                .into(),
+            status: schedule.status.clone().into(),
+        })
+        .collect::<Vec<_>>();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_scheduled_items(slint::ModelRc::new(slint::VecModel::from(items)));
+    });
 }
 
 fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value> {
