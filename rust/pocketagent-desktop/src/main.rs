@@ -193,7 +193,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             if registry.revoke(device_id) {
                 diagnostics::record("device", "revoked");
-                set_codex_status(&weak, "Device revoked".into(), None);
+                set_host_status(
+                    &weak,
+                    "Device revoked; its token is no longer valid.".into(),
+                );
                 set_host_devices(&weak, &registry, "");
             }
         });
@@ -628,7 +631,7 @@ fn start_codex_worker(
                                 }
                                 match sessions {
                                     Ok(sessions) => {
-                                        store.merge_threads(sessions);
+                                        store.refresh_registered_threads(sessions);
                                         let _ = store.save();
                                         set_sessions(&weak, store.display_sessions());
                                     }
@@ -680,7 +683,7 @@ fn start_codex_worker(
                                     .filter(|name| !name.is_empty())
                                     .unwrap_or("New conversation")
                                     .to_owned();
-                                store.merge_threads([(id.clone(), title)]);
+                                store.register_thread(id.clone(), title);
                                 if let Some(conversation) = store
                                     .conversations
                                     .iter_mut()
@@ -1296,7 +1299,7 @@ fn start_codex_worker(
                                 } else {
                                     title.trim().to_owned()
                                 };
-                                store.merge_threads([(id.clone(), title.clone())]);
+                                store.register_thread(id.clone(), title.clone());
                                 if let Some(record) = store
                                     .conversations
                                     .iter_mut()
@@ -1592,7 +1595,7 @@ async fn refresh_sessions(
 ) {
     match session.list_threads().await {
         Ok(sessions) => {
-            store.merge_threads(sessions);
+            store.refresh_registered_threads(sessions);
             let _ = store.save();
             sync_host_conversations(host_conversations, store);
             set_sessions(weak, store.display_sessions());
@@ -2035,6 +2038,10 @@ fn set_relay_host_stopped(weak: &slint::Weak<AppWindow>) {
         window.set_relay_host_connected(false);
         window.set_relay_host_status("Outbound relay host disconnected.".into());
     });
+}
+
+fn set_host_status(weak: &slint::Weak<AppWindow>, status: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_host_status(status.into()));
 }
 
 fn start_host_server(state: HostHttpState) -> Result<String, String> {

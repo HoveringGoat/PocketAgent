@@ -122,7 +122,28 @@ fn save_to_path(path: &Path, store: &DesktopStore) -> io::Result<()> {
 }
 
 impl DesktopStore {
-    pub fn merge_threads<I>(&mut self, threads: I)
+    pub fn register_thread(&mut self, id: String, title: String) {
+        if self
+            .conversations
+            .iter()
+            .any(|conversation| conversation.id == id)
+        {
+            return;
+        }
+        self.conversations.push(ConversationRecord {
+            id,
+            title,
+            archived: false,
+            pinned: false,
+            working_directory: self.repository_path.clone(),
+            model: None,
+            reasoning_effort: None,
+            created_at_unix: now_unix(),
+            last_activity_unix: None,
+        });
+    }
+
+    pub fn refresh_registered_threads<I>(&mut self, threads: I)
     where
         I: IntoIterator<Item = (String, String)>,
     {
@@ -135,18 +156,6 @@ impl DesktopStore {
                 if existing.title == "Untitled" && title != "Untitled" {
                     existing.title = title;
                 }
-            } else {
-                self.conversations.push(ConversationRecord {
-                    id,
-                    title,
-                    archived: false,
-                    pinned: false,
-                    working_directory: self.repository_path.clone(),
-                    model: None,
-                    reasoning_effort: None,
-                    created_at_unix: now_unix(),
-                    last_activity_unix: None,
-                });
             }
         }
     }
@@ -307,7 +316,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        store.merge_threads([(String::from("thread-1"), String::from("Provider title"))]);
+        store.refresh_registered_threads([(
+            String::from("thread-1"),
+            String::from("Provider title"),
+        )]);
         assert_eq!(store.conversations[0].title, "Saved title");
         assert!(store.conversations[0].archived);
         assert!(store.conversations[0].pinned);
@@ -319,8 +331,32 @@ mod tests {
             repository_path: "C:/work/default".into(),
             ..Default::default()
         };
-        store.merge_threads([(String::from("thread-1"), String::from("Foldered"))]);
+        store.register_thread(String::from("thread-1"), String::from("Foldered"));
         assert_eq!(store.conversations[0].working_directory, "C:/work/default");
+    }
+
+    #[test]
+    fn refresh_does_not_import_provider_owned_threads() {
+        let mut store = DesktopStore {
+            conversations: vec![ConversationRecord {
+                id: "pocket-thread".into(),
+                title: "Untitled".into(),
+                archived: false,
+                pinned: false,
+                working_directory: "C:/work/default".into(),
+                model: None,
+                reasoning_effort: None,
+                created_at_unix: 1,
+                last_activity_unix: None,
+            }],
+            ..Default::default()
+        };
+        store.refresh_registered_threads([
+            ("pocket-thread".into(), "Updated title".into()),
+            ("provider-owned".into(), "Should stay hidden".into()),
+        ]);
+        assert_eq!(store.conversations.len(), 1);
+        assert_eq!(store.conversations[0].title, "Updated title");
     }
 
     #[test]
