@@ -1346,7 +1346,10 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
 }
 
 fn image_from_markdown_path(path: &str) -> Option<slint::Image> {
-    let path = path.strip_prefix("file://").unwrap_or(path);
+    let path = path
+        .strip_prefix("file:///")
+        .or_else(|| path.strip_prefix("file://"))
+        .unwrap_or(path);
     slint::Image::load_from_path(std::path::Path::new(path)).ok()
 }
 
