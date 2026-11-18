@@ -570,6 +570,7 @@ fn start_codex_worker(
                                 diagnostics::record("conversation", "created");
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
+                                set_current_working_directory(&weak, working_directory.clone());
                                 set_host_devices(&weak, &host_registry, &id);
                                 let title = std::path::Path::new(&working_directory)
                                     .file_name()
@@ -623,7 +624,7 @@ fn start_codex_worker(
                             .map(|conversation| conversation.working_directory.clone())
                             .filter(|directory| !directory.is_empty())
                             .unwrap_or_else(|| store.repository_path.clone());
-                        current.set_repository(working_directory);
+                        current.set_repository(working_directory.clone());
                         match current
                             .resume_thread(
                                 &id,
@@ -634,6 +635,7 @@ fn start_codex_worker(
                             Ok(history) => {
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
+                                set_current_working_directory(&weak, working_directory);
                                 set_host_devices(&weak, &host_registry, &id);
                                 set_transcript(
                                     &weak,
@@ -714,7 +716,7 @@ fn start_codex_worker(
                                 .map(|conversation| conversation.working_directory.clone())
                                 .filter(|directory| !directory.is_empty())
                                 .unwrap_or_else(|| store.repository_path.clone());
-                            current.set_repository(target_directory);
+                            current.set_repository(target_directory.clone());
                             if current
                                 .resume_thread(target, target_model.as_deref())
                                 .await
@@ -728,6 +730,7 @@ fn start_codex_worker(
                             }
                             selected_id = Some(target.to_owned());
                             set_selected_session(&weak, target.to_owned());
+                            set_current_working_directory(&weak, target_directory);
                             set_host_devices(&weak, &host_registry, target);
                         }
                         if let Some(id) = selected_id.as_deref()
@@ -995,6 +998,7 @@ fn start_codex_worker(
                                     .map_err(|error| error.to_string())?;
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
+                                set_current_working_directory(&weak, working_directory.clone());
                                 set_host_devices(&weak, &host_registry, &id);
                                 set_transcript(&weak, "New conversation ready".into());
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
@@ -1124,12 +1128,13 @@ fn start_codex_worker(
                                         .map(|conversation| conversation.working_directory.clone())
                                         .filter(|directory| !directory.is_empty())
                                         .unwrap_or_else(|| store.repository_path.clone());
-                                    current.set_repository(working_directory);
+                                    current.set_repository(working_directory.clone());
                                     current
                                         .resume_thread(&conversation_id, model.as_deref())
                                         .await
                                         .map_err(|error| error.to_string())?;
                                     selected_id = Some(conversation_id.clone());
+                                    set_current_working_directory(&weak, working_directory);
                                 }
                                 let history = current
                                     .current_thread_text()
@@ -1444,6 +1449,12 @@ fn set_host_devices(
 
 fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_current_session_id(id.into()));
+}
+
+fn set_current_working_directory(weak: &slint::Weak<AppWindow>, directory: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_current_working_directory(directory.into());
+    });
 }
 
 fn set_archived_view(weak: &slint::Weak<AppWindow>, showing: bool) {
