@@ -91,6 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             version: env!("CARGO_PKG_VERSION").into(),
         }
     });
+    *host_state
+        .image_root
+        .write()
+        .expect("host image-root lock should not be poisoned") = repository.clone();
     host_state
         .conversations
         .write()

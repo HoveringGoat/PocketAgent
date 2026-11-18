@@ -73,6 +73,7 @@ type SessionProvider = dyn Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + S
 pub struct HostHttpState {
     pub registry: DeviceRegistry,
     pub conversations: Arc<RwLock<Vec<HostConversation>>>,
+    pub image_root: Arc<RwLock<String>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
 }
@@ -86,6 +87,7 @@ impl HostHttpState {
         Self {
             registry,
             conversations: Arc::new(RwLock::new(Vec::new())),
+            image_root: Arc::new(RwLock::new(String::new())),
             actions,
             session: Arc::new(session),
         }
@@ -461,6 +463,11 @@ struct ArchivedQuery {
     archived: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ImageQuery {
+    path: Option<String>,
+}
+
 pub fn router(state: HostHttpState) -> Router {
     Router::new()
         .route("/", get(root))
@@ -469,6 +476,7 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/conversations", get(list_conversations))
         .route("/api/conversations/{id}", get(get_conversation))
         .route("/api/conversations/{id}/history", get(get_history))
+        .route("/api/conversations/{id}/images", get(get_image))
         .route("/api/conversations/{id}/messages", post(send_message))
         .route("/api/conversations/{id}/archive", post(archive))
         .route("/api/conversations/{id}/restore", post(restore))
@@ -577,6 +585,59 @@ async fn get_history(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     read_conversation(state, headers, id, true).await
+}
+
+async fn get_image(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<ImageQuery>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(relative) = query.path.filter(|path| !path.trim().is_empty()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if relative.starts_with("data:") || std::path::Path::new(&relative).is_absolute() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let root = state
+        .image_root
+        .read()
+        .expect("image root lock should not be poisoned")
+        .clone();
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let candidate = root.join(relative);
+    let Ok(candidate) = std::fs::canonicalize(candidate) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !candidate.starts_with(&root) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(bytes) = std::fs::read(&candidate) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let content_type = match candidate
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    };
+    ([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response()
 }
 
 async fn read_conversation(
@@ -917,5 +978,60 @@ mod tests {
         assert!(
             matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text } if conversation_id == "thread-1" && text == "hello")
         );
+    }
+
+    #[tokio::test]
+    async fn image_route_is_scoped_to_the_repository_root() {
+        let root = std::env::temp_dir().join(format!("pocketagent-image-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("image.png"), [1u8, 2, 3]).unwrap();
+        let registry = DeviceRegistry::new();
+        let display = registry.pairing_display();
+        let paired = registry.pair("phone", &display.code).unwrap();
+        registry
+            .grant_conversation("thread-1", paired.identity.id)
+            .unwrap();
+        let (actions, _received) = tokio::sync::mpsc::unbounded_channel();
+        let state = HostHttpState::new(registry, actions, |_| SessionInfo {
+            authenticated: false,
+            device_name: None,
+            repository: None,
+            host_name: "test".into(),
+            version: "test".into(),
+        });
+        *state.image_root.write().unwrap() = root.to_string_lossy().into_owned();
+        let app = router(state);
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/api/conversations/thread-1/images?path=image.png")
+                    .header("authorization", format!("Bearer {}", paired.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            [1, 2, 3]
+        );
+        let traversal = app
+            .oneshot(
+                axum::http::Request::get("/api/conversations/thread-1/images?path=../secret")
+                    .header("authorization", format!("Bearer {}", paired.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(traversal.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(root);
     }
 }
