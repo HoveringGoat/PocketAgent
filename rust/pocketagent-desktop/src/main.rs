@@ -758,7 +758,20 @@ fn start_codex_worker(
                         }
                     }
                     CodexCommand::ArchiveSelected => {
-                        if let Some(id) = selected_id.as_deref()
+                        let active = host_active_turn
+                            .read()
+                            .expect("active turn lock should not be poisoned")
+                            .as_ref()
+                            .is_some_and(|(conversation_id, _)| {
+                                Some(conversation_id.as_str()) == selected_id.as_deref()
+                            });
+                        if active {
+                            set_codex_error(
+                                &weak,
+                                "Finish or stop active work before archiving this conversation."
+                                    .into(),
+                            );
+                        } else if let Some(id) = selected_id.as_deref()
                             && store.set_archived(id, true)
                         {
                             diagnostics::record("conversation", "archived");
@@ -989,8 +1002,8 @@ fn start_codex_worker(
                                     }
                                     Some(CodexCommand::Prompt {
                                         prompt: steer_prompt,
-                                        model: steer_model,
-                                        effort: steer_effort,
+                                        model: _steer_model,
+                                        effort: _steer_effort,
                                         schedule_id: None,
                                         conversation_id,
                                         expected_turn_id,
@@ -1000,8 +1013,6 @@ fn start_codex_worker(
                                     {
                                         let _ = steer_tx.send(SteerRequest {
                                             prompt: steer_prompt,
-                                            model: (!steer_model.trim().is_empty()).then_some(steer_model),
-                                            effort: (!steer_effort.trim().is_empty()).then_some(steer_effort),
                                             expected_turn_id,
                                         });
                                     }

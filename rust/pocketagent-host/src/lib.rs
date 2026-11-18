@@ -1276,6 +1276,16 @@ fn mutate(
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND;
     }
+    if matches!(&kind, HostActionKind::Archive(true))
+        && state
+            .active_turn
+            .read()
+            .expect("active turn lock should not be poisoned")
+            .as_ref()
+            .is_some_and(|(conversation_id, _)| conversation_id == &id)
+    {
+        return StatusCode::CONFLICT;
+    }
     let action = match kind {
         HostActionKind::Archive(value) => HostAction::Archive {
             conversation_id: id,
@@ -1692,6 +1702,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing_expected.status(), StatusCode::CONFLICT);
+        let archive_while_active = router(state.clone())
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/archive")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(archive_while_active.status(), StatusCode::CONFLICT);
         let logout = router(state)
             .oneshot(
                 axum::http::Request::post("/api/logout")

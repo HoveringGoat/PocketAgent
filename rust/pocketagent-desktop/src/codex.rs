@@ -18,8 +18,6 @@ pub struct PromptRequest {
 #[derive(Debug, Clone)]
 pub struct SteerRequest {
     pub prompt: String,
-    pub model: Option<String>,
-    pub effort: Option<String>,
     pub expected_turn_id: Option<String>,
 }
 
@@ -244,6 +242,9 @@ impl CodexSession {
                     }
                 }
                 Some("turn/completed") => {
+                    if let Some(error) = turn_failure(&message) {
+                        return Err(io::Error::other(error).into());
+                    }
                     if interrupted {
                         return Err(io::Error::other("Turn stopped by user").into());
                     }
@@ -313,26 +314,13 @@ impl CodexSession {
     }
 
     fn steer_parameters(thread_id: &str, expected_turn_id: &str, steer: &SteerRequest) -> Value {
-        let mut input = json!({
+        // A steer augments the already-running turn. Model and reasoning
+        // settings belong to that turn and must not be changed mid-flight.
+        json!({
             "threadId": thread_id,
             "expectedTurnId": expected_turn_id,
             "input": [{ "type": "text", "text": steer.prompt, "text_elements": [] }]
-        });
-        if let Some(model) = steer
-            .model
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            input["model"] = json!(model);
-        }
-        if let Some(effort) = steer
-            .effort
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            input["effort"] = json!(effort);
-        }
-        input
+        })
     }
 
     pub fn set_repository(&mut self, repository: impl Into<String>) {
@@ -621,6 +609,25 @@ fn thread_text(result: &Value) -> String {
         .join("\n\n")
 }
 
+fn turn_failure(message: &Value) -> Option<String> {
+    let turn = message.get("params")?.get("turn")?;
+    let status = turn.get("status").and_then(Value::as_str);
+    let error = turn
+        .get("error")
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    if status.is_some_and(|value| !matches!(value, "completed" | "success")) || error.is_some() {
+        Some(
+            error
+                .unwrap_or("Codex reported that the turn failed")
+                .to_owned(),
+        )
+    } else {
+        None
+    }
+}
+
 fn turns_text(turns: &[Value]) -> String {
     turns
         .iter()
@@ -812,19 +819,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn steer_parameters_bind_the_observed_turn_and_preserve_options() {
+    fn steer_parameters_bind_the_observed_turn_without_overrides() {
         let steer = SteerRequest {
             prompt: "continue with the tests".into(),
-            model: Some("gpt-test".into()),
-            effort: Some("high".into()),
             expected_turn_id: None,
         };
         let parameters = CodexSession::steer_parameters("thread-1", "turn-2", &steer);
         assert_eq!(parameters["threadId"], "thread-1");
         assert_eq!(parameters["expectedTurnId"], "turn-2");
         assert_eq!(parameters["input"][0]["text"], "continue with the tests");
-        assert_eq!(parameters["model"], "gpt-test");
-        assert_eq!(parameters["effort"], "high");
     }
 
     #[test]
@@ -911,6 +914,29 @@ mod tests {
             json!({ "items": [{ "type": "agentMessage", "text": "second" }] }),
         ]);
         assert_eq!(text, "first\n\nsecond");
+    }
+
+    #[test]
+    fn failed_completed_turns_are_not_reported_as_success() {
+        let message = json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "failed",
+                    "error": { "message": "provider quota rejected the turn" }
+                }
+            }
+        });
+        assert_eq!(
+            turn_failure(&message).as_deref(),
+            Some("provider quota rejected the turn")
+        );
+        assert!(
+            turn_failure(&json!({
+                "params": { "turn": { "status": "completed" } }
+            }))
+            .is_none()
+        );
     }
 
     #[test]
