@@ -1,4 +1,4 @@
-import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
+import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ScrollView, TextEdit, VerticalBox } from "std-widgets.slint";
 
 export struct MarkdownBlock {
     text: string,
@@ -27,11 +27,12 @@ export struct ScheduledItem {
 
 export component AppWindow inherits Window {
     title: "PocketAgent Rust Desktop";
-    preferred-width: 820px;
-    preferred-height: 680px;
-    min-width: 640px;
-    min-height: 480px;
+    preferred-width: 1150px;
+    preferred-height: 820px;
+    min-width: 800px;
+    min-height: 580px;
 
+    in-out property <string> server-name: "Desktop";
     in-out property <string> repository-path: "";
     in-out property <string> codex-executable: "codex";
     in-out property <string> current-page: "sessions";
@@ -62,6 +63,7 @@ export component AppWindow inherits Window {
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <[HostDeviceItem]> host-devices: [];
     in-out property <[ScheduledItem]> scheduled-items: [];
+
     callback connect-codex(string, string);
     callback new-conversation(string, string, string);
     callback refresh-sessions();
@@ -85,235 +87,266 @@ export component AppWindow inherits Window {
     callback cancel-schedule(string);
     callback navigate(string);
 
-    background: #18271f;
+    background: #111b17;
 
-    ScrollView {
-        VerticalBox {
-            padding: 28px;
-            spacing: 18px;
+    VerticalBox {
+        padding: 22px;
+        spacing: 0px;
 
-        Text {
-            text: "PocketAgent";
-            color: #c1daa6;
-            font-size: 30px;
-            font-weight: 700;
-        }
-        Text {
-            text: "Local desktop mode";
-            color: #a7b7aa;
-            font-size: 16px;
-        }
-
+        // Compact two-line context header with right-aligned page controls.
         HorizontalBox {
-            spacing: 8px;
-            Button { text: "Sessions"; enabled: current-page != "sessions"; clicked => { navigate("sessions"); } }
-            Button { text: "Devices"; enabled: current-page != "devices"; clicked => { navigate("devices"); } }
-            Button { text: "Settings"; enabled: current-page != "settings"; clicked => { navigate("settings"); } }
-        }
-
-        if current-page == "settings" : GroupBox {
-            title: "Codex connection";
+            height: 60px;
+            spacing: 16px;
             VerticalBox {
-                padding: 16px;
-                spacing: 8px;
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text { text: "PocketAgent"; color: #c1daa6; font-size: 22px; font-weight: 700; }
                 HorizontalBox {
-                    spacing: 8px;
-                    repository := LineEdit { text: repository-path; edited => { repository-path = self.text; } }
-                    executable := LineEdit { text: codex-executable; edited => { codex-executable = self.text; } }
-                    Button {
-                        text: "Connect Codex";
-                        clicked => { connect-codex(repository.text, executable.text); }
-                    }
+                    spacing: 5px;
+                    Text { text: server-name; color: #a7baa7; font-size: 11px; horizontal-stretch: 0; }
+                    Text { text: "/"; color: #53665a; font-size: 11px; horizontal-stretch: 0; }
+                    Text { text: current-working-directory == "" ? "No folder selected" : current-working-directory; color: #8fbc8f; font-size: 11px; overflow: elide; horizontal-stretch: 0; }
                 }
-                Text { text: codex-status; color: #c1daa6; font-size: 14px; }
-                Text { text: usage-summary; color: #a7b7aa; font-size: 13px; }
+                Text { text: usage-summary; color: #c1daa6; font-size: 11px; overflow: elide; }
+            }
+            HorizontalBox {
+                spacing: 4px;
+                Button { text: "Sessions"; enabled: current-page != "sessions"; clicked => { navigate("sessions"); } }
+                Button { text: "Devices"; enabled: current-page != "devices"; clicked => { navigate("devices"); } }
+                Button { text: "Settings"; enabled: current-page != "settings"; clicked => { navigate("settings"); } }
+                Rectangle {
+                    width: 64px;
+                    height: 26px;
+                    background: #203328;
+                    border-width: 1px;
+                    border-color: #47604b;
+                    border-radius: 13px;
+                    Text { text: host-status == "Host API is running" ? "ON" : "OFF"; color: #c1daa6; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                }
             }
         }
 
         if current-page == "sessions" : VerticalBox {
-        GroupBox {
-            title: "Sessions";
-            VerticalBox {
-                padding: 16px;
-                spacing: 8px;
-                for session in session-items : Button {
-                    text: session.title;
-                    clicked => { select-session(session.id); }
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    new-folder := LineEdit { placeholder-text: "Working folder (optional)"; }
-                    Button { text: "New conversation"; enabled: codex-available; clicked => { new-conversation(model.current-value, effort.text, new-folder.text); new-folder.text = ""; } }
-                    Button { text: "Refresh"; enabled: codex-available; clicked => { refresh-sessions(); } }
-                    Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
-                    Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
-                    Button { text: showing-archived ? "Restore" : "Archive"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    rename := LineEdit { placeholder-text: "Rename selected conversation"; }
-                    Button { text: "Rename"; enabled: current-session-id != "" && rename.text != ""; clicked => { rename-session(rename.text); rename.text = ""; } }
-                }
-            }
-        }
+            vertical-stretch: 1;
+            spacing: 12px;
 
-        GroupBox {
-            title: "Conversation";
-            VerticalBox {
-                padding: 16px;
-                spacing: 8px;
-                for block in transcript-blocks : Rectangle {
-                    background: transparent;
-                    if block.has-image : Image {
-                        source: block.image;
-                        image-fit: contain;
-                        max-width: 640px;
-                        max-height: 480px;
-                    }
-                    if !block.has-image : Text {
-                        text: block.text;
-                        color: block.kind == "code" ? #c1daa6 : #e8f1e6;
-                        font-size: block.kind == "heading" ? 18px : 14px;
-                        font-weight: block.kind == "heading" ? 700 : 400;
-                        font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
-                        wrap: word-wrap;
-                    }
-                }
-                if interaction-method != "" : GroupBox {
-                    title: "Codex needs your input";
-                    VerticalBox {
-                        spacing: 8px;
-                        Text { text: pending-interaction; color: #f3d28a; font-size: 14px; }
-                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; }
+            // Conversation tabs and actions share one row, as in the .NET app.
+            HorizontalBox {
+                height: 46px;
+                spacing: 6px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: #111b17;
+                    border-width: 1px;
+                    border-color: #20382b;
+                    ScrollView {
                         HorizontalBox {
-                            spacing: 8px;
-                            if interaction-method == "item/tool/requestUserInput" : Button { text: "Submit"; enabled: response.text != ""; clicked => { answer-interaction(response.text); response.text = ""; } }
-                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Accept"; clicked => { answer-interaction("accept"); } }
-                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Decline"; clicked => { answer-interaction("decline"); } }
-                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Cancel"; clicked => { answer-interaction("cancel"); } }
-                        }
-                    }
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    Text { text: codex-status; color: #c1daa6; font-size: 13px; vertical-alignment: center; }
-                    Text { text: work-timing; color: #8fa294; font-size: 12px; vertical-alignment: center; }
-                    Text { text: current-session-id == "" ? "No conversation selected" : current-working-directory; color: #8fa294; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    model := ComboBox { enabled: codex-status != "Codex is working..."; model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
-                    effort := LineEdit { enabled: codex-status != "Codex is working..."; text: selected-effort; placeholder-text: "Reasoning effort (optional)"; edited => { selected-effort = self.text; } }
-                }
-                Text { text: model-catalog; color: #8fa294; font-size: 12px; wrap: word-wrap; }
-                HorizontalBox {
-                    spacing: 8px;
-                    prompt := LineEdit {
-                        placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
-                        enabled: codex-available;
-                    }
-                    Button {
-                        text: "Send";
-                        enabled: codex-available && prompt.text != "";
-                        clicked => { send-prompt(prompt.text, model.current-value, effort.text); }
-                    }
-                    if codex-status == "Codex is working..." : Button {
-                        text: "Stop";
-                        clicked => { stop-work(); }
-                    }
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    delay := LineEdit { placeholder-text: "Delay seconds"; }
-                    Button {
-                        text: "Schedule";
-                        enabled: codex-available && prompt.text != "" && delay.text != "";
-                        clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); prompt.text = ""; delay.text = ""; }
-                    }
-                }
-                if scheduled-items.length > 0 : GroupBox {
-                    title: "Scheduled messages";
-                    VerticalBox {
-                        spacing: 6px;
-                        for item in scheduled-items : HorizontalBox {
-                            spacing: 8px;
-                            Text { text: item.text; color: #e8f1e6; overflow: elide; }
-                            Text { text: item.due-at; color: #8fa294; overflow: elide; }
-                            Text { text: item.status; color: #a7b7aa; }
-                            Button {
-                                text: "Cancel";
-                                enabled: item.status == "pending";
-                                clicked => { cancel-schedule(item.id); }
+                            spacing: 6px;
+                            for session in session-items : Button {
+                                text: session.title;
+                                clicked => { select-session(session.id); }
                             }
                         }
                     }
                 }
+                Button { text: "+"; clicked => { new-conversation(model.current-value, effort.text, new-folder.text); } }
+                Button { text: "Edit"; enabled: current-session-id != ""; clicked => { rename-session(rename.text); } }
+                Button { text: "Pin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                Button { text: showing-archived ? "Restore" : "Archive"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
+                Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
+                rename := LineEdit { width: 180px; placeholder-text: "Rename selected"; visible: current-session-id != ""; }
             }
-        }
-        }
 
-        if current-page == "settings" : GroupBox {
-            title: "Optional relay";
-            VerticalBox {
-                padding: 16px;
+            GroupBox {
+                title: "Conversation";
+                vertical-stretch: 1;
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 0px;
+                    Rectangle {
+                        vertical-stretch: 1;
+                        background: #111b17;
+                        border-width: 1px;
+                        border-color: #294633;
+                        ScrollView {
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 8px;
+                                if transcript-blocks.length == 0 : Text { text: current-session-id == "" ? "Select a conversation" : "Send a message to start working."; color: #c1daa6; font-size: 15px; }
+                                for block in transcript-blocks : Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: block.has-image ? 320px : max(42px, block-text.preferred-height + 24px);
+                                    background: block.kind == "code" ? #19271f : #18271f;
+                                    border-width: block.kind == "code" ? 1px : 0px;
+                                    border-color: #47604b;
+                                    border-radius: 7px;
+                                    block-text := Text {
+                                        x: 12px;
+                                        y: 12px;
+                                        width: parent.width - 24px;
+                                        text: block.text;
+                                        color: block.kind == "code" ? #c1daa6 : #e8f1e6;
+                                        font-size: block.kind == "heading" ? 18px : 14px;
+                                        font-weight: block.kind == "heading" ? 700 : 400;
+                                        font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                                        wrap: word-wrap;
+                                    }
+                                    if block.has-image : Image {
+                                        x: 12px;
+                                        y: 12px;
+                                        width: parent.width - 24px;
+                                        height: parent.height - 24px;
+                                        source: block.image;
+                                        image-fit: contain;
+                                    }
+                                }
+                                if interaction-method != "" : Rectangle {
+                                    horizontal-stretch: 1;
+                                    min-height: 130px;
+                                    background: #111b17;
+                                    border-width: 1px;
+                                    border-color: #aaa65c;
+                                    VerticalBox {
+                                        padding: 12px;
+                                        spacing: 8px;
+                                        Text { text: "Your input is needed"; color: #f3d28a; font-size: 15px; font-weight: 700; }
+                                        Text { text: pending-interaction; color: #e8f1e6; wrap: word-wrap; }
+                                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; }
+                                        HorizontalBox {
+                                            spacing: 6px;
+                                            if interaction-method == "item/tool/requestUserInput" : Button { text: "Send answers"; enabled: response.text != ""; clicked => { answer-interaction(response.text); response.text = ""; } }
+                                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Approve once"; clicked => { answer-interaction("accept"); } }
+                                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Deny"; clicked => { answer-interaction("decline"); } }
+                                            if interaction-method != "item/tool/requestUserInput" : Button { text: "Cancel work"; clicked => { answer-interaction("cancel"); } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 38px;
+                        background: #1d2c23;
+                        border-width: 1px;
+                        border-color: #47604b;
+                        HorizontalBox {
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: codex-status + (work-timing == "" ? "" : "  •  " + work-timing); color: #c1daa6; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: current-session-id == "" ? "No active conversation" : current-working-directory; color: #8fa294; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                            if codex-status == "Codex is working..." : Button { text: "Stop"; clicked => { stop-work(); } }
+                        }
+                    }
+                }
+            }
+
+            HorizontalBox {
+                height: 92px;
                 spacing: 8px;
-                Text { text: relay-status; color: #a7b7aa; font-size: 13px; }
-                Text { text: relay-endpoint; color: #c1daa6; font-size: 13px; }
-                Text { text: relay-enrollment; color: #f3d28a; font-size: 12px; wrap: word-wrap; }
-                HorizontalBox {
+                prompt := TextEdit {
+                    vertical-stretch: 1;
+                    text: "";
+                    placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
+                    enabled: codex-available;
+                }
+                VerticalBox {
+                    width: 104px;
                     spacing: 8px;
-                    relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }
-                    Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
-                    Button { text: "Stop"; enabled: relay-running; clicked => { stop-relay(); } }
-                }
-                Text { text: relay-host-status; color: #a7b7aa; font-size: 13px; wrap: word-wrap; }
-                relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; }
-                relay-host-id := LineEdit { placeholder-text: "Relay host ID"; }
-                relay-host-token := LineEdit { placeholder-text: "Relay host token (not persisted)"; }
-                relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>) (not persisted)"; }
-                Button {
-                    text: "Connect this desktop through relay";
-                    enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != "";
-                    clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); }
-                }
-                Button {
-                    text: "Disconnect outbound host";
-                    enabled: relay-host-connected;
-                    clicked => { disconnect-relay-host(); }
+                    Button { text: "Send"; height: 44px; enabled: codex-available && prompt.text != ""; clicked => { send-prompt(prompt.text, model.current-value, effort.text); prompt.text = ""; } }
+                    Button { text: "Timer"; height: 36px; enabled: codex-available && prompt.text != ""; clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); prompt.text = ""; delay.text = ""; } }
                 }
             }
-        }
 
-        if current-page == "devices" : GroupBox {
-            title: "Desktop host API";
-            VerticalBox {
-                padding: 16px;
+            HorizontalBox {
+                height: 32px;
                 spacing: 8px;
-                Text { text: host-status; color: #a7b7aa; font-size: 13px; }
-                Text { text: host-endpoint; color: #c1daa6; font-size: 13px; }
-                HorizontalBox {
-                    spacing: 8px;
-                    Text { text: host-pairing; color: #f3d28a; font-size: 13px; vertical-alignment: center; }
-                    Button { text: "Renew pairing"; clicked => { renew-pairing(); } }
+                model := ComboBox { width: 220px; enabled: codex-status != "Codex is working..."; model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
+                effort := LineEdit { width: 220px; enabled: codex-status != "Codex is working..."; text: selected-effort; placeholder-text: "Reasoning effort (optional)"; edited => { selected-effort = self.text; } }
+                delay := LineEdit { width: 120px; placeholder-text: "Delay seconds"; }
+                Text { text: model-catalog; color: #8fa294; font-size: 11px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            }
+            new-folder := LineEdit { placeholder-text: "Working folder for a new conversation (optional)"; visible: false; }
+        }
+
+        if current-page == "devices" : ScrollView {
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Connect your phone"; color: #c1daa6; font-size: 24px; font-weight: 700; }
+                Text { text: "Scan the pairing QR or copy the full pairing string into the phone app. Treat an unused pairing string like a temporary password."; color: #c1daa6; wrap: word-wrap; }
+                GroupBox {
+                    title: "Desktop host";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: host-status; color: #c1daa6; }
+                        Text { text: host-endpoint; color: #8fbc8f; }
+                        Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; }
+                        Button { text: "Renew pairing"; clicked => { renew-pairing(); } }
+                    }
                 }
-                Text { text: current-session-id == "" ? "Select a conversation to manage access." : "Conversation access"; color: #a7b7aa; font-size: 12px; }
-                for device in host-devices : Button {
-                    text: (device.authorized ? "Remove  " : "Add  ") + device.name;
-                    enabled: current-session-id != "";
-                    clicked => { set-device-access(current-session-id, device.id, !device.authorized); }
-                }
-                for device in host-devices : Button {
-                    text: "Revoke  " + device.name;
-                    clicked => { revoke-device(device.id); }
+                GroupBox {
+                    title: "Paired devices";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: current-session-id == "" ? "Select a conversation on Sessions before changing access." : "Manage access for the selected conversation."; color: #a7baa7; wrap: word-wrap; }
+                        for device in host-devices : HorizontalBox {
+                            spacing: 8px;
+                            Text { text: device.name; color: #e8f1e6; horizontal-stretch: 1; }
+                            Button { text: device.authorized ? "Remove" : "Add"; enabled: current-session-id != ""; clicked => { set-device-access(current-session-id, device.id, !device.authorized); } }
+                            Button { text: "Revoke"; clicked => { revoke-device(device.id); } }
+                        }
+                    }
                 }
             }
         }
 
-        if current-page == "sessions" : Text {
-            text: "Local Codex mode does not require a relay. The host API is opt-in for remote clients.";
-            color: #8fa294;
-            font-size: 13px;
-        }
+        if current-page == "settings" : ScrollView {
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Desktop setup"; color: #c1daa6; font-size: 24px; font-weight: 700; }
+                Text { text: "Codex and relay settings are stored on this computer."; color: #c1daa6; wrap: word-wrap; }
+                GroupBox {
+                    title: "Codex connection";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        HorizontalBox {
+                            spacing: 8px;
+                            repository := LineEdit { text: repository-path; edited => { repository-path = self.text; } }
+                            executable := LineEdit { text: codex-executable; edited => { codex-executable = self.text; } }
+                            Button { text: "Connect Codex"; clicked => { connect-codex(repository.text, executable.text); } }
+                        }
+                        Text { text: codex-status; color: codex-available ? #c1daa6 : #f3b8a5; font-size: 14px; }
+                        Text { text: usage-summary; color: #a7baa7; wrap: word-wrap; }
+                    }
+                }
+                GroupBox {
+                    title: "Optional relay";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: relay-status; color: #a7baa7; }
+                        Text { text: relay-endpoint; color: #c1daa6; }
+                        Text { text: relay-enrollment; color: #f3d28a; wrap: word-wrap; }
+                        HorizontalBox {
+                            spacing: 8px;
+                            relay-bind-field := LineEdit { text: "127.0.0.1:0"; }
+                            Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
+                            Button { text: "Stop"; enabled: relay-running; clicked => { stop-relay(); } }
+                        }
+                        Text { text: relay-host-status; color: #a7baa7; wrap: word-wrap; }
+                        relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; }
+                        relay-host-id := LineEdit { placeholder-text: "Relay host ID"; }
+                        relay-host-token := LineEdit { placeholder-text: "Relay host token"; }
+                        relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>)"; }
+                        Button { text: "Connect this desktop through relay"; enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != ""; clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); } }
+                        Button { text: "Disconnect outbound host"; enabled: relay-host-connected; clicked => { disconnect-relay-host(); } }
+                    }
+                }
+            }
         }
     }
 }

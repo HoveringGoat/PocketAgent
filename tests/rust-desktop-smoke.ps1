@@ -1,5 +1,6 @@
 param(
-    [Parameter(Mandatory = $true)][string]$Executable
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [switch]$RequireCodex
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,6 +26,17 @@ try {
     $textCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Text)
+
+    if ($RequireCodex) {
+        $codexReady = $false
+        for ($attempt = 0; $attempt -lt 40 -and !$codexReady; $attempt++) {
+            Start-Sleep -Milliseconds 250
+            $statusTexts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
+            if ($statusTexts -contains 'Codex is ready') { $codexReady = $true; break }
+            if ($statusTexts | Where-Object { $_ -like 'Codex error:*' }) { break }
+        }
+        if (!$codexReady) { throw 'Default Codex connection did not reach the ready state.' }
+    }
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $start = $buttons | Where-Object { $_.Current.Name -eq 'Start relay' }

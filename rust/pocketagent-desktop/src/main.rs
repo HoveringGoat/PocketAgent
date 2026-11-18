@@ -52,6 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     window.set_repository_path(repository.clone().into());
     window.set_codex_executable(executable.clone().into());
+    window.set_server_name(
+        env::var("COMPUTERNAME")
+            .or_else(|_| env::var("HOSTNAME"))
+            .unwrap_or_else(|_| "Desktop".into())
+            .into(),
+    );
 
     {
         let interaction = interaction.clone();

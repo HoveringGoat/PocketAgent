@@ -173,15 +173,7 @@ impl DesktopStore {
             .conversations
             .iter()
             .filter(|conversation| conversation.archived == archived)
-            .map(|conversation| {
-                let title = format!(
-                    "{}{}  ({})",
-                    if conversation.pinned { "[pinned] " } else { "" },
-                    conversation.title,
-                    conversation.id
-                );
-                (conversation.id.clone(), title)
-            })
+            .map(|conversation| (conversation.id.clone(), conversation.title.clone()))
             .collect::<Vec<_>>();
         sessions.sort_by(|left, right| left.1.cmp(&right.1));
         sessions
@@ -399,10 +391,7 @@ mod tests {
         assert!(store.toggle_pinned("thread-1"));
         assert!(store.set_archived("thread-1", true));
         assert!(store.display_sessions().is_empty());
-        assert_eq!(
-            store.display_archived_sessions()[0].1,
-            "[pinned] New title  (thread-1)"
-        );
+        assert_eq!(store.display_archived_sessions()[0].1, "New title");
         assert!(store.set_archived("thread-1", false));
     }
 
