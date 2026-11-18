@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## Rust desktop preview 0.1.1 - 2026-11-17
+
+- Persisted relay enrollment now includes a shared application-session key and is displayed by the running relay panel for local peer provisioning.
+- Added relay session-key wire-format validation and smoke coverage for the visible enrollment bundle.
+
 ## 0.3.13 - 2026-11-16
 
 - Added an Access action beside the selected conversation's desktop actions, with a per-conversation device checklist.
