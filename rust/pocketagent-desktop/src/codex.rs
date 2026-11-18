@@ -327,6 +327,10 @@ impl CodexSession {
         self.repository = repository.into();
     }
 
+    pub fn clear_thread(&mut self) {
+        self.thread_id = None;
+    }
+
     pub async fn new_thread(
         &mut self,
         model: Option<&str>,

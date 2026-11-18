@@ -819,6 +819,7 @@ fn start_codex_worker(
                         {
                             diagnostics::record("conversation", "archived");
                             let _ = store.save();
+                            clear_selected_conversation(&mut session, &mut selected_id, &weak);
                             set_sessions(&weak, visible_sessions(&store, showing_archived));
                         }
                     }
@@ -1244,6 +1245,15 @@ fn start_codex_worker(
                                 let _ = store.save();
                                 sync_host_conversations(&host_conversations, &store);
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
+                                if archived
+                                    && selected_id.as_deref() == Some(conversation_id.as_str())
+                                {
+                                    clear_selected_conversation(
+                                        &mut session,
+                                        &mut selected_id,
+                                        &weak,
+                                    );
+                                }
                             }
                         }
                         HostAction::Pin {
@@ -1810,6 +1820,21 @@ fn set_codex_status(weak: &slint::Weak<AppWindow>, status: String, transcript: O
 
 fn set_transcript(weak: &slint::Weak<AppWindow>, transcript: String) {
     let _ = weak.upgrade_in_event_loop(move |window| set_transcript_blocks(&window, &transcript));
+}
+
+fn clear_selected_conversation(
+    session: &mut Option<CodexSession>,
+    selected_id: &mut Option<String>,
+    weak: &slint::Weak<AppWindow>,
+) {
+    if let Some(session) = session.as_mut() {
+        session.clear_thread();
+    }
+    *selected_id = None;
+    set_selected_session(weak, String::new());
+    set_current_working_directory(weak, String::new());
+    set_selected_model_options(weak, None, None);
+    set_transcript(weak, "No conversation selected".into());
 }
 
 fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
