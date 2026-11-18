@@ -20,6 +20,7 @@ pub struct SteerRequest {
     pub prompt: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub expected_turn_id: Option<String>,
 }
 
 pub struct PromptControl<'a> {
@@ -286,9 +287,11 @@ impl CodexSession {
         expected_turn_id: Option<&str>,
         steer: &SteerRequest,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let Some(expected_turn_id) = expected_turn_id else {
-            return Err(io::Error::other("Codex did not return an active turn ID").into());
-        };
+        let expected_turn_id = steer
+            .expected_turn_id
+            .as_deref()
+            .or(expected_turn_id)
+            .ok_or_else(|| io::Error::other("Codex did not return an active turn ID"))?;
         let input = Self::steer_parameters(thread_id, expected_turn_id, steer);
         self.next_id += 1;
         self.write_message(json!({
@@ -775,6 +778,7 @@ mod tests {
             prompt: "continue with the tests".into(),
             model: Some("gpt-test".into()),
             effort: Some("high".into()),
+            expected_turn_id: None,
         };
         let parameters = CodexSession::steer_parameters("thread-1", "turn-2", &steer);
         assert_eq!(parameters["threadId"], "thread-1");

@@ -226,6 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             effort: effort.to_string(),
             schedule_id: None,
             conversation_id: None,
+            expected_turn_id: None,
         });
     });
     {
@@ -374,6 +375,7 @@ enum CodexCommand {
         effort: String,
         schedule_id: Option<String>,
         conversation_id: Option<String>,
+        expected_turn_id: Option<String>,
     },
     Schedule {
         prompt: String,
@@ -658,6 +660,7 @@ fn start_codex_worker(
                         effort,
                         schedule_id,
                         conversation_id,
+                        expected_turn_id: _expected_turn_id,
                     } => {
                         diagnostics::record("turn", "start");
                         let Some(current) = session.as_mut() else {
@@ -745,6 +748,7 @@ fn start_codex_worker(
                                         effort: steer_effort,
                                         schedule_id: None,
                                         conversation_id,
+                                        expected_turn_id,
                                     }) if conversation_id
                                         .as_deref()
                                         .is_none_or(|id| selected_id.as_deref() == Some(id)) =>
@@ -753,6 +757,7 @@ fn start_codex_worker(
                                             prompt: steer_prompt,
                                             model: (!steer_model.trim().is_empty()).then_some(steer_model),
                                             effort: (!steer_effort.trim().is_empty()).then_some(steer_effort),
+                                            expected_turn_id,
                                         });
                                     }
                                     Some(command) => deferred_commands.push_back(command),
@@ -850,6 +855,7 @@ fn start_codex_worker(
                         HostAction::Send {
                             conversation_id,
                             text,
+                            expected_turn_id,
                         } => {
                             let _ = scheduler.send(CodexCommand::Prompt {
                                 prompt: text,
@@ -857,6 +863,7 @@ fn start_codex_worker(
                                 effort: String::new(),
                                 schedule_id: None,
                                 conversation_id: Some(conversation_id),
+                                expected_turn_id,
                             });
                         }
                         HostAction::Archive {
@@ -1160,6 +1167,7 @@ fn queue_schedule(
             effort,
             schedule_id: Some(schedule_id),
             conversation_id: Some(conversation_id),
+            expected_turn_id: None,
         });
     });
 }

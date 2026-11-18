@@ -51,6 +51,7 @@ pub enum HostAction {
     Send {
         conversation_id: String,
         text: String,
+        expected_turn_id: Option<String>,
     },
     Archive {
         conversation_id: String,
@@ -497,6 +498,8 @@ struct PairInput {
 #[derive(Debug, Deserialize)]
 struct MessageInput {
     text: Option<String>,
+    #[serde(rename = "expectedTurnId")]
+    expected_turn_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -749,6 +752,7 @@ async fn send_message(
         .send(HostAction::Send {
             conversation_id: id,
             text,
+            expected_turn_id: input.expected_turn_id,
         })
         .is_ok()
     {
@@ -1561,7 +1565,8 @@ mod tests {
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from(
-                        serde_json::json!({"text": "hello"}).to_string(),
+                        serde_json::json!({"text": "hello", "expectedTurnId": "turn-7"})
+                            .to_string(),
                     ))
                     .unwrap(),
             )
@@ -1569,7 +1574,7 @@ mod tests {
             .unwrap();
         assert_eq!(accepted.status(), StatusCode::ACCEPTED);
         assert!(
-            matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text } if conversation_id == "thread-1" && text == "hello")
+            matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text, expected_turn_id } if conversation_id == "thread-1" && text == "hello" && expected_turn_id.as_deref() == Some("turn-7"))
         );
         let logout = router(state)
             .oneshot(
