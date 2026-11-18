@@ -163,6 +163,11 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
+                    Text { text: codex-status; color: #c1daa6; font-size: 13px; vertical-alignment: center; }
+                    Text { text: current-session-id == "" ? "No conversation selected" : "Selected conversation"; color: #8fa294; font-size: 12px; vertical-alignment: center; }
+                }
+                HorizontalBox {
+                    spacing: 8px;
                     model := LineEdit { placeholder-text: "Model slug (optional)"; }
                     effort := LineEdit { placeholder-text: "Reasoning effort (optional)"; }
                 }
