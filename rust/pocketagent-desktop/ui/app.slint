@@ -77,6 +77,7 @@ export component AppWindow inherits Window {
     callback connect-relay-host(string, string, string, string);
     callback disconnect-relay-host();
     callback set-device-access(string, string, bool);
+    callback revoke-device(string);
     callback cancel-schedule(string);
 
     background: #18271f;
@@ -280,6 +281,10 @@ export component AppWindow inherits Window {
                     text: (device.authorized ? "Remove  " : "Add  ") + device.name;
                     enabled: current-session-id != "";
                     clicked => { set-device-access(current-session-id, device.id, !device.authorized); }
+                }
+                for device in host-devices : Button {
+                    text: "Revoke  " + device.name;
+                    clicked => { revoke-device(device.id); }
                 }
             }
         }

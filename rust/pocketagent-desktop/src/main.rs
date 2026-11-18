@@ -174,6 +174,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             set_host_devices(&weak, &registry, conversation_id.as_str());
         });
     }
+    {
+        let registry = host_registry.clone();
+        let weak = window.as_weak();
+        window.on_revoke_device(move |device_id| {
+            let Ok(device_id) = uuid::Uuid::parse_str(device_id.as_str()) else {
+                return;
+            };
+            if registry.revoke(device_id) {
+                diagnostics::record("device", "revoked");
+                set_codex_status(&weak, "Device revoked".into(), None);
+                set_host_devices(&weak, &registry, "");
+            }
+        });
+    }
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     {
         let commands = codex_commands.clone();
