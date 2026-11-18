@@ -898,7 +898,15 @@ fn start_codex_worker(
                             set_current_working_directory(&weak, target_directory);
                             set_host_devices(&weak, &host_registry, target);
                         }
-                        if let Some(id) = selected_id.as_deref()
+                        let turn_is_active = host_active_turn
+                            .read()
+                            .expect("active turn lock should not be poisoned")
+                            .as_ref()
+                            .is_some_and(|(active_id, _)| {
+                                Some(active_id.as_str()) == selected_id.as_deref()
+                            });
+                        if !turn_is_active
+                            && let Some(id) = selected_id.as_deref()
                             && store.set_model_options(
                                 id,
                                 Some(model.clone()),

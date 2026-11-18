@@ -1194,6 +1194,9 @@ async fn set_model(
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND;
     }
+    if active_turn_for(&state, &id) {
+        return StatusCode::CONFLICT;
+    }
     if state
         .actions
         .send(HostAction::SetModel {
@@ -1219,6 +1222,9 @@ async fn set_reasoning(
     };
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND;
+    }
+    if active_turn_for(&state, &id) {
+        return StatusCode::CONFLICT;
     }
     if state
         .actions
@@ -1264,6 +1270,15 @@ enum HostActionKind {
     Rename(String),
 }
 
+fn active_turn_for(state: &HostHttpState, conversation_id: &str) -> bool {
+    state
+        .active_turn
+        .read()
+        .expect("active turn lock should not be poisoned")
+        .as_ref()
+        .is_some_and(|(active_id, _)| active_id == conversation_id)
+}
+
 fn mutate(
     state: &HostHttpState,
     headers: HeaderMap,
@@ -1276,14 +1291,7 @@ fn mutate(
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND;
     }
-    if matches!(&kind, HostActionKind::Archive(true))
-        && state
-            .active_turn
-            .read()
-            .expect("active turn lock should not be poisoned")
-            .as_ref()
-            .is_some_and(|(conversation_id, _)| conversation_id == &id)
-    {
+    if matches!(&kind, HostActionKind::Archive(true)) && active_turn_for(state, &id) {
         return StatusCode::CONFLICT;
     }
     let action = match kind {
@@ -1712,6 +1720,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(archive_while_active.status(), StatusCode::CONFLICT);
+        let model_while_active = router(state.clone())
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/model")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"model": "gpt-test"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(model_while_active.status(), StatusCode::CONFLICT);
         let logout = router(state)
             .oneshot(
                 axum::http::Request::post("/api/logout")

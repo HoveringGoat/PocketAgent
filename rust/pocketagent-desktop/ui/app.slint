@@ -189,8 +189,8 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
-                    model := ComboBox { model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
-                    effort := LineEdit { text: selected-effort; placeholder-text: "Reasoning effort (optional)"; edited => { selected-effort = self.text; } }
+                    model := ComboBox { enabled: codex-status != "Codex is working..."; model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
+                    effort := LineEdit { enabled: codex-status != "Codex is working..."; text: selected-effort; placeholder-text: "Reasoning effort (optional)"; edited => { selected-effort = self.text; } }
                 }
                 Text { text: model-catalog; color: #8fa294; font-size: 12px; wrap: word-wrap; }
                 HorizontalBox {
