@@ -478,12 +478,15 @@ fn start_codex_worker(
             {
                 queue_schedule(
                     &scheduler,
+                    host_schedules.clone(),
                     schedule.due_at_unix.saturating_sub(now_unix()) as u64,
-                    schedule.id.clone(),
-                    schedule.conversation_id.clone(),
-                    schedule.prompt.clone(),
-                    schedule.model.clone().unwrap_or_default(),
-                    schedule.reasoning_effort.clone().unwrap_or_default(),
+                    QueuedSchedule {
+                        id: schedule.id.clone(),
+                        conversation_id: schedule.conversation_id.clone(),
+                        prompt: schedule.prompt.clone(),
+                        model: schedule.model.clone().unwrap_or_default(),
+                        effort: schedule.reasoning_effort.clone().unwrap_or_default(),
+                    },
                 );
             }
             loop {
@@ -762,6 +765,11 @@ fn start_codex_worker(
                         conversation_id,
                         expected_turn_id: _expected_turn_id,
                     } => {
+                        if let Some(schedule_id) = schedule_id.as_deref()
+                            && !schedule_pending(&store, schedule_id)
+                        {
+                            continue;
+                        }
                         diagnostics::record("turn", "start");
                         let Some(current) = session.as_mut() else {
                             set_codex_error(&weak, "Connect Codex first.".into());
@@ -973,12 +981,15 @@ fn start_codex_worker(
                         sync_host_schedules(&host_schedules, &store);
                         queue_schedule(
                             &scheduler,
+                            host_schedules.clone(),
                             delay,
-                            id,
-                            conversation_id,
-                            prompt,
-                            model,
-                            effort,
+                            QueuedSchedule {
+                                id,
+                                conversation_id,
+                                prompt,
+                                model,
+                                effort,
+                            },
                         );
                         set_codex_status(&weak, "Prompt scheduled".into(), None);
                     }
@@ -1168,12 +1179,15 @@ fn start_codex_worker(
                             sync_host_schedules(&host_schedules, &store);
                             queue_schedule(
                                 &scheduler,
+                                host_schedules.clone(),
                                 due_at_unix.saturating_sub(now_unix()) as u64,
-                                id.clone(),
-                                conversation_id.clone(),
-                                text.clone(),
-                                String::new(),
-                                String::new(),
+                                QueuedSchedule {
+                                    id: id.clone(),
+                                    conversation_id: conversation_id.clone(),
+                                    prompt: text.clone(),
+                                    model: String::new(),
+                                    effort: String::new(),
+                                },
                             );
                             let due_at =
                                 chrono::DateTime::<chrono::Utc>::from_timestamp(due_at_unix, 0)
@@ -1292,27 +1306,47 @@ fn start_codex_worker(
     sender
 }
 
-fn queue_schedule(
-    sender: &UnboundedSender<CodexCommand>,
-    delay: u64,
-    schedule_id: String,
+struct QueuedSchedule {
+    id: String,
     conversation_id: String,
     prompt: String,
     model: String,
     effort: String,
+}
+
+fn queue_schedule(
+    sender: &UnboundedSender<CodexCommand>,
+    schedules: Arc<std::sync::RwLock<Vec<HostSchedule>>>,
+    delay: u64,
+    schedule: QueuedSchedule,
 ) {
     let sender = sender.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        if !schedules
+            .read()
+            .expect("host schedule lock should not be poisoned")
+            .iter()
+            .any(|item| item.id == schedule.id && item.status == "pending")
+        {
+            return;
+        }
         let _ = sender.send(CodexCommand::Prompt {
-            prompt,
-            model,
-            effort,
-            schedule_id: Some(schedule_id),
-            conversation_id: Some(conversation_id),
+            prompt: schedule.prompt,
+            model: schedule.model,
+            effort: schedule.effort,
+            schedule_id: Some(schedule.id),
+            conversation_id: Some(schedule.conversation_id),
             expected_turn_id: None,
         });
     });
+}
+
+fn schedule_pending(store: &DesktopStore, schedule_id: &str) -> bool {
+    store
+        .schedules
+        .iter()
+        .any(|schedule| schedule.id == schedule_id && schedule.status == "pending")
 }
 
 async fn refresh_sessions(
@@ -1995,7 +2029,8 @@ fn flush_block(
 
 #[cfg(test)]
 mod tests {
-    use super::{markdown_blocks, parse_session_key};
+    use super::{markdown_blocks, parse_session_key, schedule_pending};
+    use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
 
     #[test]
@@ -2022,5 +2057,22 @@ mod tests {
         assert_eq!(key.id(), id);
         assert!(parse_session_key("not-a-key").is_none());
         assert!(parse_session_key(&format!("{id}:00")).is_none());
+    }
+
+    #[test]
+    fn canceled_schedule_is_not_pending_for_dispatch() {
+        let mut store = DesktopStore::default();
+        store.schedules.push(ScheduledMessage {
+            id: "job-1".into(),
+            conversation_id: "thread-1".into(),
+            prompt: "hello".into(),
+            due_at_unix: 10,
+            model: None,
+            reasoning_effort: None,
+            status: "pending".into(),
+        });
+        assert!(schedule_pending(&store, "job-1"));
+        store.schedules[0].status = "canceled".into();
+        assert!(!schedule_pending(&store, "job-1"));
     }
 }
