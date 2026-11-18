@@ -1,4 +1,4 @@
-import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
 
 export struct MarkdownBlock {
     text: string,
@@ -34,6 +34,7 @@ export component AppWindow inherits Window {
 
     in-out property <string> repository-path: "";
     in-out property <string> codex-executable: "codex";
+    in-out property <string> current-page: "sessions";
     in-out property <string> codex-status: "Codex is disconnected";
     in-out property <bool> codex-available: false;
     in-out property <string> work-timing: "";
@@ -82,12 +83,14 @@ export component AppWindow inherits Window {
     callback revoke-device(string);
     callback renew-pairing();
     callback cancel-schedule(string);
+    callback navigate(string);
 
     background: #18271f;
 
-    VerticalBox {
-        padding: 28px;
-        spacing: 18px;
+    ScrollView {
+        VerticalBox {
+            padding: 28px;
+            spacing: 18px;
 
         Text {
             text: "PocketAgent";
@@ -101,7 +104,14 @@ export component AppWindow inherits Window {
             font-size: 16px;
         }
 
-        GroupBox {
+        HorizontalBox {
+            spacing: 8px;
+            Button { text: "Sessions"; enabled: current-page != "sessions"; clicked => { navigate("sessions"); } }
+            Button { text: "Devices"; enabled: current-page != "devices"; clicked => { navigate("devices"); } }
+            Button { text: "Settings"; enabled: current-page != "settings"; clicked => { navigate("settings"); } }
+        }
+
+        if current-page == "settings" : GroupBox {
             title: "Codex connection";
             VerticalBox {
                 padding: 16px;
@@ -120,6 +130,7 @@ export component AppWindow inherits Window {
             }
         }
 
+        if current-page == "sessions" : VerticalBox {
         GroupBox {
             title: "Sessions";
             VerticalBox {
@@ -239,8 +250,9 @@ export component AppWindow inherits Window {
                 }
             }
         }
+        }
 
-        GroupBox {
+        if current-page == "settings" : GroupBox {
             title: "Optional relay";
             VerticalBox {
                 padding: 16px;
@@ -272,7 +284,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        GroupBox {
+        if current-page == "devices" : GroupBox {
             title: "Desktop host API";
             VerticalBox {
                 padding: 16px;
@@ -297,10 +309,11 @@ export component AppWindow inherits Window {
             }
         }
 
-        Text {
+        if current-page == "sessions" : Text {
             text: "Local Codex mode does not require a relay. The host API is opt-in for remote clients.";
             color: #8fa294;
             font-size: 13px;
+        }
         }
     }
 }

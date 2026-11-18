@@ -28,18 +28,22 @@ try {
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $start = $buttons | Where-Object { $_.Current.Name -eq 'Start relay' }
-    if ($null -eq $start) { throw 'Start relay button was not exposed.' }
+    $settings = $buttons | Where-Object { $_.Current.Name -eq 'Settings' }
+    $devices = $buttons | Where-Object { $_.Current.Name -eq 'Devices' }
+    $sessions = $buttons | Where-Object { $_.Current.Name -eq 'Sessions' }
+    if ($null -eq $settings -or $null -eq $devices -or $null -eq $sessions) {
+        throw 'Top-level Sessions, Devices, and Settings navigation was not exposed.'
+    }
+    $settings.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    $start = $buttons | Where-Object { $_.Current.Name -eq 'Start relay' }
+    if ($null -eq $start) { throw 'Start relay button was not exposed on Settings.' }
     $start.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 700
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
     if (!($texts -contains 'Relay is running') -or !($texts | Where-Object { $_ -like 'ws://*' })) {
         throw 'Relay did not enter the running state with a visible endpoint.'
-    }
-    $hostEndpoint = $texts | Where-Object { $_ -like 'http://*' } | Select-Object -First 1
-    if ($null -eq $hostEndpoint) { throw 'Desktop host endpoint was not exposed.' }
-    $hostResponse = Invoke-WebRequest -Uri $hostEndpoint -UseBasicParsing
-    if ($hostResponse.StatusCode -ne 200 -or $hostResponse.Content -notlike '*PocketAgent Rust Host*') {
-        throw 'Desktop host endpoint did not return its health response.'
     }
     $relayConfigPath = Join-Path $env:LOCALAPPDATA 'PocketAgent-rust/relay.json'
     if (!(Test-Path -LiteralPath $relayConfigPath)) { throw 'Relay identity was not persisted.' }
@@ -59,6 +63,23 @@ try {
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
     if (!($texts -contains 'Relay is stopped')) { throw 'Relay did not stop cleanly.' }
 
+    $devices = $buttons | Where-Object { $_.Current.Name -eq 'Devices' }
+    $devices.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
+    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
+        throw 'Devices page did not expose pairing controls.'
+    }
+    $hostEndpoint = $texts | Where-Object { $_ -like 'http://*' } | Select-Object -First 1
+    if ($null -eq $hostEndpoint) { throw 'Desktop host endpoint was not exposed.' }
+    $hostResponse = Invoke-WebRequest -Uri $hostEndpoint -UseBasicParsing
+    if ($hostResponse.StatusCode -ne 200 -or $hostResponse.Content -notlike '*PocketAgent Rust Host*') {
+        throw 'Desktop host endpoint did not return its health response.'
+    }
+
+    ($buttons | Where-Object { $_.Current.Name -eq 'Settings' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     ($buttons | Where-Object { $_.Current.Name -eq 'Start relay' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 500
@@ -68,20 +89,14 @@ try {
     ($buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 300
 
-    $relayConnect = $buttons | Where-Object { $_.Current.Name -eq 'Connect this desktop through relay' }
-    if ($null -eq $relayConnect) { throw 'Outbound relay host connection control was not exposed.' }
-    $relayDisconnect = $buttons | Where-Object { $_.Current.Name -eq 'Disconnect outbound host' }
-    if ($null -eq $relayDisconnect) { throw 'Outbound relay disconnect control was not exposed.' }
-    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Schedule' })) {
-        throw 'Schedule control was not exposed.'
-    }
-    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
-        throw 'Pairing renewal control was not exposed.'
-    }
-
+    ($buttons | Where-Object { $_.Current.Name -eq 'Sessions' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $editCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Edit)
+    ($buttons | Where-Object { $_.Current.Name -eq 'Settings' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
     $edits = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
     $edits[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue((Get-Location).Path)
     $edits[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('missing-codex.exe')

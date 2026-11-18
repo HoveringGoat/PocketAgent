@@ -250,6 +250,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     {
+        let registry = host_registry.clone();
+        let weak = window.as_weak();
+        window.on_navigate(move |page| {
+            let page = page.to_string();
+            let registry = registry.clone();
+            let _ = weak.upgrade_in_event_loop(move |window| {
+                window.set_current_page(page.clone().into());
+                if page == "devices" {
+                    let conversation_id = window.get_current_session_id().to_string();
+                    let items = registry
+                        .device_access(&conversation_id)
+                        .into_iter()
+                        .map(|device| HostDeviceItem {
+                            id: device.id.to_string().into(),
+                            name: device.name.into(),
+                            authorized: device.authorized,
+                        })
+                        .collect::<Vec<_>>();
+                    window.set_host_devices(slint::ModelRc::new(slint::VecModel::from(items)));
+                }
+            });
+        });
+    }
+    {
         let commands = codex_commands.clone();
         window.on_archive_session(move || {
             let _ = commands.send(CodexCommand::ArchiveSelected);
