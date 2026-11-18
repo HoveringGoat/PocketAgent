@@ -586,6 +586,11 @@ fn start_codex_worker(
                                 {
                                     conversation.working_directory = working_directory;
                                 }
+                                set_selected_model_options(
+                                    &weak,
+                                    (!model.trim().is_empty()).then_some(model.clone()),
+                                    (!effort.trim().is_empty()).then_some(effort.clone()),
+                                );
                                 let _ = store.set_model_options(
                                     selected_id.as_deref().unwrap_or_default(),
                                     Some(model),
@@ -611,11 +616,16 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
-                        let options = store
+                        let (options, reasoning_effort) = store
                             .conversations
                             .iter()
                             .find(|conversation| conversation.id == id)
-                            .and_then(|conversation| conversation.model.clone())
+                            .map(|conversation| {
+                                (
+                                    conversation.model.clone().unwrap_or_default(),
+                                    conversation.reasoning_effort.clone().unwrap_or_default(),
+                                )
+                            })
                             .unwrap_or_default();
                         let working_directory = store
                             .conversations
@@ -636,6 +646,12 @@ fn start_codex_worker(
                                 selected_id = Some(id.clone());
                                 set_selected_session(&weak, id.clone());
                                 set_current_working_directory(&weak, working_directory);
+                                set_selected_model_options(
+                                    &weak,
+                                    (!options.trim().is_empty()).then_some(options.clone()),
+                                    (!reasoning_effort.trim().is_empty())
+                                        .then_some(reasoning_effort),
+                                );
                                 set_host_devices(&weak, &host_registry, &id);
                                 set_transcript(
                                     &weak,
@@ -1454,6 +1470,19 @@ fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
 fn set_current_working_directory(weak: &slint::Weak<AppWindow>, directory: String) {
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_current_working_directory(directory.into());
+    });
+}
+
+fn set_selected_model_options(
+    weak: &slint::Weak<AppWindow>,
+    model: Option<String>,
+    effort: Option<String>,
+) {
+    let model = model.unwrap_or_default();
+    let effort = effort.unwrap_or_default();
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_selected_model(model.into());
+        window.set_selected_effort(effort.into());
     });
 }
 
