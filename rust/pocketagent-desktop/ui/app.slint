@@ -44,6 +44,7 @@ export component AppWindow inherits Window {
     in-out property <string> relay-status: "Relay is stopped";
     in-out property <string> relay-endpoint: "No endpoint";
     in-out property <bool> relay-running: false;
+    in-out property <string> relay-host-status: "Outbound host connection is not configured";
     in-out property <string> host-status: "Host API is stopped";
     in-out property <string> host-endpoint: "No host endpoint";
     in-out property <string> host-pairing: "Pairing code unavailable";
@@ -63,6 +64,7 @@ export component AppWindow inherits Window {
     callback stop-work();
     callback start-relay(string);
     callback stop-relay();
+    callback connect-relay-host(string, string, string, string);
     callback set-device-access(string, string, bool);
 
     background: #18271f;
@@ -216,6 +218,16 @@ export component AppWindow inherits Window {
                     relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }
                     Button { text: relay-running ? "Running" : "Start relay"; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
                     Button { text: "Stop"; enabled: relay-running; clicked => { stop-relay(); } }
+                }
+                Text { text: relay-host-status; color: #a7b7aa; font-size: 13px; wrap: word-wrap; }
+                relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; }
+                relay-host-id := LineEdit { placeholder-text: "Relay host ID"; }
+                relay-host-token := LineEdit { placeholder-text: "Relay host token (not persisted)"; }
+                relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>) (not persisted)"; }
+                Button {
+                    text: "Connect this desktop through relay";
+                    enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != "";
+                    clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); }
                 }
             }
         }

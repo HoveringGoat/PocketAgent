@@ -351,6 +351,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    {
+        let weak = window.as_weak();
+        let state = host_state.clone();
+        window.on_connect_relay_host(move |url, host_id, token, session_key| {
+            connect_relay_host_from_ui(
+                state.clone(),
+                weak.clone(),
+                url.to_string(),
+                host_id.to_string(),
+                token.to_string(),
+                session_key.to_string(),
+            );
+        });
+    }
 
     window.run()?;
     Ok(())
@@ -1562,6 +1576,10 @@ fn set_relay_error(weak: &slint::Weak<AppWindow>, message: String) {
     });
 }
 
+fn set_relay_host_status(weak: &slint::Weak<AppWindow>, message: String) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_relay_host_status(message.into()));
+}
+
 fn start_host_server(state: HostHttpState) -> String {
     let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
     if requested
@@ -1631,6 +1649,41 @@ fn start_relay_host(state: HostHttpState) {
         diagnostics::record("relay_host", "invalid_session_key");
         return;
     };
+    start_relay_host_connection(state, url, host_id, token, key, None);
+}
+
+fn connect_relay_host_from_ui(
+    state: HostHttpState,
+    weak: slint::Weak<AppWindow>,
+    url: String,
+    host_id: String,
+    token: String,
+    session_key: String,
+) {
+    let Some(host_id) = Uuid::parse_str(host_id.trim()).ok() else {
+        set_relay_host_status(&weak, "Invalid relay host ID.".into());
+        return;
+    };
+    let Some(key) = parse_session_key(session_key.trim()) else {
+        set_relay_host_status(&weak, "Invalid relay session key.".into());
+        return;
+    };
+    if url.trim().is_empty() || token.trim().is_empty() {
+        set_relay_host_status(&weak, "Relay URL and token are required.".into());
+        return;
+    }
+    set_relay_host_status(&weak, "Connecting outbound relay host...".into());
+    start_relay_host_connection(state, url, host_id, token, key, Some(weak));
+}
+
+fn start_relay_host_connection(
+    state: HostHttpState,
+    url: String,
+    host_id: Uuid,
+    token: String,
+    key: SessionKey,
+    status: Option<slint::Weak<AppWindow>>,
+) {
     diagnostics::record("relay_host", "connecting");
     std::thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -1638,6 +1691,9 @@ fn start_relay_host(state: HostHttpState) {
             .build()
         else {
             diagnostics::record("relay_host", "runtime_failed");
+            if let Some(status) = status.as_ref() {
+                set_relay_host_status(status, "Relay host runtime failed.".into());
+            }
             return;
         };
         runtime.block_on(async move {
@@ -1703,11 +1759,28 @@ fn start_relay_host(state: HostHttpState) {
             match host {
                 Ok(host) => {
                     diagnostics::record("relay_host", "ready");
+                    if let Some(status) = status.as_ref() {
+                        set_relay_host_status(status, "Outbound relay host connected.".into());
+                    }
                     if let Err(error) = host.serve().await {
                         diagnostics::record("relay_host", &format!("stopped_{error}"));
+                        if let Some(status) = status.as_ref() {
+                            set_relay_host_status(
+                                status,
+                                format!("Outbound relay host stopped: {error}"),
+                            );
+                        }
                     }
                 }
-                Err(error) => diagnostics::record("relay_host", &format!("connect_failed_{error}")),
+                Err(error) => {
+                    diagnostics::record("relay_host", &format!("connect_failed_{error}"));
+                    if let Some(status) = status.as_ref() {
+                        set_relay_host_status(
+                            status,
+                            format!("Outbound relay host failed: {error}"),
+                        );
+                    }
+                }
             }
         });
     });
