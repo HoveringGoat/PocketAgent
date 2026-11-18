@@ -867,6 +867,10 @@ fn start_codex_worker(
                                 let delay = due_at
                                     .saturating_sub(now_unix())
                                     .max(1) as u64;
+                                let queued_until_reset = can_queue_usage_exhausted(
+                                    schedule_id.as_deref(),
+                                    selected_id.as_deref(),
+                                );
                                 if let Some(schedule_id) = schedule_id.clone() {
                                     let _ = store.set_schedule_status(&schedule_id, "pending");
                                     let _ = store.save();
@@ -918,7 +922,9 @@ fn start_codex_worker(
                                         None,
                                     );
                                 }
-                                continue;
+                                if queued_until_reset {
+                                    continue;
+                                }
                             }
                         }
                         if let Some(schedule_id) = schedule_id.as_deref() {
@@ -1862,6 +1868,10 @@ fn set_usage(weak: &slint::Weak<AppWindow>, usage: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_usage_summary(usage.into()));
 }
 
+fn can_queue_usage_exhausted(schedule_id: Option<&str>, conversation_id: Option<&str>) -> bool {
+    schedule_id.is_some() || conversation_id.is_some()
+}
+
 fn set_pending_interaction(weak: &slint::Weak<AppWindow>, request: PromptRequest) {
     let decisions = request.decisions.join(",");
     let _ = weak.upgrade_in_event_loop(move |window| {
@@ -2290,7 +2300,7 @@ fn flush_block(
 
 #[cfg(test)]
 mod tests {
-    use super::{markdown_blocks, parse_session_key, schedule_pending};
+    use super::{can_queue_usage_exhausted, markdown_blocks, parse_session_key, schedule_pending};
     use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
 
@@ -2335,5 +2345,12 @@ mod tests {
         assert!(schedule_pending(&store, "job-1"));
         store.schedules[0].status = "canceled".into();
         assert!(!schedule_pending(&store, "job-1"));
+    }
+
+    #[test]
+    fn exhausted_usage_only_defers_prompts_with_a_target() {
+        assert!(can_queue_usage_exhausted(Some("job-1"), None));
+        assert!(can_queue_usage_exhausted(None, Some("thread-1")));
+        assert!(!can_queue_usage_exhausted(None, None));
     }
 }
