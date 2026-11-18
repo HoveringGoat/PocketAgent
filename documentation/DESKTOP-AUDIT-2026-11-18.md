@@ -2,6 +2,8 @@
 
 This audit compares the current Rust desktop preview with the current .NET desktop build across the three top-level pages: Sessions, Devices, and Settings. It records both visual evidence and focused functionality checks. The screenshots are local audit artifacts and are not release assets.
 
+Capture correction: the first .NET screenshot set was invalid because it captured the pre-fix blank client surface. The functioning screenshots linked below were captured from the fixed 0.3.13 build using native window capture after commit `f91ec19`.
+
 Builds reviewed:
 
 - Rust desktop 0.1.1: `rust/target/release/pocketagent-desktop.exe`
@@ -19,9 +21,9 @@ The Rust smoke test confirmed navigation, Codex readiness, relay lifecycle, devi
 
 ### .NET
 
-[Sessions screenshot](../.local/audit-screens/dotnet-sessions-foreground.png)
+[Functioning Sessions screenshot](../.local/audit-screens/dotnet-fixed-print-sessions.png) · [superseded blank capture](../.local/audit-screens/dotnet-sessions-foreground.png)
 
-The live client showed a blank white content area. UI Automation exposed the navigation buttons but no rendered page content. This was traced to a page-local `TabControl` template in `MainWindow.xaml` that replaced the application template with a content-only presenter and omitted the item host. `SelectedContent` therefore remained empty.
+The fixed client renders the header, navigation, session action row, empty conversation surface, status row, composer, Send action, and timer control. The original blank capture was traced to a page-local `TabControl` template in `MainWindow.xaml` that replaced the application template with a content-only presenter and omitted the item host. `SelectedContent` therefore remained empty.
 
 ## Devices
 
@@ -35,9 +37,9 @@ Gaps versus .NET include QR rendering, copy-address, connectivity diagnostics, A
 
 ### .NET
 
-[Devices screenshot](../.local/audit-screens/dotnet-devices.png)
+[Functioning Devices screenshot](../.local/audit-screens/dotnet-fixed-print-devices.png) · [superseded blank capture](../.local/audit-screens/dotnet-devices.png)
 
-The live page was blank, so QR, address copy, diagnostics, APK location, pairing renewal, and paired-device controls could not be exercised in the original build.
+The fixed page renders the phone pairing instructions, address field, Copy address, Connection diagnostics, and Android installer controls. The server was stopped for this capture, so the address and QR/pairing values are empty; the page itself is functioning.
 
 ## Settings
 
@@ -51,9 +53,9 @@ Gaps versus .NET include update controls, appearance scale, startup settings, pr
 
 ### .NET
 
-[Settings screenshot](../.local/audit-screens/dotnet-settings.png)
+[Functioning Settings screenshot](../.local/audit-screens/dotnet-fixed-print-settings.png) · [superseded blank capture](../.local/audit-screens/dotnet-settings.png)
 
-The live page was blank even though the source defines the full settings surface. The rendering defect prevented functional interaction with those controls.
+The fixed page renders the desktop setup, startup/update settings, appearance scale, repository and Codex fields, and update actions. The original live capture was blank even though the source defined this full settings surface; the rendering defect prevented functional interaction until the `TabControl` fix.
 
 ## Validation
 
@@ -74,7 +76,7 @@ Native desktop server lifecycle and page rendering passed.
 
 ## Summary and follow-up
 
-Rust is the more functional preview, but it remains short of .NET feature and layout parity. The highest-priority Rust follow-up is fixing the compact-header overlap and adding an end-to-end send/steer smoke test.
+Rust remains short of .NET feature and layout parity, although both builds now render their top-level pages. The highest-priority Rust follow-up is fixing the compact-header overlap and adding an end-to-end send/steer smoke test.
 
 The .NET blank-page defect is fixed in commit `f91ec19`:
 
