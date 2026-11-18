@@ -53,6 +53,7 @@ export component AppWindow inherits Window {
     in-out property <string> relay-endpoint: "No endpoint";
     in-out property <bool> relay-running: false;
     in-out property <string> relay-host-status: "Outbound host connection is not configured";
+    in-out property <bool> relay-host-connected: false;
     in-out property <string> host-status: "Host API is stopped";
     in-out property <string> host-endpoint: "No host endpoint";
     in-out property <string> host-pairing: "Pairing code unavailable";
@@ -74,6 +75,7 @@ export component AppWindow inherits Window {
     callback start-relay(string);
     callback stop-relay();
     callback connect-relay-host(string, string, string, string);
+    callback disconnect-relay-host();
     callback set-device-access(string, string, bool);
     callback cancel-schedule(string);
 
@@ -256,6 +258,11 @@ export component AppWindow inherits Window {
                     text: "Connect this desktop through relay";
                     enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != "";
                     clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); }
+                }
+                Button {
+                    text: "Disconnect outbound host";
+                    enabled: relay-host-connected;
+                    clicked => { disconnect-relay-host(); }
                 }
             }
         }

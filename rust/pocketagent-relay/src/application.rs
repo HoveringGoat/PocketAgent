@@ -13,6 +13,7 @@ use pocketagent_protocol::{
 use serde::de::DeserializeOwned;
 use std::{future::Future, pin::Pin, sync::Arc};
 use thiserror::Error;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -73,9 +74,19 @@ impl RelayApplicationHost {
         })
     }
 
-    pub async fn serve(mut self) -> Result<(), ApplicationError> {
+    pub async fn serve(self) -> Result<(), ApplicationError> {
+        self.serve_until(oneshot::channel::<()>().1).await
+    }
+
+    pub async fn serve_until(
+        mut self,
+        mut shutdown: oneshot::Receiver<()>,
+    ) -> Result<(), ApplicationError> {
         loop {
-            let frame = self.transport.recv_frame().await?;
+            let frame = tokio::select! {
+                _ = &mut shutdown => return Ok(()),
+                frame = self.transport.recv_frame() => frame?,
+            };
             let RelayFrame::ClientRequest(request) = frame.frame else {
                 continue;
             };
@@ -306,6 +317,7 @@ mod tests {
         let key = SessionKey::random();
         let host_key = key.clone();
         let host_url = url.clone();
+        let (host_shutdown_tx, host_shutdown_rx) = oneshot::channel();
         let host_task = tokio::spawn(async move {
             let host =
                 RelayApplicationHost::connect(
@@ -319,7 +331,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            host.serve().await
+            host.serve_until(host_shutdown_rx).await
         });
 
         let mut client = RelayApplicationClient::connect(
@@ -342,8 +354,9 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"hello");
 
+        let _ = host_shutdown_tx.send(());
         let _ = shutdown_tx.send(());
-        host_task.abort();
+        assert!(host_task.await.unwrap().is_ok());
         server_task.abort();
     }
 }

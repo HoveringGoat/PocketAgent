@@ -122,7 +122,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("host conversation lock should not be poisoned")
         .clear();
     let host_endpoint = start_host_server(host_state.clone());
-    start_relay_host(host_state.clone());
+    let relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    start_relay_host(host_state.clone(), relay_host_shutdown.clone());
     match host_endpoint {
         Ok(endpoint) => {
             window.set_host_status("Host API is running".into());
@@ -374,15 +375,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let weak = window.as_weak();
         let state = host_state.clone();
+        let relay_host_shutdown = Arc::clone(&relay_host_shutdown);
         window.on_connect_relay_host(move |url, host_id, token, session_key| {
             connect_relay_host_from_ui(
                 state.clone(),
                 weak.clone(),
+                relay_host_shutdown.clone(),
                 url.to_string(),
                 host_id.to_string(),
                 token.to_string(),
                 session_key.to_string(),
             );
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let relay_host_shutdown = Arc::clone(&relay_host_shutdown);
+        window.on_disconnect_relay_host(move || {
+            if let Some(shutdown) = relay_host_shutdown
+                .lock()
+                .expect("relay host state lock should work")
+                .take()
+            {
+                let _ = shutdown.send(());
+            }
+            set_relay_host_stopped(&weak);
         });
     }
 
@@ -1841,6 +1858,17 @@ fn set_relay_host_status(weak: &slint::Weak<AppWindow>, message: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_relay_host_status(message.into()));
 }
 
+fn set_relay_host_connected(weak: &slint::Weak<AppWindow>, connected: bool) {
+    let _ = weak.upgrade_in_event_loop(move |window| window.set_relay_host_connected(connected));
+}
+
+fn set_relay_host_stopped(weak: &slint::Weak<AppWindow>) {
+    let _ = weak.upgrade_in_event_loop(|window| {
+        window.set_relay_host_connected(false);
+        window.set_relay_host_status("Outbound relay host disconnected.".into());
+    });
+}
+
 fn start_host_server(state: HostHttpState) -> Result<String, String> {
     let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
     if requested
@@ -1887,7 +1915,10 @@ fn start_host_server(state: HostHttpState) -> Result<String, String> {
     Ok(display_endpoint)
 }
 
-fn start_relay_host(state: HostHttpState) {
+fn start_relay_host(
+    state: HostHttpState,
+    relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+) {
     let Ok(url) = env::var("POCKETAGENT_RELAY_HOST_URL") else {
         return;
     };
@@ -1910,12 +1941,13 @@ fn start_relay_host(state: HostHttpState) {
         diagnostics::record("relay_host", "invalid_session_key");
         return;
     };
-    start_relay_host_connection(state, url, host_id, token, key, None);
+    start_relay_host_connection(state, url, host_id, token, key, None, relay_host_shutdown);
 }
 
 fn connect_relay_host_from_ui(
     state: HostHttpState,
     weak: slint::Weak<AppWindow>,
+    relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     url: String,
     host_id: String,
     token: String,
@@ -1933,8 +1965,17 @@ fn connect_relay_host_from_ui(
         set_relay_host_status(&weak, "Relay URL and token are required.".into());
         return;
     }
+    set_relay_host_connected(&weak, false);
     set_relay_host_status(&weak, "Connecting outbound relay host...".into());
-    start_relay_host_connection(state, url, host_id, token, key, Some(weak));
+    start_relay_host_connection(
+        state,
+        url,
+        host_id,
+        token,
+        key,
+        Some(weak),
+        relay_host_shutdown,
+    );
 }
 
 fn start_relay_host_connection(
@@ -1944,7 +1985,15 @@ fn start_relay_host_connection(
     token: String,
     key: SessionKey,
     status: Option<slint::Weak<AppWindow>>,
+    relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 ) {
+    if let Some(shutdown) = relay_host_shutdown
+        .lock()
+        .expect("relay host state lock should work")
+        .take()
+    {
+        let _ = shutdown.send(());
+    }
     diagnostics::record("relay_host", "connecting");
     std::thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -2019,18 +2068,27 @@ fn start_relay_host_connection(
             .await;
             match host {
                 Ok(host) => {
+                    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+                    *relay_host_shutdown
+                        .lock()
+                        .expect("relay host state lock should work") = Some(shutdown_tx);
                     diagnostics::record("relay_host", "ready");
                     if let Some(status) = status.as_ref() {
                         set_relay_host_status(status, "Outbound relay host connected.".into());
+                        set_relay_host_connected(status, true);
                     }
-                    if let Err(error) = host.serve().await {
+                    if let Err(error) = host.serve_until(shutdown_rx).await {
                         diagnostics::record("relay_host", &format!("stopped_{error}"));
                         if let Some(status) = status.as_ref() {
                             set_relay_host_status(
                                 status,
                                 format!("Outbound relay host stopped: {error}"),
                             );
+                            set_relay_host_connected(status, false);
                         }
+                    } else if let Some(status) = status.as_ref() {
+                        set_relay_host_status(status, "Outbound relay host disconnected.".into());
+                        set_relay_host_connected(status, false);
                     }
                 }
                 Err(error) => {
@@ -2040,6 +2098,7 @@ fn start_relay_host_connection(
                             status,
                             format!("Outbound relay host failed: {error}"),
                         );
+                        set_relay_host_connected(status, false);
                     }
                 }
             }
