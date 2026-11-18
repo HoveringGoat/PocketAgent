@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "pocketagent-crypto",
     "pocketagent-desktop",
+    "pocketagent-host",
     "pocketagent-protocol",
     "pocketagent-relay",
 ]
