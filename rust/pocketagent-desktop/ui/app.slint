@@ -35,6 +35,7 @@ export component AppWindow inherits Window {
     in-out property <string> repository-path: "";
     in-out property <string> codex-executable: "codex";
     in-out property <string> codex-status: "Codex is disconnected";
+    in-out property <bool> codex-available: false;
     in-out property <string> work-timing: "";
     in-out property <[SessionItem]> session-items: [];
     in-out property <string> current-session-id: "";
@@ -130,8 +131,8 @@ export component AppWindow inherits Window {
                 HorizontalBox {
                     spacing: 8px;
                     new-folder := LineEdit { placeholder-text: "Working folder (optional)"; }
-                    Button { text: "New conversation"; enabled: codex-status == "Codex is ready"; clicked => { new-conversation(model.current-value, effort.text, new-folder.text); new-folder.text = ""; } }
-                    Button { text: "Refresh"; enabled: codex-status == "Codex is ready"; clicked => { refresh-sessions(); } }
+                    Button { text: "New conversation"; enabled: codex-available; clicked => { new-conversation(model.current-value, effort.text, new-folder.text); new-folder.text = ""; } }
+                    Button { text: "Refresh"; enabled: codex-available; clicked => { refresh-sessions(); } }
                     Button { text: showing-archived ? "Active" : "Archived"; clicked => { toggle-archived(); } }
                     Button { text: "Pin / unpin"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
                     Button { text: showing-archived ? "Restore" : "Archive"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
@@ -197,11 +198,11 @@ export component AppWindow inherits Window {
                     spacing: 8px;
                     prompt := LineEdit {
                         placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
-                        enabled: codex-status == "Codex is ready" || codex-status == "Codex is working...";
+                        enabled: codex-available;
                     }
                     Button {
                         text: "Send";
-                        enabled: (codex-status == "Codex is ready" || codex-status == "Codex is working...") && prompt.text != "";
+                        enabled: codex-available && prompt.text != "";
                         clicked => { send-prompt(prompt.text, model.current-value, effort.text); }
                     }
                     if codex-status == "Codex is working..." : Button {
@@ -214,7 +215,7 @@ export component AppWindow inherits Window {
                     delay := LineEdit { placeholder-text: "Delay seconds"; }
                     Button {
                         text: "Schedule";
-                        enabled: codex-status == "Codex is ready" && prompt.text != "" && delay.text != "";
+                        enabled: codex-available && prompt.text != "" && delay.text != "";
                         clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); prompt.text = ""; delay.text = ""; }
                     }
                 }

@@ -1811,11 +1811,23 @@ fn load_relay_config() -> Result<RelayConfig, Box<dyn std::error::Error + Send +
 
 fn set_codex_status(weak: &slint::Weak<AppWindow>, status: String, transcript: Option<String>) {
     let _ = weak.upgrade_in_event_loop(move |window| {
+        let available = codex_status_available(&status, window.get_codex_available());
+        window.set_codex_available(available);
         window.set_codex_status(status.into());
         if let Some(transcript) = transcript {
             set_transcript_blocks(&window, &transcript);
         }
     });
+}
+
+fn codex_status_available(status: &str, previous: bool) -> bool {
+    if status == "Codex is disconnected" || status.starts_with("Connecting to Codex") {
+        false
+    } else if status.starts_with("Codex error:") {
+        previous
+    } else {
+        true
+    }
 }
 
 fn set_transcript(weak: &slint::Weak<AppWindow>, transcript: String) {
@@ -2425,8 +2437,8 @@ fn flush_block(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_queue_usage_exhausted, decode_data_image, image_from_bytes, markdown_blocks,
-        parse_session_key, schedule_pending,
+        can_queue_usage_exhausted, codex_status_available, decode_data_image, image_from_bytes,
+        markdown_blocks, parse_session_key, schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
@@ -2479,6 +2491,18 @@ mod tests {
         assert!(can_queue_usage_exhausted(Some("job-1"), None));
         assert!(can_queue_usage_exhausted(None, Some("thread-1")));
         assert!(!can_queue_usage_exhausted(None, None));
+    }
+
+    #[test]
+    fn provider_errors_preserve_composer_when_the_session_is_connected() {
+        assert!(codex_status_available("Codex is ready", false));
+        assert!(codex_status_available("Codex error: turn failed", true));
+        assert!(!codex_status_available(
+            "Codex error: connect failed",
+            false
+        ));
+        assert!(!codex_status_available("Connecting to Codex...", true));
+        assert!(!codex_status_available("Codex is disconnected", true));
     }
 
     #[test]
