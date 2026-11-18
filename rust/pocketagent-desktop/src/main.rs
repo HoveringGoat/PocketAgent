@@ -838,7 +838,7 @@ fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, host_id: S
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_relay_running(true);
         window.set_relay_status("Relay is running".into());
-        window.set_relay_endpoint(format!("ws://{endpoint}  •  host {host_id}").into());
+        window.set_relay_endpoint(format!("ws://{endpoint}  |  host {host_id}").into());
     });
 }
 
@@ -889,7 +889,7 @@ fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
             Event::Start(Tag::Item) => {
                 flush_block(&mut blocks, &mut current, &mut kind);
                 kind = "bullet".into();
-                current.push_str("• ");
+                current.push_str("* ");
                 list_depth += 1;
             }
             Event::End(TagEnd::Item) => {
@@ -906,7 +906,7 @@ fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
             Event::Rule => {
                 flush_block(&mut blocks, &mut current, &mut kind);
                 blocks.push(ParsedBlock {
-                    text: "────────".into(),
+                    text: "---".into(),
                     kind: "rule".into(),
                 });
             }
@@ -943,8 +943,8 @@ mod tests {
     fn markdown_blocks_preserve_headings_bullets_and_code() {
         let blocks = markdown_blocks("# Heading\n\n- one\n- two\n\n```rust\nlet x = 1;\n```");
         assert_eq!(blocks[0].kind, "heading");
-        assert_eq!(blocks[1].text, "• one");
-        assert_eq!(blocks[2].text, "• two");
+        assert_eq!(blocks[1].text, "* one");
+        assert_eq!(blocks[2].text, "* two");
         assert_eq!(blocks[3].kind, "code");
     }
 }
