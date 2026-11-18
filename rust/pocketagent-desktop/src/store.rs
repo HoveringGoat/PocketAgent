@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -60,7 +60,12 @@ impl DesktopStore {
 
     pub fn load() -> Self {
         let path = Self::path();
-        let mut store: Self = fs::read_to_string(path)
+        let source = if path.exists() {
+            path.clone()
+        } else {
+            backup_path(&path)
+        };
+        let mut store: Self = fs::read_to_string(source)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
@@ -77,18 +82,46 @@ impl DesktopStore {
     }
 
     pub fn save(&self) -> io::Result<()> {
-        let path = Self::path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        fs::write(
-            &temporary,
-            serde_json::to_vec_pretty(self).map_err(io::Error::other)?,
-        )?;
-        fs::rename(temporary, path)
+        save_to_path(&Self::path(), self)
     }
+}
 
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+fn save_to_path(path: &Path, store: &DesktopStore) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(store).map_err(io::Error::other)?,
+    )?;
+    let backup = backup_path(path);
+    if backup.exists() {
+        fs::remove_file(&backup)?;
+    }
+    if path.exists() {
+        fs::rename(path, &backup)?;
+    }
+    match fs::rename(&temporary, path) {
+        Ok(()) => {
+            let _ = fs::remove_file(backup);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(path);
+            if backup.exists() {
+                let _ = fs::rename(&backup, path);
+            }
+            Err(error)
+        }
+    }
+}
+
+impl DesktopStore {
     pub fn merge_threads<I>(&mut self, threads: I)
     where
         I: IntoIterator<Item = (String, String)>,
@@ -288,6 +321,26 @@ mod tests {
         };
         store.merge_threads([(String::from("thread-1"), String::from("Foldered"))]);
         assert_eq!(store.conversations[0].working_directory, "C:/work/default");
+    }
+
+    #[test]
+    fn repeated_saves_replace_the_store_and_remove_the_backup() {
+        let root = std::env::temp_dir().join(format!("pocketagent-store-{}", now_unix()));
+        let path = root.join("desktop.json");
+        let mut store = DesktopStore {
+            repository_path: "C:/first".into(),
+            ..Default::default()
+        };
+        save_to_path(&path, &store).expect("first save should succeed");
+        store.repository_path = "C:/second".into();
+        save_to_path(&path, &store).expect("replacement save should succeed");
+        let loaded: DesktopStore = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("store should remain readable"),
+        )
+        .expect("store JSON should remain valid");
+        assert_eq!(loaded.repository_path, "C:/second");
+        assert!(!backup_path(&path).exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
