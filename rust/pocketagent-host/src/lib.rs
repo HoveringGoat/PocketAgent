@@ -34,7 +34,7 @@ pub struct HostConversation {
     pub pinned: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum HostAction {
     Send {
         conversation_id: String,
@@ -51,6 +51,10 @@ pub enum HostAction {
     Rename {
         conversation_id: String,
         title: String,
+    },
+    Read {
+        conversation_id: String,
+        response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     },
 }
 
@@ -463,6 +467,8 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/session", get(session))
         .route("/api/devices/pair", post(pair))
         .route("/api/conversations", get(list_conversations))
+        .route("/api/conversations/{id}", get(get_conversation))
+        .route("/api/conversations/{id}/history", get(get_history))
         .route("/api/conversations/{id}/messages", post(send_message))
         .route("/api/conversations/{id}/archive", post(archive))
         .route("/api/conversations/{id}/restore", post(restore))
@@ -554,6 +560,67 @@ async fn send_message(
         StatusCode::ACCEPTED.into_response()
     } else {
         StatusCode::SERVICE_UNAVAILABLE.into_response()
+    }
+}
+
+async fn get_conversation(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    read_conversation(state, headers, id, false).await
+}
+
+async fn get_history(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    read_conversation(state, headers, id, true).await
+}
+
+async fn read_conversation(
+    state: HostHttpState,
+    headers: HeaderMap,
+    id: String,
+    history_only: bool,
+) -> axum::response::Response {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if state
+        .actions
+        .send(HostAction::Read {
+            conversation_id: id,
+            response: sender,
+        })
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await {
+        Ok(Ok(Ok(snapshot))) => {
+            if history_only {
+                let items = snapshot
+                    .get("items")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                Json(serde_json::json!({
+                    "items": items,
+                    "hasMore": false,
+                    "before": null
+                }))
+                .into_response()
+            } else {
+                Json(snapshot).into_response()
+            }
+        }
+        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
 
@@ -812,6 +879,28 @@ mod tests {
         registry
             .grant_conversation("thread-1", identity.id)
             .unwrap();
+        let read_app = router(state.clone());
+        let read_token = token.clone();
+        let read_task = tokio::spawn(async move {
+            read_app
+                .oneshot(
+                    axum::http::Request::get("/api/conversations/thread-1")
+                        .header("authorization", format!("Bearer {read_token}"))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        let read_action = received.recv().await.unwrap();
+        if let HostAction::Read { response, .. } = read_action {
+            response
+                .send(Ok(serde_json::json!({ "id": "thread-1", "items": [] })))
+                .unwrap();
+        } else {
+            panic!("expected read action");
+        }
+        assert_eq!(read_task.await.unwrap().status(), StatusCode::OK);
         let accepted = app
             .oneshot(
                 axum::http::Request::post("/api/conversations/thread-1/messages")

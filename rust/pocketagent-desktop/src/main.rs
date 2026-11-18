@@ -324,7 +324,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Clone)]
 enum CodexCommand {
     Connect {
         repository: String,
@@ -755,6 +754,74 @@ fn start_codex_worker(
                                 sync_host_conversations(&host_conversations, &store);
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
                             }
+                        }
+                        HostAction::Read {
+                            conversation_id,
+                            response,
+                        } => {
+                            let result = async {
+                                let Some(current) = session.as_mut() else {
+                                    return Err("Codex is disconnected.".to_owned());
+                                };
+                                if selected_id.as_deref() != Some(conversation_id.as_str()) {
+                                    let model = store
+                                        .conversations
+                                        .iter()
+                                        .find(|conversation| conversation.id == conversation_id)
+                                        .and_then(|conversation| conversation.model.clone());
+                                    current
+                                        .resume_thread(&conversation_id, model.as_deref())
+                                        .await
+                                        .map_err(|error| error.to_string())?;
+                                    selected_id = Some(conversation_id.clone());
+                                }
+                                let history = current
+                                    .current_thread_text()
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                                let Some(record) = store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == conversation_id)
+                                else {
+                                    return Err("Conversation not found.".to_owned());
+                                };
+                                Ok(serde_json::json!({
+                                    "id": record.id,
+                                    "title": record.title,
+                                    "status": "idle",
+                                    "activeTurnId": null,
+                                    "items": [{
+                                        "id": format!("history-{}", record.id),
+                                        "type": "assistant",
+                                        "text": history,
+                                        "detail": "",
+                                        "status": "completed"
+                                    }],
+                                    "requests": [],
+                                    "error": null,
+                                    "repository": std::path::Path::new(&store.repository_path)
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or_default(),
+                                    "workingDirectory": store.repository_path,
+                                    "hostName": std::env::var("COMPUTERNAME").unwrap_or_default(),
+                                    "permissionMode": "default",
+                                    "sandboxMode": null,
+                                    "approvalPolicy": null,
+                                    "activeTurnStartedAt": null,
+                                    "lastWorkDurationMs": null,
+                                    "model": record.model,
+                                    "archived": record.archived,
+                                    "reasoningEffort": record.reasoning_effort,
+                                    "historyTruncated": false,
+                                    "historyBefore": null,
+                                    "pinned": record.pinned,
+                                    "lastMessageAt": null
+                                }))
+                            }
+                            .await;
+                            let _ = response.send(result);
                         }
                     },
                     CodexCommand::Stop => {}
