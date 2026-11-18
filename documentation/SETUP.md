@@ -103,6 +103,8 @@ Write a prompt, then choose the timer button beside Send in Android or **Schedul
 Schedules are persisted on the desktop and survive restarts. The desktop must be awake and the server running. Missed deadlines are reconsidered when it runs again; there is no wake timer or cloud execution. Revoking/expiring a device cancels its pending schedules. Submitted means Codex acknowledged receipt, not successful task completion. An uncertain dispatch is never replayed after restart: review history and explicitly create another message if needed.
 
 
+After a connected provider turn fails, the Rust desktop keeps the composer available so the user can inspect the error and explicitly retry; connection and disconnect failures still disable provider actions. Revoking a device refreshes the access checklist for the conversation currently selected instead of clearing that conversation context.
+
 ## Build from source
 
 Use .NET SDK 10.0.404, JDK 17/21, Android SDK 34/build-tools 35.0.0 and the pinned Gradle wrapper. Node is test/format tooling only. Native QR uses QRCoder 1.8.0 on desktop and ZXing core 3.5.4 with Android camera2; no WebView, external scanner service or cloud image processing.
