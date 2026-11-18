@@ -53,6 +53,7 @@
 - Prefer solution- or project-level build commands over low-level compiler invocations unless the user asks for something narrower.
 - Do not run full test suites unless the user explicitly asks for that. Hand test verification back to the user when appropriate.
 - For bug fixes, write a correct regression first, observe its failure before changing behavior, then observe it pass. Use focused tests.
+- For every UI change, verify the supported minimum window size and at least one larger/resized layout; no control, label, tab, icon, or status surface may be clipped, overlap another element, or become unreachable. Exercise long labels and overflow paths, inspect screenshots or equivalent visual evidence for each touched page, and treat any visible clipping or overlap as a release blocker.
 - Keep linting, formatting, and warnings clean on touched files before handoff.
 - Record validation commands that were run and call out environment limitations that affect verification.
 - Increment the patch once per completed change set after the initial 0.1.0 milestone.
