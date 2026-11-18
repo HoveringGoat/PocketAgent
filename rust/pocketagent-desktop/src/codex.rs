@@ -125,6 +125,8 @@ impl CodexSession {
         } else {
             Command::new(executable)
         };
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
         let mut child = command
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(repository)
@@ -682,24 +684,9 @@ fn render_item(item: &Value) -> Option<String> {
                     })
             }),
         "agentMessage" => item.get("text").and_then(Value::as_str).map(str::to_owned),
-        "commandExecution" => Some(format_item(
-            "Command",
-            item.get("command").and_then(Value::as_str),
-            item.get("aggregatedOutput").and_then(Value::as_str),
-        )),
-        "fileChange" => item
-            .get("changes")
-            .and_then(|changes| serde_json::to_string_pretty(changes).ok())
-            .map(|changes| format!("File changes\n```json\n{changes}\n```")),
-        "mcpToolCall" => Some(format!(
-            "Tool: {}/{}",
-            item.get("server").and_then(Value::as_str).unwrap_or("MCP"),
-            item.get("tool").and_then(Value::as_str).unwrap_or("call")
-        )),
-        "webSearch" => item
-            .get("query")
-            .and_then(Value::as_str)
-            .map(|query| format!("Web search: {query}")),
+        // Provider plumbing stays out of the conversation transcript. Approval
+        // cards are still surfaced through InteractionState in the UI.
+        "commandExecution" | "fileChange" | "mcpToolCall" | "webSearch" => None,
         "imageView" => image_view_source(item).map(|source| format!("![Image]({source})")),
         _ => None,
     }
@@ -719,17 +706,6 @@ fn value_as_image_source(value: Option<&Value>) -> Option<String> {
             .find_map(|field| value_as_image_source(object.get(field))),
         _ => None,
     }
-}
-
-fn format_item(label: &str, first: Option<&str>, second: Option<&str>) -> String {
-    [
-        first.map(|value| format!("{label}: {value}")),
-        second.map(str::to_owned),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join("\n")
 }
 
 fn rate_limit_status(result: &Value) -> UsageStatus {
@@ -979,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_text_renders_content_and_tool_items() {
+    fn thread_text_filters_provider_activity_to_conversation_items() {
         let text = thread_text(&json!({
             "thread": { "items": [
                 { "type": "userMessage", "content": [{ "type": "text", "text": "hello" }] },
@@ -988,7 +964,7 @@ mod tests {
             ] }
         }));
         assert!(text.contains("hello"));
-        assert!(text.contains("Command: cargo test"));
+        assert!(!text.contains("Command: cargo test"));
         assert!(text.contains("done"));
     }
 

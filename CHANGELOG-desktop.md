@@ -4,6 +4,13 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.4
+
+- Match the .NET Codex executable discovery order and launch the Windows desktop/provider processes without console windows.
+- Replace Rust text-only controls with accessible icon actions and clear filled-green selected/primary states.
+- Rework the Sessions layout to keep tabs scrollable and visible, place machine/directory and usage context consistently, move model/reasoning selection above the composer, and filter provider activity out of conversation history.
+- Add focused regressions for Codex resolution and transcript filtering, plus resize/overflow visual verification for the packaged desktop shell.
+
 ### Rust desktop preview 0.1.3
 
 - Add selectable session tabs with visible pin state, a dedicated usage line, and folder/model choices when creating a conversation.

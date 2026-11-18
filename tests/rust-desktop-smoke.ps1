@@ -27,6 +27,28 @@ try {
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Text)
 
+    function Assert-VisibleControls([string]$sizeLabel) {
+        $windowRect = $window.Current.BoundingRectangle
+        $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+        foreach ($button in $buttons) {
+            $rect = $button.Current.BoundingRectangle
+            if ($rect.Width -le 0 -or $rect.Height -le 0 -or
+                $rect.Left -lt $windowRect.Left -or $rect.Top -lt $windowRect.Top -or
+                ($rect.Left + $rect.Width) -gt ($windowRect.Left + $windowRect.Width) -or
+                ($rect.Top + $rect.Height) -gt ($windowRect.Top + $windowRect.Height)) {
+                throw "Rust desktop control '$($button.Current.Name)' is clipped or outside the window at $sizeLabel."
+            }
+        }
+    }
+
+    $transform = $window.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
+    $transform.Resize(800, 580)
+    Start-Sleep -Milliseconds 300
+    Assert-VisibleControls '800x580'
+    $transform.Resize(1150, 820)
+    Start-Sleep -Milliseconds 300
+    Assert-VisibleControls '1150x820'
+
     if ($RequireCodex) {
         $codexReady = $false
         for ($attempt = 0; $attempt -lt 40 -and !$codexReady; $attempt++) {
@@ -48,6 +70,7 @@ try {
     }
     $settings.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 250
+    Assert-VisibleControls 'Settings'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $start = $buttons | Where-Object { $_.Current.Name -eq 'Start relay' }
     if ($null -eq $start) { throw 'Start relay button was not exposed on Settings.' }
@@ -69,7 +92,12 @@ try {
 
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $stop = $buttons | Where-Object { $_.Current.Name -eq 'Stop' -and $_.Current.IsEnabled } | Select-Object -First 1
-    if ($null -eq $stop) { throw 'Stop button was not exposed while running.' }
+    if ($null -eq $stop) {
+        $visibleNames = ($buttons | ForEach-Object { $_.Current.Name }) -join ', '
+        $all = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        $visibleElements = ($all | ForEach-Object { "$($_.Current.ControlType.ProgrammaticName)=$($_.Current.Name)" }) -join ', '
+        throw "Stop button was not exposed while running. Visible buttons: $visibleNames. Elements: $visibleElements"
+    }
     $stop.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 400
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
@@ -78,6 +106,7 @@ try {
     $devices = $buttons | Where-Object { $_.Current.Name -eq 'Devices' }
     $devices.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 250
+    Assert-VisibleControls 'Devices'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
     if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
@@ -103,6 +132,7 @@ try {
 
     ($buttons | Where-Object { $_.Current.Name -eq 'Sessions' }).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 250
+    Assert-VisibleControls 'Sessions'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $editCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,

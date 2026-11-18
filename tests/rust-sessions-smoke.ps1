@@ -41,30 +41,33 @@ try {
     (Await-Audit { Find-Audit $label } $label).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   }
   $null=Await-Audit { Find-Audit 'Codex is ready' } 'fixture readiness'
-  Click-Audit '+'
-  Click-Audit 'Browse folders'
-  Click-Audit 'Create conversation'
+  Click-Audit 'New conversation'
+  Click-Audit 'Browse'
+  Click-Audit 'Create'
   $null=Await-Audit { Find-Audit 'New conversation ready' } 'new fixture conversation'
-  Click-Audit 'Pin / unpin'
+  Click-Audit 'Pin conversation'
   $null=Await-Audit { Find-Audit 'Pinned*PocketAgent' } 'pinned tab'
-  Click-Audit 'Queue'
+  Click-Audit 'Review scheduled messages'
   $null=Await-Audit { Find-Audit 'Pending messages for this conversation' } 'pending job view'
   # The composer is the tall multiline edit. The delay is the last single-line edit.
   $editCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit)
   $inputs=@($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,$editCondition) | Sort-Object { $_.Current.BoundingRectangle.Top },{ $_.Current.BoundingRectangle.Left })
   $composer=($inputs | Sort-Object { $_.Current.BoundingRectangle.Height } -Descending | Select-Object -First 1).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-  $delay=($inputs | Select-Object -Last 1).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+  $delay=($inputs | Where-Object { $_.Current.BoundingRectangle.Height -lt 80 } | Sort-Object { $_.Current.BoundingRectangle.Top },{ $_.Current.BoundingRectangle.Left } | Select-Object -Last 1).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   $composer.SetValue('queued fixture text')
   $delay.SetValue('bad')
-  Click-Audit 'Timer'
+  Click-Audit 'Schedule message'
   $null=Await-Audit { Find-Audit 'Codex error:*Schedule delay must be seconds*' } 'rejected schedule'
-  if ($composer.Current.Value -ne 'queued fixture text') { throw 'Rejected schedule lost its draft' }
+  if ($composer.Current.Value -ne 'queued fixture text') {
+    $editInfo = ($inputs | ForEach-Object { "$($_.Current.Name)=$($_.Current.Value) h=$($_.Current.BoundingRectangle.Height)" }) -join ', '
+    throw "Rejected schedule lost its draft: '$($composer.Current.Value)'. Edits: $editInfo"
+  }
   $delay.SetValue('1800')
-  Click-Audit 'Timer'
-  $null=Await-Audit { Find-Audit 'Cancel message' } 'queued message'
+  Click-Audit 'Schedule message'
+  $null=Await-Audit { Find-Audit 'Cancel scheduled message' } 'queued message'
   if ($composer.Current.Value) { throw 'Persisted schedule did not clear the draft' }
-  Click-Audit 'Cancel message'
-  $null=Await-Audit { -not (Find-Audit 'Cancel message') } 'canceled pending job'
+  Click-Audit 'Cancel scheduled message'
+  $null=Await-Audit { -not (Find-Audit 'Cancel scheduled message') } 'canceled pending job'
   $composer.SetValue('hold')
   Click-Audit 'Send'
   $null=Await-Audit { -not $composer.Current.Value } 'accepted send acknowledgement'

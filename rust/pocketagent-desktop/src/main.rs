@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 mod codex;
 mod diagnostics;
 mod store;
@@ -1881,10 +1883,77 @@ fn default_codex_executable() -> String {
     {
         return executable;
     }
+    resolve_codex_from_paths(
+        env::var_os("APPDATA").map(PathBuf::from),
+        env::var_os("USERPROFILE").map(PathBuf::from),
+        env::var("PATH").ok().as_deref(),
+    )
+}
+
+fn resolve_codex_from_paths(
+    app_data: Option<PathBuf>,
+    user_profile: Option<PathBuf>,
+    path_value: Option<&str>,
+) -> String {
+    let extension_root = user_profile
+        .as_deref()
+        .map(|profile| profile.join(".vscode/extensions"));
+    let architecture = if cfg!(target_arch = "aarch64") {
+        "windows-aarch64"
+    } else {
+        "windows-x86_64"
+    };
+    if let Some(root) = extension_root.filter(|path| path.is_dir()) {
+        let mut candidates = Vec::new();
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(version) = name.strip_prefix("openai.chatgpt-") else {
+                    continue;
+                };
+                if version.contains("insider") {
+                    continue;
+                }
+                let version = version.split('-').next().and_then(|value| {
+                    let mut parts = value.split('.');
+                    Some((
+                        parts.next()?.parse::<u32>().ok()?,
+                        parts.next()?.parse::<u32>().ok()?,
+                        parts.next()?.parse::<u32>().ok()?,
+                    ))
+                });
+                let Some(version) = version else { continue };
+                let binary = entry.path().join(format!("bin/{architecture}/codex.exe"));
+                if binary.is_file() {
+                    candidates.push((version, binary));
+                }
+            }
+        }
+        candidates.sort_by_key(|left| std::cmp::Reverse(left.0));
+        if let Some((_, binary)) = candidates.into_iter().next() {
+            return binary.to_string_lossy().into_owned();
+        }
+    }
+
+    for directory in std::env::split_paths(std::ffi::OsStr::new(path_value.unwrap_or_default())) {
+        let binary = directory.join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        if binary.is_file() {
+            return binary.to_string_lossy().into_owned();
+        }
+        if cfg!(windows) {
+            let npm = directory.join(
+                "node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+            );
+            if npm.is_file() {
+                return npm.to_string_lossy().into_owned();
+            }
+        }
+    }
+
     if cfg!(windows)
-        && let Ok(app_data) = env::var("APPDATA")
+        && let Some(app_data) = app_data
     {
-        let wrapper = PathBuf::from(app_data).join("npm/codex.ps1");
+        let wrapper = app_data.join("npm/codex.ps1");
         if wrapper.is_file() {
             return wrapper.to_string_lossy().into_owned();
         }
@@ -2212,10 +2281,12 @@ fn set_relay_running(weak: &slint::Weak<AppWindow>, endpoint: String, config: &R
         config.client_token,
         config.session_key,
     );
+    let session_key = config.session_key.clone();
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_relay_running(true);
         window.set_relay_status("Relay is running".into());
         window.set_relay_endpoint(format!("ws://{endpoint}").into());
+        window.set_relay_session_key(format!("Session key: {session_key}").into());
         window.set_relay_enrollment(enrollment.into());
     });
 }
@@ -2225,6 +2296,7 @@ fn set_relay_stopped(weak: &slint::Weak<AppWindow>) {
         window.set_relay_running(false);
         window.set_relay_status("Relay is stopped".into());
         window.set_relay_endpoint("No endpoint".into());
+        window.set_relay_session_key("Session key unavailable".into());
         window.set_relay_enrollment("Relay enrollment is not loaded".into());
     });
 }
@@ -2234,6 +2306,7 @@ fn set_relay_error(weak: &slint::Weak<AppWindow>, message: String) {
         window.set_relay_running(false);
         window.set_relay_status(message.into());
         window.set_relay_endpoint("No endpoint".into());
+        window.set_relay_session_key("Session key unavailable".into());
         window.set_relay_enrollment("Relay enrollment is not loaded".into());
     });
 }
@@ -2614,7 +2687,7 @@ fn flush_block(
 mod tests {
     use super::{
         can_queue_usage_exhausted, codex_status_available, decode_data_image, image_from_bytes,
-        markdown_blocks, parse_session_key, schedule_pending,
+        markdown_blocks, parse_session_key, resolve_codex_from_paths, schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
@@ -2626,6 +2699,32 @@ mod tests {
         assert_eq!(blocks[1].text, "* one");
         assert_eq!(blocks[2].text, "* two");
         assert_eq!(blocks[3].kind, "code");
+    }
+
+    #[test]
+    fn codex_resolution_prefers_latest_vscode_native_binary_over_npm_wrapper() {
+        let root = std::env::temp_dir().join(format!(
+            "pocketagent-codex-resolver-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let extensions = root.join("profile/.vscode/extensions");
+        let older = extensions.join("openai.chatgpt-1.2.3/bin/windows-x86_64/codex.exe");
+        let newer = extensions.join("openai.chatgpt-2.4.1/bin/windows-x86_64/codex.exe");
+        let npm = root.join("appdata/npm/codex.ps1");
+        std::fs::create_dir_all(older.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(newer.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(npm.parent().unwrap()).unwrap();
+        std::fs::write(&older, b"").unwrap();
+        std::fs::write(&newer, b"").unwrap();
+        std::fs::write(&npm, b"").unwrap();
+
+        let resolved = resolve_codex_from_paths(
+            Some(root.join("appdata")),
+            Some(root.join("profile")),
+            Some(""),
+        );
+        assert_eq!(std::path::PathBuf::from(resolved), newer);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
