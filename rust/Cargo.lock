@@ -2529,6 +2529,9 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
@@ -3779,7 +3782,9 @@ name = "pocketagent-desktop"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
+ "image",
  "pocketagent-crypto",
  "pocketagent-host",
  "pocketagent-protocol",

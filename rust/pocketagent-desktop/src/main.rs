@@ -2,6 +2,7 @@ mod codex;
 mod diagnostics;
 mod store;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use codex::{
     CodexSession, InteractionState, PromptControl, PromptRequest, SharedInteraction, SteerRequest,
 };
@@ -1809,13 +1810,14 @@ fn set_transcript(weak: &slint::Weak<AppWindow>, transcript: String) {
 }
 
 fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
+    let working_directory = window.get_current_working_directory().to_string();
     let blocks = markdown_blocks(markdown)
         .into_iter()
         .map(|block| {
             let image = block
                 .image_path
                 .as_deref()
-                .and_then(image_from_markdown_path);
+                .and_then(|path| image_from_markdown_path(path, &working_directory));
             MarkdownBlock {
                 text: block.text.into(),
                 kind: block.kind.into(),
@@ -1827,7 +1829,10 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
     window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
 }
 
-fn image_from_markdown_path(path: &str) -> Option<slint::Image> {
+fn image_from_markdown_path(path: &str, working_directory: &str) -> Option<slint::Image> {
+    if let Some(bytes) = decode_data_image(path) {
+        return image_from_bytes(&bytes);
+    }
     let path = if let Some(path) = path.strip_prefix("file:///") {
         if path.as_bytes().get(1) == Some(&b':') {
             path.to_owned()
@@ -1837,7 +1842,36 @@ fn image_from_markdown_path(path: &str) -> Option<slint::Image> {
     } else {
         path.strip_prefix("file://").unwrap_or(path).to_owned()
     };
-    slint::Image::load_from_path(std::path::Path::new(&path)).ok()
+    let path = std::path::Path::new(&path);
+    let path = if path.is_absolute() || working_directory.trim().is_empty() {
+        path.to_owned()
+    } else {
+        std::path::Path::new(working_directory).join(path)
+    };
+    slint::Image::load_from_path(&path).ok()
+}
+
+fn decode_data_image(source: &str) -> Option<Vec<u8>> {
+    let (metadata, payload) = source.strip_prefix("data:")?.split_once(',')?;
+    if !metadata
+        .split(';')
+        .any(|part| part.eq_ignore_ascii_case("base64"))
+    {
+        return None;
+    }
+    BASE64
+        .decode(payload.replace(['\r', '\n', ' ', '\t'], ""))
+        .ok()
+}
+
+fn image_from_bytes(bytes: &[u8]) -> Option<slint::Image> {
+    let decoded = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        decoded.as_raw(),
+        decoded.width(),
+        decoded.height(),
+    );
+    Some(slint::Image::from_rgba8(buffer))
 }
 
 fn set_sessions(weak: &slint::Weak<AppWindow>, sessions: Vec<(String, String)>) {
@@ -2358,7 +2392,10 @@ fn flush_block(
 
 #[cfg(test)]
 mod tests {
-    use super::{can_queue_usage_exhausted, markdown_blocks, parse_session_key, schedule_pending};
+    use super::{
+        can_queue_usage_exhausted, decode_data_image, image_from_bytes, markdown_blocks,
+        parse_session_key, schedule_pending,
+    };
     use crate::store::{DesktopStore, ScheduledMessage};
     use uuid::Uuid;
 
@@ -2410,5 +2447,12 @@ mod tests {
         assert!(can_queue_usage_exhausted(Some("job-1"), None));
         assert!(can_queue_usage_exhausted(None, Some("thread-1")));
         assert!(!can_queue_usage_exhausted(None, None));
+    }
+
+    #[test]
+    fn data_uri_images_are_decoded_for_the_native_renderer() {
+        let source = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+        let bytes = decode_data_image(source).expect("base64 image data should decode");
+        assert!(image_from_bytes(&bytes).is_some());
     }
 }

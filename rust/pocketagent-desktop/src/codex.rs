@@ -678,10 +678,23 @@ fn render_item(item: &Value) -> Option<String> {
             .get("query")
             .and_then(Value::as_str)
             .map(|query| format!("Web search: {query}")),
-        "imageView" => item
-            .get("path")
-            .and_then(Value::as_str)
-            .map(|path| format!("![Image]({path})")),
+        "imageView" => image_view_source(item).map(|source| format!("![Image]({source})")),
+        _ => None,
+    }
+}
+
+fn image_view_source(item: &Value) -> Option<String> {
+    ["path", "url", "uri", "source", "data"]
+        .into_iter()
+        .find_map(|field| value_as_image_source(item.get(field)))
+}
+
+fn value_as_image_source(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Object(object) => ["path", "url", "uri", "data"]
+            .into_iter()
+            .find_map(|field| value_as_image_source(object.get(field))),
         _ => None,
     }
 }
@@ -947,5 +960,11 @@ mod tests {
             ] }
         }));
         assert_eq!(text, "![Image](C:/repo/output.png)");
+        let structured = thread_text(&json!({
+            "thread": { "items": [
+                { "type": "imageView", "source": { "url": "data:image/png;base64,abc" } }
+            ] }
+        }));
+        assert_eq!(structured, "![Image](data:image/png;base64,abc)");
     }
 }
