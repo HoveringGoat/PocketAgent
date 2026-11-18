@@ -12,6 +12,8 @@ Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 if ($LASTEXITCODE -ne 0) { throw 'Rust workspace test gate failed.' }
 & cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
 if ($LASTEXITCODE -ne 0) { throw 'Rust workspace clippy gate failed.' }
+& cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay --quiet -- demo
+if ($LASTEXITCODE -ne 0) { throw 'Rust relay process smoke gate failed.' }
 
 & cargo build --manifest-path rust/Cargo.toml -p pocketagent-desktop --release
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop build failed.' }
