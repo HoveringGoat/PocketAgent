@@ -545,6 +545,7 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/provider/status", get(provider_status))
         .route("/api/models", get(models))
         .route("/api/usage", get(usage))
+        .route("/api/logout", post(logout))
         .route("/api/devices/pair", post(pair))
         .route(
             "/api/conversations",
@@ -617,6 +618,17 @@ async fn usage(State(state): State<HostHttpState>, headers: HeaderMap) -> impl I
         .expect("usage lock should not be poisoned")
         .clone();
     Json(serde_json::json!({ "summary": summary })).into_response()
+}
+
+async fn logout(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    if state.registry.revoke(identity.id) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::UNAUTHORIZED
+    }
 }
 
 async fn pair(
@@ -1420,6 +1432,16 @@ mod tests {
         assert!(
             matches!(received.recv().await.unwrap(), HostAction::Send { conversation_id, text } if conversation_id == "thread-1" && text == "hello")
         );
+        let logout = router(state)
+            .oneshot(
+                axum::http::Request::post("/api/logout")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]

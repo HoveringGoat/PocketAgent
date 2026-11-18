@@ -84,11 +84,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_schedules = Arc::new(std::sync::RwLock::new(Vec::<HostSchedule>::new()));
     let (host_actions, mut host_action_receiver) = mpsc::unbounded_channel::<HostAction>();
     let host_state_registry = host_registry.clone();
+    let host_repository_name = std::path::Path::new(&repository)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_owned();
     let host_state = HostHttpState::new(host_state_registry, host_actions, move |identity| {
         SessionInfo {
             authenticated: identity.is_some(),
             device_name: identity.map(|item| item.name.clone()),
-            repository: None,
+            repository: Some(host_repository_name.clone()),
             host_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into()),
             version: env!("CARGO_PKG_VERSION").into(),
         }
