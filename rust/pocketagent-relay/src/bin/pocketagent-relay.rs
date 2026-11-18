@@ -1,8 +1,12 @@
-use pocketagent_crypto::{SessionKey, open, seal};
+use pocketagent_crypto::SessionKey;
 use pocketagent_protocol::{
-    OpaqueEnvelope, RelayFrame, RelayFrameEnvelope, RelayRequest, RelayResponse,
+    ApplicationRequest, ApplicationResponse, OpaqueEnvelope, RelayFrame, RelayFrameEnvelope,
+    RelayRequest, RelayResponse,
 };
 use pocketagent_relay::RelayNode;
+use pocketagent_relay::application::{
+    decode_request, decode_response, encode_request, encode_response,
+};
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportClient, RelayTransportServer};
 use std::{env, error::Error, fs, io, path::Path};
@@ -207,12 +211,14 @@ async fn run_demo() -> Result<(), Box<dyn Error>> {
     println!("host and client authenticated");
 
     let key = SessionKey::random();
-    let request = RelayRequest {
-        request_id: Uuid::new_v4(),
-        target_host: host_id,
-        device_id: client_id,
-        envelope: seal(&key, b"demo/request", b"hello from client"),
-    };
+    let request_id = Uuid::new_v4();
+    let request = encode_request(
+        &key,
+        host_id,
+        client_id,
+        request_id,
+        &ApplicationRequest::new("POST", "/api/session", b"hello from client".to_vec()),
+    )?;
     client
         .send_frame(RelayFrameEnvelope::new(RelayFrame::ClientRequest(
             request.clone(),
@@ -222,27 +228,31 @@ async fn run_demo() -> Result<(), Box<dyn Error>> {
     let RelayFrame::ClientRequest(received_request) = received.frame else {
         return Err(io::Error::other("relay returned an unexpected request frame").into());
     };
-    if open(&key, b"demo/request", &received_request.envelope)? != b"hello from client" {
-        return Err(io::Error::other("request payload failed decryption").into());
+    let decoded_request = decode_request(&key, host_id, &received_request)?;
+    if decoded_request.path != "/api/session" || decoded_request.body != b"hello from client" {
+        return Err(io::Error::other("application request failed decryption").into());
     }
 
-    let response = RelayResponse {
-        request_id: request.request_id,
-        target_host: host_id,
-        envelope: seal(&key, b"demo/response", b"hello from host"),
-    };
+    let response = encode_response(
+        &key,
+        host_id,
+        client_id,
+        request_id,
+        &ApplicationResponse::new(200, "text/plain", b"hello from host".to_vec()),
+    )?;
     host.send_frame(RelayFrameEnvelope::new(RelayFrame::HostResponse(response)))
         .await?;
     let received = client.recv_frame().await?;
     let RelayFrame::HostResponse(received_response) = received.frame else {
         return Err(io::Error::other("relay returned an unexpected response frame").into());
     };
-    if open(&key, b"demo/response", &received_response.envelope)? != b"hello from host" {
-        return Err(io::Error::other("response payload failed decryption").into());
+    let decoded_response = decode_response(&key, host_id, client_id, &received_response)?;
+    if decoded_response.status != 200 || decoded_response.body != b"hello from host" {
+        return Err(io::Error::other("application response failed decryption").into());
     }
 
     let _ = shutdown_tx.send(());
     server_task.await??;
-    println!("relay demo passed: authenticated encrypted request/response round trip");
+    println!("relay demo passed: authenticated encrypted application request/response round trip");
     Ok(())
 }
