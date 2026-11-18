@@ -47,6 +47,18 @@ try {
   $null=Await-Audit { Find-Audit 'New conversation ready' } 'new fixture conversation'
   Click-Audit 'Pin conversation'
   $null=Await-Audit { Find-Audit 'Pinned*PocketAgent' } 'pinned tab'
+  foreach ($actionName in @('New conversation', 'Rename conversation', 'Model and reasoning', 'Pin conversation', 'Archive conversation', 'Show archived conversations')) {
+    $action = Await-Audit { Find-Audit $actionName } $actionName
+    if ($action.Current.BoundingRectangle.Width -gt 70) {
+      throw "Session action '$actionName' is still oversized."
+    }
+  }
+  Click-Audit 'Rename conversation'
+  $null=Await-Audit { Find-Audit 'Save name' } 'rename dialog'
+  Click-Audit 'Cancel rename'
+  Click-Audit 'Model and reasoning'
+  $null=Await-Audit { Find-Audit 'Apply model' } 'model dialog'
+  Click-Audit 'Cancel model changes'
   Click-Audit 'Review scheduled messages'
   $null=Await-Audit { Find-Audit 'Pending messages for this conversation' } 'pending job view'
   # The composer is the tall multiline edit. The delay is the last single-line edit.

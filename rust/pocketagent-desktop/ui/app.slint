@@ -31,6 +31,7 @@ component ActionButton inherits Rectangle {
             (root.icon == "settings" || root.icon == "⚙") ? "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 Z" :
             (root.icon == "power" || root.icon == "\u{23fb}") ? "M12 3 V12 M6 6 A8 8 0 1 0 18 6" :
             (root.icon == "new" || root.icon == "+") ? "M12 3 V21 M3 12 H21" :
+            root.icon == "robot" ? "M8 7 H16 C18.2 7 20 8.8 20 11 V14 C20 16.2 18.2 18 16 18 H8 C5.8 18 4 16.2 4 14 V11 C4 8.8 5.8 7 8 7 Z M12 7 V4 M10 4 H14 M8 12 A1 1 0 1 0 8 12.1 M16 12 A1 1 0 1 0 16 12.1" :
             (root.icon == "pin" || root.icon == "\u{1f4cc}") ? "M16 12 V4 H17 V2 H7 V4 H8 V12 L6 14 V16 H11 V22 H13 V16 H18 V14 Z" :
             (root.icon == "archive" || root.icon == "\u{21a5}" || root.icon == "\u{25a3}" || root.icon == "\u{21c4}") ? "M4 5 L6 3 H18 L20 5 V19 H4 Z M8 13 L12 17 L16 13 M12 9 V17" :
             root.icon == "restore" ? "M4 5 L6 3 H18 L20 5 V19 H4 Z M8 11 L12 7 L16 11 M12 7 V17" :
@@ -213,6 +214,11 @@ export component AppWindow inherits Window {
     in-out property <string> selected-model: "";
     in-out property <string> selected-effort: "";
     in-out property <bool> showing-archived: false;
+    in-out property <bool> rename-dialog-open: false;
+    in-out property <string> rename-dialog-draft: "";
+    in-out property <bool> model-dialog-open: false;
+    in-out property <string> model-dialog-draft: "";
+    in-out property <string> effort-dialog-draft: "";
     in-out property <string> pending-interaction: "";
     in-out property <string> interaction-method: "";
     in-out property <string> interaction-decisions: "";
@@ -338,20 +344,15 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                ActionButton { icon: "new"; label: ""; tooltip: "New conversation"; primary: creating-session; clicked => {
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "new"; label: ""; tooltip: "New conversation"; primary: creating-session; clicked => {
                         creating-session = !creating-session;
                         if creating-session { new-session-folder = repository-path; }
                     } }
-                ActionButton { icon: "pin"; label: ""; tooltip: "Pin conversation"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
-                ActionButton { icon: showing-archived ? "restore" : "archive"; label: ""; tooltip: showing-archived ? "Restore conversation" : "Archive conversation"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
-                ActionButton { icon: "history"; label: ""; tooltip: showing-archived ? "Show active conversations" : "Show archived conversations"; active: showing-archived; clicked => { toggle-archived(); } }
-            }
-
-            if current-session-id != "" : HorizontalBox {
-                height: 34px;
-                spacing: 6px;
-                rename := LineEdit { horizontal-stretch: 1; placeholder-text: "Rename selected conversation"; }
-                ActionButton { icon: "rename"; label: "Rename"; tooltip: "Save conversation name"; clicked => { rename-session(rename.text); } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "rename"; label: ""; tooltip: "Rename conversation"; enabled: current-session-id != ""; clicked => { rename-dialog-draft = ""; rename-dialog-open = true; } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "robot"; label: ""; tooltip: "Model and reasoning"; enabled: current-session-id != ""; clicked => { model-dialog-draft = selected-model; effort-dialog-draft = selected-effort; model-dialog-open = true; } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "pin"; label: ""; tooltip: "Pin conversation"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: showing-archived ? "restore" : "archive"; label: ""; tooltip: showing-archived ? "Restore conversation" : "Archive conversation"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "history"; label: ""; tooltip: showing-archived ? "Show active conversations" : "Show archived conversations"; active: showing-archived; clicked => { toggle-archived(); } }
             }
 
             if creating-session : GroupBox {
@@ -459,8 +460,6 @@ export component AppWindow inherits Window {
             HorizontalBox {
                 height: 38px;
                 spacing: 8px;
-                model := ComboBox { horizontal-stretch: 1; enabled: codex-status != "Codex is working..."; model: model-options; current-value: selected-model; selected(value) => { selected-model = value; } }
-                effort := LineEdit { width: 190px; enabled: codex-status != "Codex is working..."; text: selected-effort; placeholder-text: "Reasoning effort"; edited => { selected-effort = self.text; } }
                 delay := LineEdit { width: 100px; placeholder-text: "Delay (s)"; text <=> schedule-delay; }
                 ActionButton { icon: "\u{2637}"; label: ""; tooltip: "Review scheduled messages"; enabled: current-session-id != ""; active: reviewing-schedules; clicked => { reviewing-schedules = !reviewing-schedules; } }
             }
@@ -476,8 +475,8 @@ export component AppWindow inherits Window {
                 VerticalBox {
                     width: 112px;
                     spacing: 8px;
-                    ActionButton { icon: "\u{27a4}"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, model.current-value, effort.text); } }
-                    ActionButton { icon: "\u{23f1}"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-prompt(prompt.text, model.current-value, effort.text, delay.text); } }
+                    ActionButton { icon: "\u{27a4}"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
+                    ActionButton { icon: "\u{23f1}"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-prompt(prompt.text, selected-model, selected-effort, delay.text); } }
                 }
             }
             if submission-warning != "" : Text { text: submission-warning; color: #f3b8a5; wrap: word-wrap; }
@@ -573,6 +572,68 @@ export component AppWindow inherits Window {
                         ActionButton { icon: "\u{21c4}"; label: "Connect"; tooltip: "Connect this desktop through relay"; enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != ""; clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); } }
                         ActionButton { icon: "\u{00d7}"; label: "Disconnect"; tooltip: "Disconnect outbound host"; enabled: relay-host-connected; clicked => { disconnect-relay-host(); } }
                     }
+                }
+            }
+        }
+    }
+
+    if rename-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 460px) / 2;
+            y: (parent.height - 190px) / 2;
+            width: 460px;
+            height: 190px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Rename conversation"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                LineEdit { text <=> rename-dialog-draft; placeholder-text: "New conversation name"; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "rename"; label: "Save name"; tooltip: "Save name"; enabled: rename-dialog-draft != ""; clicked => { rename-session(rename-dialog-draft); rename-dialog-open = false; } }
+                    ActionButton { icon: "cancel"; label: "Cancel rename"; tooltip: "Cancel rename"; clicked => { rename-dialog-open = false; } }
+                }
+            }
+        }
+    }
+
+    if model-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 520px) / 2;
+            y: (parent.height - 250px) / 2;
+            width: 520px;
+            height: 250px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Model and reasoning"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                Text { text: model-catalog; color: #a7baa7; font-size: 12px; overflow: elide; }
+                ComboBox { model: model-options; current-value: model-dialog-draft; selected(value) => { model-dialog-draft = value; } }
+                LineEdit { text <=> effort-dialog-draft; placeholder-text: "Reasoning effort"; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "approve"; label: "Apply model"; tooltip: "Apply model"; clicked => { selected-model = model-dialog-draft; selected-effort = effort-dialog-draft; model-dialog-open = false; } }
+                    ActionButton { icon: "cancel"; label: "Cancel model changes"; tooltip: "Cancel model changes"; clicked => { model-dialog-open = false; } }
                 }
             }
         }
