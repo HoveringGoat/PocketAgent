@@ -21,7 +21,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use store::{DesktopStore, now_unix};
+use store::{ConversationRecord, DesktopStore, now_unix};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::{
     net::TcpListener,
@@ -109,6 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_usage = host_state.usage.clone();
     let host_provider_status = host_state.provider_status.clone();
     let host_active_turn = host_state.active_turn.clone();
+    let host_snapshots = host_state.snapshots.clone();
     *host_state
         .image_root
         .write()
@@ -134,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             usage: host_usage,
             provider_status: host_provider_status,
             active_turn: host_active_turn,
+            snapshots: host_snapshots,
         },
     );
     let host_commands = codex_commands.clone();
@@ -414,6 +416,7 @@ struct HostSharedState {
     usage: Arc<std::sync::RwLock<String>>,
     provider_status: Arc<std::sync::RwLock<String>>,
     active_turn: Arc<std::sync::RwLock<Option<(String, String)>>>,
+    snapshots: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
 fn start_codex_worker(
@@ -429,6 +432,7 @@ fn start_codex_worker(
         usage: host_usage,
         provider_status: host_provider_status,
         active_turn: host_active_turn,
+        snapshots: host_snapshots,
     } = host;
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let scheduler = sender.clone();
@@ -611,6 +615,18 @@ fn start_codex_worker(
                                     Some(effort),
                                 );
                                 let _ = store.save();
+                                if let Some(record) = store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    let snapshot =
+                                        host_snapshot(record, "", &store.repository_path, None);
+                                    host_snapshots
+                                        .write()
+                                        .expect("snapshot lock should not be poisoned")
+                                        .insert(id.clone(), snapshot);
+                                }
                                 set_transcript(&weak, "New conversation ready".into());
                                 refresh_sessions(current, &weak, &mut store, &host_conversations)
                                     .await;
@@ -667,6 +683,18 @@ fn start_codex_worker(
                                         .then_some(reasoning_effort),
                                 );
                                 set_host_devices(&weak, &host_registry, &id);
+                                if let Some(record) = store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    let snapshot =
+                                        host_snapshot(record, &history, &store.repository_path, None);
+                                    host_snapshots
+                                        .write()
+                                        .expect("snapshot lock should not be poisoned")
+                                        .insert(id.clone(), snapshot);
+                                }
                                 set_transcript(
                                     &weak,
                                     if history.is_empty() {
@@ -855,10 +883,26 @@ fn start_codex_worker(
                                     .ok()
                                     .filter(|text| !text.is_empty())
                                     .unwrap_or(response);
-                                set_codex_status(&weak, "Codex is ready".into(), Some(transcript));
+                                set_codex_status(
+                                    &weak,
+                                    "Codex is ready".into(),
+                                    Some(transcript.clone()),
+                                );
                                 if let Some(id) = selected_id.as_deref() {
                                     store.mark_activity(id, now_unix());
                                     let _ = store.save();
+                                    if let Some(record) = store
+                                        .conversations
+                                        .iter()
+                                        .find(|conversation| conversation.id == id)
+                                    {
+                                        let snapshot =
+                                            host_snapshot(record, &transcript, &store.repository_path, None);
+                                        host_snapshots
+                                            .write()
+                                            .expect("snapshot lock should not be poisoned")
+                                            .insert(id.to_owned(), snapshot);
+                                    }
                                 }
                                 if let Ok(usage) = current.usage_summary().await {
                                     *host_usage
@@ -1032,6 +1076,18 @@ fn start_codex_worker(
                                 set_host_devices(&weak, &host_registry, &id);
                                 set_transcript(&weak, "New conversation ready".into());
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
+                                if let Some(record) = store
+                                    .conversations
+                                    .iter()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    let snapshot =
+                                        host_snapshot(record, "", &store.repository_path, None);
+                                    host_snapshots
+                                        .write()
+                                        .expect("snapshot lock should not be poisoned")
+                                        .insert(id.clone(), snapshot);
+                                }
                                 Ok(serde_json::json!({
                                     "id": id,
                                     "title": title,
@@ -1196,33 +1252,25 @@ fn start_codex_worker(
                                     .as_ref()
                                     .filter(|(active_conversation, _)| active_conversation == &record.id)
                                     .map(|(_, turn_id)| turn_id.clone());
-                                Ok(serde_json::json!({
-                                    "id": record.id,
-                                    "title": record.title,
-                                    "status": if active_turn_id.is_some() { "working" } else { "idle" },
-                                    "activeTurnId": active_turn_id,
-                                    "items": page,
-                                    "requests": [],
-                                    "error": null,
-                                    "repository": std::path::Path::new(&store.repository_path)
-                                        .file_name()
-                                        .and_then(|name| name.to_str())
-                                        .unwrap_or_default(),
-                                    "workingDirectory": record.working_directory,
-                                    "hostName": std::env::var("COMPUTERNAME").unwrap_or_default(),
-                                    "permissionMode": "default",
-                                    "sandboxMode": null,
-                                    "approvalPolicy": null,
-                                    "activeTurnStartedAt": null,
-                                    "lastWorkDurationMs": null,
-                                    "model": record.model,
-                                    "archived": record.archived,
-                                    "reasoningEffort": record.reasoning_effort,
-                                    "historyTruncated": history_truncated,
-                                    "historyBefore": history_before,
-                                    "pinned": record.pinned,
-                                    "lastMessageAt": null
-                                }))
+                                let mut snapshot = host_snapshot(
+                                    record,
+                                    &history,
+                                    &store.repository_path,
+                                    active_turn_id.as_deref(),
+                                );
+                                snapshot["items"] = serde_json::Value::Array(page);
+                                snapshot["historyTruncated"] = serde_json::json!(history_truncated);
+                                snapshot["historyBefore"] = serde_json::json!(history_before);
+                                host_snapshots
+                                    .write()
+                                    .expect("snapshot lock should not be poisoned")
+                                    .insert(record.id.clone(), host_snapshot(
+                                        record,
+                                        &history,
+                                        &store.repository_path,
+                                        active_turn_id.as_deref(),
+                                    ));
+                                Ok(snapshot)
                             }
                             .await;
                             let _ = response.send(result);
@@ -1333,6 +1381,41 @@ fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value>
             })
         })
         .collect()
+}
+
+fn host_snapshot(
+    record: &ConversationRecord,
+    history: &str,
+    repository: &str,
+    active_turn_id: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": record.id,
+        "title": record.title,
+        "status": if active_turn_id.is_some() { "working" } else { "idle" },
+        "activeTurnId": active_turn_id,
+        "items": history_items(&record.id, history),
+        "requests": [],
+        "error": null,
+        "repository": std::path::Path::new(repository)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default(),
+        "workingDirectory": record.working_directory,
+        "hostName": std::env::var("COMPUTERNAME").unwrap_or_default(),
+        "permissionMode": "default",
+        "sandboxMode": null,
+        "approvalPolicy": null,
+        "activeTurnStartedAt": null,
+        "lastWorkDurationMs": null,
+        "model": record.model,
+        "archived": record.archived,
+        "reasoningEffort": record.reasoning_effort,
+        "historyTruncated": false,
+        "historyBefore": null,
+        "pinned": record.pinned,
+        "lastMessageAt": record.last_activity_unix
+    })
 }
 
 fn visible_sessions(store: &DesktopStore, showing_archived: bool) -> Vec<(String, String)> {

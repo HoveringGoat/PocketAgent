@@ -117,6 +117,11 @@ type SessionProvider = dyn Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + S
 pub struct HostHttpState {
     pub registry: DeviceRegistry,
     pub conversations: Arc<RwLock<Vec<HostConversation>>>,
+    /// Last successfully rendered conversation snapshots. These are used only
+    /// to keep authenticated status reads responsive while the provider stream
+    /// is occupied by an active turn; provider-backed history remains the
+    /// source of truth for paginated reads.
+    pub snapshots: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     pub schedules: Arc<RwLock<Vec<HostSchedule>>>,
     pub image_root: Arc<RwLock<String>>,
     pub models: Arc<RwLock<String>>,
@@ -136,6 +141,7 @@ impl HostHttpState {
         Self {
             registry,
             conversations: Arc::new(RwLock::new(Vec::new())),
+            snapshots: Arc::new(RwLock::new(HashMap::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             image_root: Arc::new(RwLock::new(String::new())),
             models: Arc::new(RwLock::new(String::new())),
@@ -1058,6 +1064,28 @@ async fn read_conversation(
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND.into_response();
     }
+    // The desktop worker owns the provider stream and cannot service a second
+    // read request while a turn is running. Serve the last complete snapshot
+    // for the non-paginated conversation endpoint so clients can immediately
+    // observe that work is active instead of timing out behind the turn.
+    if history.is_none()
+        && let Some((active_conversation_id, active_turn_id)) = state
+            .active_turn
+            .read()
+            .expect("active turn lock should not be poisoned")
+            .as_ref()
+        && active_conversation_id == &id
+        && let Some(mut snapshot) = state
+            .snapshots
+            .read()
+            .expect("snapshot lock should not be poisoned")
+            .get(&id)
+            .cloned()
+    {
+        snapshot["status"] = serde_json::json!("working");
+        snapshot["activeTurnId"] = serde_json::json!(active_turn_id);
+        return Json(snapshot).into_response();
+    }
     let (sender, receiver) = tokio::sync::oneshot::channel();
     if state
         .actions
@@ -1578,6 +1606,29 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         *state.active_turn.write().unwrap() = Some(("thread-1".into(), "turn-7".into()));
+        state.snapshots.write().unwrap().insert(
+            "thread-1".into(),
+            serde_json::json!({
+                "id": "thread-1",
+                "status": "idle",
+                "activeTurnId": null,
+                "items": []
+            }),
+        );
+        let live = router(state.clone())
+            .oneshot(
+                axum::http::Request::get("/api/conversations/thread-1")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(live.status(), StatusCode::OK);
+        let live_body = live.into_body().collect().await.unwrap().to_bytes();
+        let live_snapshot: serde_json::Value = serde_json::from_slice(&live_body).unwrap();
+        assert_eq!(live_snapshot["status"], "working");
+        assert_eq!(live_snapshot["activeTurnId"], "turn-7");
         let accepted = app
             .oneshot(
                 axum::http::Request::post("/api/conversations/thread-1/messages")
