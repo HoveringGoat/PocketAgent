@@ -746,14 +746,21 @@ async fn send_message(
     if !state.registry.can_access(&id, identity.id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if let Some(expected_turn_id) = input.expected_turn_id.as_deref() {
-        let active_turn = state
-            .active_turn
-            .read()
-            .expect("active turn lock should not be poisoned");
-        if active_turn.as_ref() != Some(&(id.clone(), expected_turn_id.to_owned())) {
+    let active_turn = state
+        .active_turn
+        .read()
+        .expect("active turn lock should not be poisoned");
+    if let Some((active_conversation_id, active_turn_id)) = active_turn.as_ref() {
+        if active_conversation_id == &id
+            && input.expected_turn_id.as_deref() != Some(active_turn_id.as_str())
+        {
             return StatusCode::CONFLICT.into_response();
         }
+        if active_conversation_id != &id && input.expected_turn_id.is_some() {
+            return StatusCode::CONFLICT.into_response();
+        }
+    } else if input.expected_turn_id.is_some() {
+        return StatusCode::CONFLICT.into_response();
     }
     let Some(text) = input.text.filter(|text| !text.trim().is_empty()) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1603,6 +1610,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let missing_expected = router(state.clone())
+            .oneshot(
+                axum::http::Request::post("/api/conversations/thread-1/messages")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"text": "missing expected turn"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_expected.status(), StatusCode::CONFLICT);
         let logout = router(state)
             .oneshot(
                 axum::http::Request::post("/api/logout")
