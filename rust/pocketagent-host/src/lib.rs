@@ -34,6 +34,15 @@ pub struct HostConversation {
     pub pinned: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostSchedule {
+    pub id: String,
+    pub conversation_id: String,
+    pub text: String,
+    pub due_at: String,
+    pub status: String,
+}
+
 #[derive(Debug)]
 pub enum HostAction {
     Send {
@@ -51,6 +60,16 @@ pub enum HostAction {
     Rename {
         conversation_id: String,
         title: String,
+    },
+    Schedule {
+        conversation_id: String,
+        text: String,
+        due_at_unix: i64,
+        response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    CancelSchedule {
+        schedule_id: String,
+        response: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     Read {
         conversation_id: String,
@@ -73,6 +92,7 @@ type SessionProvider = dyn Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + S
 pub struct HostHttpState {
     pub registry: DeviceRegistry,
     pub conversations: Arc<RwLock<Vec<HostConversation>>>,
+    pub schedules: Arc<RwLock<Vec<HostSchedule>>>,
     pub image_root: Arc<RwLock<String>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
@@ -87,6 +107,7 @@ impl HostHttpState {
         Self {
             registry,
             conversations: Arc::new(RwLock::new(Vec::new())),
+            schedules: Arc::new(RwLock::new(Vec::new())),
             image_root: Arc::new(RwLock::new(String::new())),
             actions,
             session: Arc::new(session),
@@ -468,6 +489,13 @@ struct ImageQuery {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ScheduleInput {
+    text: Option<String>,
+    #[serde(rename = "dueAt")]
+    due_at: Option<String>,
+}
+
 pub fn router(state: HostHttpState) -> Router {
     Router::new()
         .route("/", get(root))
@@ -477,6 +505,12 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/conversations/{id}", get(get_conversation))
         .route("/api/conversations/{id}/history", get(get_history))
         .route("/api/conversations/{id}/images", get(get_image))
+        .route("/api/scheduled", get(list_schedules))
+        .route(
+            "/api/conversations/{id}/scheduled",
+            get(list_conversation_schedules).post(schedule),
+        )
+        .route("/api/scheduled/{id}/cancel", post(cancel_schedule))
         .route("/api/conversations/{id}/messages", post(send_message))
         .route("/api/conversations/{id}/archive", post(archive))
         .route("/api/conversations/{id}/restore", post(restore))
@@ -638,6 +672,136 @@ async fn get_image(
         _ => "application/octet-stream",
     };
     ([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response()
+}
+
+async fn list_schedules(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let schedules = state
+        .schedules
+        .read()
+        .expect("schedule lock should not be poisoned")
+        .iter()
+        .filter(|schedule| {
+            state
+                .registry
+                .can_access(&schedule.conversation_id, identity.id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Json(schedules).into_response()
+}
+
+async fn list_conversation_schedules(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let schedules = state
+        .schedules
+        .read()
+        .expect("schedule lock should not be poisoned")
+        .iter()
+        .filter(|schedule| schedule.conversation_id == id)
+        .cloned()
+        .collect::<Vec<_>>();
+    Json(schedules).into_response()
+}
+
+async fn schedule(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<ScheduleInput>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !state.registry.can_access(&id, identity.id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(text) = input.text.filter(|text| !text.trim().is_empty()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Some(due_at) = input.due_at else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&due_at) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let due_at_unix = parsed.timestamp();
+    if due_at_unix <= now_unix() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if state
+        .actions
+        .send(HostAction::Schedule {
+            conversation_id: id,
+            text,
+            due_at_unix,
+            response: sender,
+        })
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await {
+        Ok(Ok(Ok(value))) => (StatusCode::ACCEPTED, Json(value)).into_response(),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+
+async fn cancel_schedule(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(identity) = require_identity(&state.registry, &headers) else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    let Some(schedule) = state
+        .schedules
+        .read()
+        .expect("schedule lock should not be poisoned")
+        .iter()
+        .find(|schedule| schedule.id == id)
+        .cloned()
+    else {
+        return StatusCode::NOT_FOUND;
+    };
+    if !state
+        .registry
+        .can_access(&schedule.conversation_id, identity.id)
+    {
+        return StatusCode::NOT_FOUND;
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if state
+        .actions
+        .send(HostAction::CancelSchedule {
+            schedule_id: id,
+            response: sender,
+        })
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await {
+        Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT,
+        _ => StatusCode::BAD_GATEWAY,
+    }
 }
 
 async fn read_conversation(

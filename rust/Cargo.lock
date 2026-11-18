@@ -3779,6 +3779,7 @@ name = "pocketagent-desktop"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "pocketagent-host",
  "pocketagent-relay",
  "pulldown-cmark",
@@ -3796,6 +3797,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
  "http-body-util",
  "rand",
  "serde",

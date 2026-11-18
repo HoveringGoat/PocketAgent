@@ -4,7 +4,8 @@ mod store;
 
 use codex::{CodexSession, InteractionState, PromptRequest, SharedInteraction};
 use pocketagent_host::{
-    DeviceRegistry, HostAction, HostConversation, HostHttpState, SessionInfo, router as host_router,
+    DeviceRegistry, HostAction, HostConversation, HostHttpState, HostSchedule, SessionInfo,
+    router as host_router,
 };
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::config::RelayConfig;
@@ -80,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     host_registry.renew_pairing();
     let host_pairing = host_registry.pairing_display();
     let host_conversations = Arc::new(std::sync::RwLock::new(Vec::<HostConversation>::new()));
+    let host_schedules = Arc::new(std::sync::RwLock::new(Vec::<HostSchedule>::new()));
     let (host_actions, mut host_action_receiver) = mpsc::unbounded_channel::<HostAction>();
     let host_state_registry = host_registry.clone();
     let host_state = HostHttpState::new(host_state_registry, host_actions, move |identity| {
@@ -109,6 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         interaction.clone(),
         host_conversations.clone(),
         host_registry.clone(),
+        host_schedules.clone(),
     );
     let host_commands = codex_commands.clone();
     std::thread::spawn(move || {
@@ -366,6 +369,7 @@ fn start_codex_worker(
     interaction: SharedInteraction,
     host_conversations: Arc<std::sync::RwLock<Vec<HostConversation>>>,
     host_registry: DeviceRegistry,
+    host_schedules: Arc<std::sync::RwLock<Vec<HostSchedule>>>,
 ) -> UnboundedSender<CodexCommand> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let scheduler = sender.clone();
@@ -386,6 +390,7 @@ fn start_codex_worker(
             let mut selected_id = None::<String>;
             let mut showing_archived = false;
             sync_host_conversations(&host_conversations, &store);
+            sync_host_schedules(&host_schedules, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
                 diagnostics::record("conversation", "auto_archived_stale");
                 let _ = store.save();
@@ -609,6 +614,7 @@ fn start_codex_worker(
                         if let Some(schedule_id) = schedule_id.as_deref() {
                             let _ = store.set_schedule_status(schedule_id, "sent");
                             let _ = store.save();
+                            sync_host_schedules(&host_schedules, &store);
                         }
                         InteractionState::clear(&interaction);
                         clear_pending_interaction(&weak);
@@ -663,6 +669,7 @@ fn start_codex_worker(
                                 if let Some(schedule_id) = schedule_id.as_deref() {
                                     let _ = store.set_schedule_status(schedule_id, "failed");
                                     let _ = store.save();
+                                    sync_host_schedules(&host_schedules, &store);
                                 }
                                 set_codex_status(&weak, "Codex is ready".into(), None);
                             }
@@ -671,6 +678,7 @@ fn start_codex_worker(
                                 if let Some(schedule_id) = schedule_id.as_deref() {
                                     let _ = store.set_schedule_status(schedule_id, "failed");
                                     let _ = store.save();
+                                    sync_host_schedules(&host_schedules, &store);
                                 }
                                 set_codex_error(&weak, error.to_string());
                             }
@@ -705,6 +713,7 @@ fn start_codex_worker(
                             (!effort.trim().is_empty()).then_some(effort.clone()),
                         );
                         let _ = store.save();
+                        sync_host_schedules(&host_schedules, &store);
                         queue_schedule(
                             &scheduler,
                             delay,
@@ -757,6 +766,54 @@ fn start_codex_worker(
                                 let _ = store.save();
                                 sync_host_conversations(&host_conversations, &store);
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                        }
+                        HostAction::Schedule {
+                            conversation_id,
+                            text,
+                            due_at_unix,
+                            response,
+                        } => {
+                            let id = store.add_schedule(
+                                conversation_id.clone(),
+                                text.clone(),
+                                due_at_unix,
+                                None,
+                                None,
+                            );
+                            let _ = store.save();
+                            sync_host_schedules(&host_schedules, &store);
+                            queue_schedule(
+                                &scheduler,
+                                due_at_unix.saturating_sub(now_unix()) as u64,
+                                id.clone(),
+                                conversation_id.clone(),
+                                text.clone(),
+                                String::new(),
+                                String::new(),
+                            );
+                            let due_at =
+                                chrono::DateTime::<chrono::Utc>::from_timestamp(due_at_unix, 0)
+                                    .map(|value| value.to_rfc3339())
+                                    .unwrap_or_default();
+                            let _ = response.send(Ok(serde_json::json!({
+                                "id": id,
+                                "conversationId": conversation_id,
+                                "text": text,
+                                "dueAt": due_at,
+                                "status": "pending"
+                            })));
+                        }
+                        HostAction::CancelSchedule {
+                            schedule_id,
+                            response,
+                        } => {
+                            if store.set_schedule_status(&schedule_id, "canceled") {
+                                let _ = store.save();
+                                sync_host_schedules(&host_schedules, &store);
+                                let _ = response.send(Ok(()));
+                            } else {
+                                let _ = response.send(Err("Schedule not found.".into()));
                             }
                         }
                         HostAction::Read {
@@ -890,6 +947,25 @@ fn sync_host_conversations(
             title: conversation.title.clone(),
             archived: conversation.archived,
             pinned: conversation.pinned,
+        })
+        .collect();
+}
+
+fn sync_host_schedules(snapshot: &Arc<std::sync::RwLock<Vec<HostSchedule>>>, store: &DesktopStore) {
+    let mut target = snapshot
+        .write()
+        .expect("host schedule lock should not be poisoned");
+    *target = store
+        .schedules
+        .iter()
+        .map(|schedule| HostSchedule {
+            id: schedule.id.clone(),
+            conversation_id: schedule.conversation_id.clone(),
+            text: schedule.prompt.clone(),
+            due_at: chrono::DateTime::<chrono::Utc>::from_timestamp(schedule.due_at_unix, 0)
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_default(),
+            status: schedule.status.clone(),
         })
         .collect();
 }
