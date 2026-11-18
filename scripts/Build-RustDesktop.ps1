@@ -6,6 +6,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 
+# Packaging is gated on the same workspace checks used for implementation.
+# A failed test or warning must stop before any release artifact is written.
+& cargo test --manifest-path rust/Cargo.toml --workspace --all-targets
+if ($LASTEXITCODE -ne 0) { throw 'Rust workspace test gate failed.' }
+& cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+if ($LASTEXITCODE -ne 0) { throw 'Rust workspace clippy gate failed.' }
+
 & cargo build --manifest-path rust/Cargo.toml -p pocketagent-desktop --release
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop build failed.' }
 

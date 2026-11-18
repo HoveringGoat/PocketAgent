@@ -177,7 +177,7 @@ To produce a portable preview directory and ZIP, run:
 .\scripts\Build-RustDesktop.ps1
 ```
 
-The build runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. To also build and install-test the per-user Rust Windows installer, run:
+The build first runs the Rust workspace test and warnings-as-errors clippy gates; a failure stops before packaging. It then runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. To also build and install-test the per-user Rust Windows installer, run:
 
 ```powershell
 .\scripts\Build-RustDesktop.ps1 -Installer
