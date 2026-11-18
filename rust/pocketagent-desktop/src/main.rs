@@ -454,6 +454,11 @@ fn start_codex_worker(
                                 let sessions = connected.list_threads().await;
                                 store.repository_path = repository;
                                 store.codex_executable = executable;
+                                for conversation in &mut store.conversations {
+                                    if conversation.working_directory.is_empty() {
+                                        conversation.working_directory = store.repository_path.clone();
+                                    }
+                                }
                                 session = Some(connected);
                                 *host_provider_status
                                     .write()
@@ -506,6 +511,7 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Connect Codex first.".into());
                             continue;
                         };
+                        current.set_repository(store.repository_path.clone());
                         match current
                             .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
                             .await
@@ -547,6 +553,14 @@ fn start_codex_worker(
                             .find(|conversation| conversation.id == id)
                             .and_then(|conversation| conversation.model.clone())
                             .unwrap_or_default();
+                        let working_directory = store
+                            .conversations
+                            .iter()
+                            .find(|conversation| conversation.id == id)
+                            .map(|conversation| conversation.working_directory.clone())
+                            .filter(|directory| !directory.is_empty())
+                            .unwrap_or_else(|| store.repository_path.clone());
+                        current.set_repository(working_directory);
                         match current
                             .resume_thread(
                                 &id,
@@ -629,6 +643,14 @@ fn start_codex_worker(
                                 .iter()
                                 .find(|conversation| conversation.id == target)
                                 .and_then(|conversation| conversation.model.clone());
+                            let target_directory = store
+                                .conversations
+                                .iter()
+                                .find(|conversation| conversation.id == target)
+                                .map(|conversation| conversation.working_directory.clone())
+                                .filter(|directory| !directory.is_empty())
+                                .unwrap_or_else(|| store.repository_path.clone());
+                            current.set_repository(target_directory);
                             if current
                                 .resume_thread(target, target_model.as_deref())
                                 .await
@@ -823,12 +845,25 @@ fn start_codex_worker(
                             title,
                             model,
                             effort,
+                            working_directory,
                             response,
                         } => {
                             let result = async {
                                 let Some(current) = session.as_mut() else {
                                     return Err("Codex is disconnected.".to_owned());
                                 };
+                                let working_directory = if working_directory.trim().is_empty() {
+                                    store.repository_path.clone()
+                                } else {
+                                    working_directory.trim().to_owned()
+                                };
+                                if working_directory.starts_with("\\\\")
+                                    || working_directory.starts_with("//")
+                                    || !std::path::Path::new(&working_directory).is_dir()
+                                {
+                                    return Err("Working directory does not exist.".to_owned());
+                                }
+                                current.set_repository(working_directory.clone());
                                 let id = current
                                     .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
                                     .await
@@ -839,6 +874,13 @@ fn start_codex_worker(
                                     title.trim().to_owned()
                                 };
                                 store.merge_threads([(id.clone(), title.clone())]);
+                                if let Some(record) = store
+                                    .conversations
+                                    .iter_mut()
+                                    .find(|conversation| conversation.id == id)
+                                {
+                                    record.working_directory = working_directory.clone();
+                                }
                                 let _ = store.set_model_options(
                                     &id,
                                     (!model.trim().is_empty()).then_some(model.clone()),
@@ -863,7 +905,8 @@ fn start_codex_worker(
                                     "archived": false,
                                     "pinned": false,
                                     "model": if model.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(model) },
-                                    "reasoningEffort": if effort.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(effort) }
+                                    "reasoningEffort": if effort.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(effort) },
+                                    "workingDirectory": working_directory
                                 }))
                             }
                             .await;
@@ -972,6 +1015,14 @@ fn start_codex_worker(
                                         .iter()
                                         .find(|conversation| conversation.id == conversation_id)
                                         .and_then(|conversation| conversation.model.clone());
+                                    let working_directory = store
+                                        .conversations
+                                        .iter()
+                                        .find(|conversation| conversation.id == conversation_id)
+                                        .map(|conversation| conversation.working_directory.clone())
+                                        .filter(|directory| !directory.is_empty())
+                                        .unwrap_or_else(|| store.repository_path.clone());
+                                    current.set_repository(working_directory);
                                     current
                                         .resume_thread(&conversation_id, model.as_deref())
                                         .await
@@ -1010,7 +1061,7 @@ fn start_codex_worker(
                                         .file_name()
                                         .and_then(|name| name.to_str())
                                         .unwrap_or_default(),
-                                    "workingDirectory": store.repository_path,
+                                    "workingDirectory": record.working_directory,
                                     "hostName": std::env::var("COMPUTERNAME").unwrap_or_default(),
                                     "permissionMode": "default",
                                     "sandboxMode": null,
@@ -1092,6 +1143,7 @@ fn sync_host_conversations(
             title: conversation.title.clone(),
             archived: conversation.archived,
             pinned: conversation.pinned,
+            working_directory: conversation.working_directory.clone(),
         })
         .collect();
 }

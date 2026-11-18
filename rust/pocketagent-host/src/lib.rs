@@ -32,6 +32,9 @@ pub struct HostConversation {
     pub title: String,
     pub archived: bool,
     pub pinned: bool,
+    #[serde(default)]
+    #[serde(rename = "workingDirectory")]
+    pub working_directory: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,6 +80,7 @@ pub enum HostAction {
         title: String,
         model: String,
         effort: String,
+        working_directory: String,
         response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     },
     Schedule {
@@ -501,6 +505,8 @@ struct CreateInput {
     model: Option<String>,
     #[serde(rename = "reasoningEffort")]
     reasoning_effort: Option<String>,
+    #[serde(rename = "workingDirectory")]
+    working_directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -533,6 +539,11 @@ struct ImageQuery {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct DirectoryQuery {
+    path: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ScheduleInput {
     text: Option<String>,
@@ -562,6 +573,7 @@ pub fn router(state: HostHttpState) -> Router {
         .route("/api/conversations/{id}", get(get_conversation))
         .route("/api/conversations/{id}/history", get(get_history))
         .route("/api/conversations/{id}/images", get(get_image))
+        .route("/api/directories", get(list_directories))
         .route("/api/scheduled", get(list_schedules))
         .route(
             "/api/conversations/{id}/scheduled",
@@ -680,6 +692,7 @@ async fn create_conversation(
             title: input.title.unwrap_or_default(),
             model: input.model.unwrap_or_default(),
             effort: input.reasoning_effort.unwrap_or_default(),
+            working_directory: input.working_directory.unwrap_or_default(),
             response: sender,
         })
         .is_err()
@@ -813,6 +826,72 @@ async fn get_image(
         _ => "application/octet-stream",
     };
     ([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response()
+}
+
+async fn list_directories(
+    State(state): State<HostHttpState>,
+    headers: HeaderMap,
+    Query(query): Query<DirectoryQuery>,
+) -> impl IntoResponse {
+    if require_identity(&state.registry, &headers).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let configured_root = state
+        .image_root
+        .read()
+        .expect("image root lock should not be poisoned")
+        .clone();
+    let Ok(root) = std::fs::canonicalize(configured_root) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let requested = query.path.unwrap_or_default();
+    if requested.starts_with("\\\\")
+        || requested.starts_with("//")
+        || std::path::Path::new(&requested).is_absolute()
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let candidate = if requested.trim().is_empty() {
+        root.clone()
+    } else {
+        root.join(requested)
+    };
+    let Ok(candidate) = std::fs::canonicalize(candidate) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !candidate.starts_with(&root) || !candidate.is_dir() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut directories = std::fs::read_dir(&candidate)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                return None;
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
+            Some(serde_json::json!({ "name": name, "path": relative }))
+        })
+        .collect::<Vec<_>>();
+    directories.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    Json(serde_json::json!({
+        "path": candidate
+            .strip_prefix(&root)
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default(),
+        "directories": directories,
+    }))
+    .into_response()
 }
 
 async fn list_schedules(
@@ -1282,6 +1361,7 @@ mod tests {
             title: "Test".into(),
             archived: false,
             pinned: false,
+            working_directory: String::new(),
         });
         let app = router(state.clone());
         let pair = app
@@ -1314,7 +1394,11 @@ mod tests {
                         .header("authorization", format!("Bearer {create_token}"))
                         .header("content-type", "application/json")
                         .body(axum::body::Body::from(
-                            serde_json::json!({"title": "Remote"}).to_string(),
+                            serde_json::json!({
+                                "title": "Remote",
+                                "workingDirectory": "C:/work"
+                            })
+                            .to_string(),
                         ))
                         .unwrap(),
                 )
@@ -1322,7 +1406,13 @@ mod tests {
                 .unwrap()
         });
         let create_action = received.recv().await.unwrap();
-        if let HostAction::Create { response, .. } = create_action {
+        if let HostAction::Create {
+            response,
+            working_directory,
+            ..
+        } = create_action
+        {
+            assert_eq!(working_directory, "C:/work");
             response
                 .send(Ok(
                     serde_json::json!({ "id": "created", "title": "Remote" }),
@@ -1502,8 +1592,35 @@ mod tests {
             [1, 2, 3]
         );
         let traversal = app
+            .clone()
             .oneshot(
                 axum::http::Request::get("/api/conversations/thread-1/images?path=../secret")
+                    .header("authorization", format!("Bearer {}", paired.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(traversal.status(), StatusCode::NOT_FOUND);
+        std::fs::create_dir(root.join("child")).unwrap();
+        let directories = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/api/directories")
+                    .header("authorization", format!("Bearer {}", paired.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(directories.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&directories.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["directories"][0]["name"], "child");
+        let traversal = app
+            .oneshot(
+                axum::http::Request::get("/api/directories?path=../")
                     .header("authorization", format!("Bearer {}", paired.token))
                     .body(axum::body::Body::empty())
                     .unwrap(),

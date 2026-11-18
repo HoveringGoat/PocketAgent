@@ -262,6 +262,10 @@ impl CodexSession {
         }
     }
 
+    pub fn set_repository(&mut self, repository: impl Into<String>) {
+        self.repository = repository.into();
+    }
+
     pub async fn new_thread(
         &mut self,
         model: Option<&str>,

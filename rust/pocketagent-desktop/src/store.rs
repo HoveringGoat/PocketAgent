@@ -12,6 +12,8 @@ pub struct ConversationRecord {
     pub archived: bool,
     pub pinned: bool,
     #[serde(default)]
+    pub working_directory: String,
+    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
@@ -67,6 +69,9 @@ impl DesktopStore {
             if conversation.created_at_unix == 0 {
                 conversation.created_at_unix = now;
             }
+            if conversation.working_directory.is_empty() {
+                conversation.working_directory = store.repository_path.clone();
+            }
         }
         store
     }
@@ -103,6 +108,7 @@ impl DesktopStore {
                     title,
                     archived: false,
                     pinned: false,
+                    working_directory: self.repository_path.clone(),
                     model: None,
                     reasoning_effort: None,
                     created_at_unix: now_unix(),
@@ -260,6 +266,7 @@ mod tests {
                 title: "Saved title".into(),
                 archived: true,
                 pinned: true,
+                working_directory: String::new(),
                 model: None,
                 reasoning_effort: None,
                 created_at_unix: 1,
@@ -274,6 +281,16 @@ mod tests {
     }
 
     #[test]
+    fn new_conversations_use_the_saved_repository_as_their_folder() {
+        let mut store = DesktopStore {
+            repository_path: "C:/work/default".into(),
+            ..Default::default()
+        };
+        store.merge_threads([(String::from("thread-1"), String::from("Foldered"))]);
+        assert_eq!(store.conversations[0].working_directory, "C:/work/default");
+    }
+
+    #[test]
     fn conversation_controls_update_local_metadata() {
         let mut store = DesktopStore {
             conversations: vec![ConversationRecord {
@@ -281,6 +298,7 @@ mod tests {
                 title: "Old title".into(),
                 archived: false,
                 pinned: false,
+                working_directory: String::new(),
                 model: None,
                 reasoning_effort: None,
                 created_at_unix: 1,
@@ -308,6 +326,7 @@ mod tests {
                     title: "Old".into(),
                     archived: false,
                     pinned: false,
+                    working_directory: String::new(),
                     model: None,
                     reasoning_effort: None,
                     created_at_unix: 10,
@@ -318,6 +337,7 @@ mod tests {
                     title: "Pinned".into(),
                     archived: false,
                     pinned: true,
+                    working_directory: String::new(),
                     model: None,
                     reasoning_effort: None,
                     created_at_unix: 10,
@@ -328,6 +348,7 @@ mod tests {
                     title: "Recent".into(),
                     archived: false,
                     pinned: false,
+                    working_directory: String::new(),
                     model: None,
                     reasoning_effort: None,
                     created_at_unix: 10,
