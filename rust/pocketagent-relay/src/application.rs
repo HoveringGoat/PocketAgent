@@ -11,6 +11,7 @@ use pocketagent_protocol::{
     RelayResponse,
 };
 use serde::de::DeserializeOwned;
+use std::{future::Future, pin::Pin, sync::Arc};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -33,6 +34,66 @@ pub struct RelayApplicationClient {
     key: SessionKey,
     host_id: Uuid,
     device_id: Uuid,
+}
+
+type ApplicationHandler = Arc<
+    dyn Fn(ApplicationRequest) -> Pin<Box<dyn Future<Output = ApplicationResponse> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Authenticated relay-side host loop. The host connects outward to the relay,
+/// decrypts requests, invokes the local HTTP/application adapter, and encrypts
+/// the response back to the requesting device. The relay never sees the body.
+pub struct RelayApplicationHost {
+    transport: RelayTransportClient,
+    key: SessionKey,
+    host_id: Uuid,
+    handler: ApplicationHandler,
+}
+
+impl RelayApplicationHost {
+    pub async fn connect<F, Fut>(
+        url: &str,
+        host_id: Uuid,
+        token: Vec<u8>,
+        key: SessionKey,
+        handler: F,
+    ) -> Result<Self, ApplicationError>
+    where
+        F: Fn(ApplicationRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ApplicationResponse> + Send + 'static,
+    {
+        let transport = RelayTransportClient::connect_host(url, host_id, token).await?;
+        Ok(Self {
+            transport,
+            key,
+            host_id,
+            handler: Arc::new(move |request| Box::pin(handler(request))),
+        })
+    }
+
+    pub async fn serve(mut self) -> Result<(), ApplicationError> {
+        loop {
+            let frame = self.transport.recv_frame().await?;
+            let RelayFrame::ClientRequest(request) = frame.frame else {
+                continue;
+            };
+            let device_id = request.device_id;
+            let request_id = request.request_id;
+            let request = decode_request(&self.key, self.host_id, &request)?;
+            let response = (self.handler)(request).await;
+            let response =
+                encode_response(&self.key, self.host_id, device_id, request_id, &response)?;
+            self.transport
+                .send_frame(RelayFrameEnvelope::new(RelayFrame::HostResponse(response)))
+                .await?;
+        }
+    }
+
+    pub fn session_id(&self) -> Uuid {
+        self.transport.session_id()
+    }
 }
 
 impl RelayApplicationClient {
@@ -185,6 +246,8 @@ pub fn decode_json<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RelayNode, transport::RelayAuthRegistry, transport::RelayTransportServer};
+    use tokio::{net::TcpListener, sync::oneshot};
 
     #[test]
     fn application_payload_round_trips_end_to_end() {
@@ -222,5 +285,65 @@ mod tests {
             decode_response(&key, host_id, Uuid::new_v4(), &wire),
             Err(ApplicationError::Crypto(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn host_loop_dispatches_encrypted_application_requests() {
+        let node = RelayNode::new();
+        let auth = RelayAuthRegistry::default();
+        let host_id = Uuid::new_v4();
+        let device_id = Uuid::new_v4();
+        auth.register_host(host_id, b"host-token".to_vec()).await;
+        auth.register_client(device_id, b"device-token".to_vec())
+            .await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = RelayTransportServer::new(node, auth);
+        let server_task =
+            tokio::spawn(async move { server.serve_until(listener, shutdown_rx).await });
+
+        let key = SessionKey::random();
+        let host_key = key.clone();
+        let host_url = url.clone();
+        let host_task = tokio::spawn(async move {
+            let host =
+                RelayApplicationHost::connect(
+                    &host_url,
+                    host_id,
+                    b"host-token".to_vec(),
+                    host_key,
+                    |request| async move {
+                        ApplicationResponse::new(200, "application/json", request.body)
+                    },
+                )
+                .await
+                .unwrap();
+            host.serve().await
+        });
+
+        let mut client = RelayApplicationClient::connect(
+            &url,
+            host_id,
+            device_id,
+            b"device-token".to_vec(),
+            key,
+        )
+        .await
+        .unwrap();
+        let response = client
+            .request(ApplicationRequest::new(
+                "POST",
+                "/api/echo",
+                b"hello".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"hello");
+
+        let _ = shutdown_tx.send(());
+        host_task.abort();
+        server_task.abort();
     }
 }
