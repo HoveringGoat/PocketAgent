@@ -427,6 +427,9 @@ fn start_codex_worker(
             let mut selected_id = None::<String>;
             let mut showing_archived = false;
             let mut deferred_commands = VecDeque::new();
+            let mut archive_timer = tokio::time::interval(std::time::Duration::from_secs(600));
+            archive_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            archive_timer.tick().await;
             sync_host_conversations(&host_conversations, &store);
             sync_host_schedules(&host_schedules, &store);
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
@@ -449,11 +452,24 @@ fn start_codex_worker(
                     schedule.reasoning_effort.clone().unwrap_or_default(),
                 );
             }
-            while let Some(command) = if let Some(command) = deferred_commands.pop_front() {
-                Some(command)
-            } else {
-                receiver.recv().await
-            } {
+            loop {
+                let command = if let Some(command) = deferred_commands.pop_front() {
+                    Some(command)
+                } else {
+                    tokio::select! {
+                        _ = archive_timer.tick() => {
+                            if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
+                                diagnostics::record("conversation", "auto_archived_stale");
+                                let _ = store.save();
+                                sync_host_conversations(&host_conversations, &store);
+                                set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                            continue;
+                        }
+                        command = receiver.recv() => command,
+                    }
+                };
+                let Some(command) = command else { break };
                 match command {
                     CodexCommand::Connect {
                         repository,

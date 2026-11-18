@@ -155,7 +155,7 @@ pairing, provider credentials, and conversation state are not used.
 
 Rust desktop diagnostics are appended to `%LOCALAPPDATA%/PocketAgent-rust/desktop.log` (or the XDG data equivalent). Entries record lifecycle and failure categories without message bodies, tokens, or provider stderr.
 
-On startup the Rust local store applies the same seven-day idle archive rule as the server: unpinned conversations with no recent activity are moved to Archived; pinned conversations and recent activity are preserved. This is local metadata only and never deletes Codex history.
+On startup and every ten minutes while the worker is running, the Rust local store applies the same seven-day idle archive rule as the server: unpinned conversations with no recent activity are moved to Archived; pinned conversations and recent activity are preserved. This is local metadata only and never deletes Codex history.
 
 The Rust composer also accepts a delay in seconds for a scheduled prompt. Scheduled entries are persisted with their target conversation and dispatched through the normal Codex turn path after restart; a failed dispatch is recorded in the local schedule state rather than silently retried.
 
