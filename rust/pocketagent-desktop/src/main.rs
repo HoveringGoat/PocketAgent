@@ -3126,6 +3126,7 @@ fn firewall_rule_arguments(port: u16) -> Vec<String> {
 #[cfg(windows)]
 fn firewall_rule_exists(port: u16) -> bool {
     use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
 
     std::process::Command::new("netsh.exe")
         .args([
@@ -3136,6 +3137,8 @@ fn firewall_rule_exists(port: u16) -> bool {
             &format!("name={}", firewall_rule_name(port)),
         ])
         .creation_flags(0x0800_0000)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -3172,6 +3175,7 @@ fn confirm_firewall_rule(port: u16) -> bool {
 #[cfg(windows)]
 fn configure_firewall_rule(port: u16) -> bool {
     use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
 
     // Start-Process -Verb RunAs produces the normal UAC consent prompt. The
     // outer PowerShell process is hidden so no command window is left behind.
@@ -3193,6 +3197,8 @@ fn configure_firewall_rule(port: u16) -> bool {
             command.as_str(),
         ])
         .creation_flags(0x0800_0000)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
