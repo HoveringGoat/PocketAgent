@@ -265,6 +265,7 @@ export component AppWindow inherits Window {
     callback set-device-access(string, string, bool);
     callback revoke-device(string);
     callback renew-pairing();
+    callback toggle-host();
     callback cancel-schedule(string);
     callback navigate(string);
     callback switch-draft(string);
@@ -310,7 +311,7 @@ export component AppWindow inherits Window {
                 ActionButton { width: 96px; horizontal-stretch: 0; icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
                 ActionButton { width: 96px; horizontal-stretch: 0; icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
                 ActionButton { width: 96px; horizontal-stretch: 0; icon: "settings"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
-                ServerPower { running: host-status == "Host API is running"; clicked => { } }
+                ServerPower { running: host-status == "Host API is running"; clicked => { toggle-host(); } }
             }
         }
 

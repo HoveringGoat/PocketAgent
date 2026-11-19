@@ -162,7 +162,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .write()
         .expect("host conversation lock should not be poisoned")
         .clear();
-    let host_endpoint = start_host_server(host_state.clone());
+    let host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    let host_endpoint = start_host_server(host_state.clone(), host_shutdown.clone());
     let relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     start_relay_host(host_state.clone(), relay_host_shutdown.clone());
     match host_endpoint {
@@ -174,6 +175,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             window.set_host_status(format!("Host API unavailable: {error}").into());
             window.set_host_endpoint("No endpoint".into());
         }
+    }
+    {
+        let host_state = host_state.clone();
+        let host_shutdown = host_shutdown.clone();
+        let weak = window.as_weak();
+        window.on_toggle_host(move || {
+            let is_running = host_shutdown
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false);
+            if is_running {
+                if let Ok(mut guard) = host_shutdown.lock() {
+                    if let Some(shutdown) = guard.take() {
+                        let _ = shutdown.send(());
+                    }
+                }
+                diagnostics::record("host", "stopping_from_ui");
+                if let Some(window) = weak.upgrade() {
+                    window.set_host_status("Host API is stopped".into());
+                    window.set_host_endpoint("No endpoint".into());
+                }
+            } else {
+                match start_host_server(host_state.clone(), host_shutdown.clone()) {
+                    Ok(endpoint) => {
+                        diagnostics::record("host", "started_from_ui");
+                        if let Some(window) = weak.upgrade() {
+                            window.set_host_status("Host API is running".into());
+                            window.set_host_endpoint(endpoint.into());
+                        }
+                    }
+                    Err(error) => {
+                        diagnostics::record("host", "start_from_ui_failed");
+                        if let Some(window) = weak.upgrade() {
+                            window.set_host_status(format!("Host API unavailable: {error}").into());
+                            window.set_host_endpoint("No endpoint".into());
+                        }
+                    }
+                }
+            }
+        });
     }
     window.set_host_pairing(
         format!(
@@ -2374,7 +2415,10 @@ fn set_host_status(weak: &slint::Weak<AppWindow>, status: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_host_status(status.into()));
 }
 
-fn start_host_server(state: HostHttpState) -> Result<String, String> {
+fn start_host_server(
+    state: HostHttpState,
+    shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+) -> Result<String, String> {
     let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
     if requested
         .parse::<std::net::SocketAddr>()
@@ -2398,6 +2442,12 @@ fn start_host_server(state: HostHttpState) -> Result<String, String> {
         .map(|address| format!("http://{address}"))
         .unwrap_or_else(|_| format!("http://{requested}"));
     let display_endpoint = endpoint.clone();
+    let (shutdown, shutdown_signal) = oneshot::channel();
+    if let Ok(mut slot) = shutdown_slot.lock() {
+        *slot = Some(shutdown);
+    } else {
+        return Err("host shutdown state is unavailable".into());
+    }
     std::thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -2412,9 +2462,13 @@ fn start_host_server(state: HostHttpState) -> Result<String, String> {
                 return;
             };
             diagnostics::record("host", "ready");
-            if let Err(error) = axum::serve(listener, host_router(state)).await {
+            if let Err(error) = axum::serve(listener, host_router(state))
+                .with_graceful_shutdown(async move { let _ = shutdown_signal.await; })
+                .await
+            {
                 diagnostics::record("host", &format!("stopped_{error}"));
             }
+            diagnostics::record("host", "stopped");
         });
     });
     Ok(display_endpoint)

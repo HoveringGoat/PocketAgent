@@ -111,6 +111,7 @@ Conversation metadata is stored locally, but transcript history is owned by the 
 - `src/PocketAgent.Android`: native multi-server client, encrypted vault, transport and debug-only instrumentation.
 
 The Rust desktop header keeps the app identity, machine/directory location, usage summary, and top-level navigation on one horizontal row. Navigation uses fixed .NET-matched button proportions, while server state uses the compact 64x26 pill switch. The supported minimum and preferred window sizes are covered by the desktop smoke layout check.
+The server pill is functional: turning it off gracefully stops the local HTTP host and clears its endpoint; turning it on binds a fresh endpoint and restores the running state.
 
 Session actions are compact icon buttons beside the conversation tabs and use the same semantic vector shapes as the WPF toolbar (access, edit, robot/model, pin, archive/unarchive). Rename and model/reasoning edits open modal dialogs; their drafts apply only when confirmed, and the session smoke test verifies both dialogs are reachable.
 

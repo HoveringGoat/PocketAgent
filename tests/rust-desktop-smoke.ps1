@@ -30,6 +30,15 @@ try {
     }
     if ($null -eq $window) { throw 'Rust desktop window did not appear.' }
 
+    function Await-Desktop([scriptblock]$lookup, [string]$description) {
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            $result = & $lookup
+            if ($result) { return $result }
+            Start-Sleep -Milliseconds 100
+        }
+        throw "Missing $description"
+    }
+
     $buttonCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Button)
@@ -144,6 +153,21 @@ try {
     Assert-VisibleControls '1150x820'
     Assert-CompactHeader '1150x820'
     Assert-HeaderControls '1150x820'
+
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    $power = $buttons | Where-Object { $_.Current.Name -eq 'ON' } | Select-Object -First 1
+    if ($null -eq $power) { throw 'Running server power control was not exposed.' }
+    $power.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $power = Await-Desktop {
+        $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition) |
+            Where-Object { $_.Current.Name -eq 'OFF' } | Select-Object -First 1
+    } 'stopped host state'
+    if ($null -eq $power) { throw 'Stopped server power control was not exposed.' }
+    $power.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $null = Await-Desktop {
+        $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition) |
+            Where-Object { $_.Current.Name -eq 'ON' } | Select-Object -First 1
+    } 'restarted host state'
 
     if ($RequireCodex) {
         $codexReady = $false
