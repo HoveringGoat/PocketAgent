@@ -183,13 +183,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             window.set_host_endpoint("No endpoint".into());
         }
     }
-    if let Ok(endpoint) = &host_endpoint {
-        if let Ok(identity) = load_host_tls_identity() {
-            let payload = pairing_payload(&host_pairing, endpoint, &identity.spki_hex);
-            window.set_host_pairing(payload.clone().into());
-            if let Ok(qr) = pairing_qr(&payload) {
-                window.set_host_qr(qr);
-            }
+    if let Ok(endpoint) = &host_endpoint
+        && let Ok(identity) = load_host_tls_identity()
+    {
+        let payload = pairing_payload(&host_pairing, endpoint, &identity.spki_hex);
+        window.set_host_pairing(payload.clone().into());
+        if let Ok(qr) = pairing_qr(&payload) {
+            window.set_host_qr(qr);
         }
     }
     {
@@ -202,10 +202,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|guard| guard.is_some())
                 .unwrap_or(false);
             if is_running {
-                if let Ok(mut guard) = host_shutdown.lock() {
-                    if let Some(shutdown) = guard.take() {
-                        let _ = shutdown.send(());
-                    }
+                if let Ok(mut guard) = host_shutdown.lock()
+                    && let Some(shutdown) = guard.take()
+                {
+                    let _ = shutdown.send(());
                 }
                 diagnostics::record("host", "stopping_from_ui");
                 if let Some(window) = weak.upgrade() {
@@ -2457,10 +2457,10 @@ fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.split(':').next().unwrap_or(&value).to_owned());
     let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
-    if let Some(advertised) = advertised {
-        if !names.iter().any(|name| name == &advertised) {
-            names.push(advertised);
-        }
+    if let Some(advertised) = advertised
+        && !names.iter().any(|name| name == &advertised)
+    {
+        names.push(advertised);
     }
     let certified = generate_simple_self_signed(names).map_err(|error| error.to_string())?;
     let certificate_der = certified.cert.der().to_vec();
