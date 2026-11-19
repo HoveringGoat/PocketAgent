@@ -26,7 +26,9 @@ try {
     $window = $null
     for ($attempt = 0; $attempt -lt 40 -and $null -eq $window; $attempt++) {
         Start-Sleep -Milliseconds 200
-        $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $windowCondition)
+        $window = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition) |
+            Where-Object { $_.Current.ProcessId -eq $process.Id } |
+            Select-Object -First 1
     }
     if ($null -eq $window) { throw 'Rust desktop window did not appear.' }
 
@@ -106,11 +108,12 @@ try {
         $appRect = $appName.Current.BoundingRectangle
         $locationRect = $location.Current.BoundingRectangle
         $usageRect = $usage.Current.BoundingRectangle
-        $topDelta = [Math]::Max(
-            [Math]::Abs($appRect.Top - $locationRect.Top),
-            [Math]::Abs($appRect.Top - $usageRect.Top))
-        if ($topDelta -gt 3 -or $locationRect.Left -le $appRect.Left -or $usageRect.Left -le $locationRect.Left) {
-            throw "Compact header fields are not aligned left-to-right at $sizeLabel."
+        $brandingRowDelta = [Math]::Abs($appRect.Top - $locationRect.Top)
+        $usageRowDelta = $usageRect.Top - $locationRect.Top
+        $usageIndent = [Math]::Abs($usageRect.Left - $locationRect.Left)
+        if ($brandingRowDelta -gt 14 -or $usageRowDelta -lt 12 -or
+            $usageIndent -gt 8 -or $locationRect.Left -le $appRect.Left) {
+            throw "Compact header fields are not arranged as branding-adjacent location and usage rows at $sizeLabel."
         }
     }
 
