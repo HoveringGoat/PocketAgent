@@ -113,4 +113,10 @@ try {
     foreach ($name in $previousEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name])
     }
+    $localRoot = [IO.Path]::GetFullPath($local)
+    $fullFixtureRoot = [IO.Path]::GetFullPath($fixtureRoot)
+    if (!$fullFixtureRoot.StartsWith($localRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean fixture path outside .local: $fullFixtureRoot"
+    }
+    if (Test-Path -LiteralPath $fullFixtureRoot) { Remove-Item -LiteralPath $fullFixtureRoot -Recurse -Force }
 }

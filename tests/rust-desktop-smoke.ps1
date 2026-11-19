@@ -7,6 +7,16 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+$previousEnvironment = @{}
+$testRoot = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) '.local') ('rust-desktop-smoke-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+foreach ($name in @('LOCALAPPDATA', 'POCKETAGENT_HOST_BIND', 'POCKETAGENT_CODEX_EXECUTABLE')) {
+    $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+}
+$env:LOCALAPPDATA = $testRoot
+$env:POCKETAGENT_HOST_BIND = '127.0.0.1:0'
+$env:POCKETAGENT_CODEX_EXECUTABLE = Join-Path $testRoot 'missing-codex.exe'
+
 $process = Start-Process -FilePath (Resolve-Path -LiteralPath $Executable).Path -PassThru
 try {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -240,4 +250,13 @@ finally {
     if (!$process.HasExited) { $process.CloseMainWindow() | Out-Null }
     Start-Sleep -Milliseconds 300
     if (!$process.HasExited) { $process.Kill() }
+    foreach ($name in $previousEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name])
+    }
+    $localRoot = [IO.Path]::GetFullPath((Join-Path (Split-Path $PSScriptRoot -Parent) '.local'))
+    $fullTestRoot = [IO.Path]::GetFullPath($testRoot)
+    if (!$fullTestRoot.StartsWith($localRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean test path outside .local: $fullTestRoot"
+    }
+    if (Test-Path -LiteralPath $fullTestRoot) { Remove-Item -LiteralPath $fullTestRoot -Recurse -Force }
 }

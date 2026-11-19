@@ -125,6 +125,7 @@ The Rust conversation store excludes threads with pending jobs from inactivity a
 Rust Sessions shows selected state on the tab surface and puts pinned tabs first. The creation panel accepts an existing folder or lets the user navigate its parent and child folders, and offers a model selector. The Queue panel filters pending jobs to the current conversation and exposes cancellation. Session drafts live in memory across navigation. The desktop clears the matching draft after a successful turn-start response, an accepted steer response, or a persisted schedule. The worker keeps the same provider future running across timer ticks and incoming commands. Unrelated conversation operations can still wait behind an active turn.
 
 On Windows, run `tests/rust-sessions-smoke.ps1 -Executable rust/target/release/pocketagent-desktop.exe` after building the preview. The script uses Node.js with the deterministic Codex fixture in an isolated profile. It exercises conversation creation, pinning, schedule validation and cancellation, send, steer, and interrupt through the rendered controls.
+Both Rust desktop UI smoke scripts create unique temporary `LOCALAPPDATA` roots, refuse to use the normal profile, and remove those roots after the process exits. Fixture replies are synthetic and never invoke a real model or shell.
 - `scripts`: repeatable builds, signing, publishing, connector acquisition and local launch.
 - `tests`: isolated deterministic protocol/security/scheduler checks and emulator tests. Live inference requires explicit opt-in.
 
