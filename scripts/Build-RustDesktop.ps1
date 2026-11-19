@@ -1,10 +1,23 @@
 param(
-    [string]$OutputDirectory = "artifacts/rust-desktop-preview",
     [switch]$Installer
 )
 
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
+
+$cargoManifestPath = Join-Path (Get-Location) 'rust/pocketagent-desktop/Cargo.toml'
+$cargoManifest = Get-Content -LiteralPath $cargoManifestPath -Raw
+$versionMatch = [regex]::Match($cargoManifest, '(?m)^version\s*=\s*"([^\"]+)"')
+if (!$versionMatch.Success) { throw 'The Rust desktop Cargo.toml does not define a package version.' }
+$version = $versionMatch.Groups[1].Value
+$artifactRoot = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'artifacts'))
+$output = Join-Path $artifactRoot "rust-desktop-$version"
+$archive = Join-Path $artifactRoot "rust-desktop-$version.zip"
+$installerOutput = Join-Path $artifactRoot "rust-desktop-$version-setup.exe"
+
+# A rebuild of the same version replaces the exact version directory and artifacts.
+if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 
 # Packaging is gated on the same workspace checks used for implementation.
 # A failed test or warning must stop before any release artifact is written.
@@ -18,7 +31,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Rust relay process smoke gate failed.' }
 & cargo build --manifest-path rust/Cargo.toml -p pocketagent-desktop --release
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop build failed.' }
 
-$output = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $executableName = if ($env:OS -eq 'Windows_NT') { 'pocketagent-desktop.exe' } else { 'pocketagent-desktop' }
 $executable = Join-Path (Join-Path (Get-Location) 'rust/target/release') $executableName
@@ -28,11 +40,10 @@ Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md -Des
 & (Join-Path (Get-Location) 'tests/rust-desktop-smoke.ps1') -Executable (Join-Path $output $executableName)
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop smoke test failed.' }
 
-$archive = Join-Path (Split-Path $output -Parent) 'PocketAgent-RustDesktopPreview.zip'
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -Force
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath ($archive + '.sha256') -Value "$hash  $(Split-Path $archive -Leaf)"
-Write-Host "Rust desktop preview: $output"
+Write-Host "Rust desktop artifact: $output"
 Write-Host "Archive: $archive"
 
 if ($Installer) {
@@ -47,11 +58,6 @@ if ($Installer) {
         $isccPath = $knownPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     }
     if (!$isccPath) { throw 'Inno Setup 6 was not found. Install it or omit -Installer.' }
-    $installerOutput = Join-Path (Split-Path $output -Parent) 'PocketAgent-RustDesktop-Setup.exe'
-    $cargoManifest = Get-Content -LiteralPath (Join-Path (Get-Location) 'rust/pocketagent-desktop/Cargo.toml') -Raw
-    $versionMatch = [regex]::Match($cargoManifest, '(?m)^version\s*=\s*"([^"]+)"')
-    if (!$versionMatch.Success) { throw 'The Rust desktop Cargo.toml does not define a package version.' }
-    $version = $versionMatch.Groups[1].Value
     $installerBaseName = [IO.Path]::GetFileNameWithoutExtension($installerOutput)
     & $isccPath "/DAppVersion=$version" "/DSourceDir=$output" "/DOutputDir=$(Split-Path $installerOutput -Parent)" "/DOutputBaseFilename=$installerBaseName" "/DProjectRoot=$(Get-Location)" (Join-Path (Get-Location) 'installer/PocketAgentRustDesktop.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Rust desktop installer build failed.' }
