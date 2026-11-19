@@ -2831,6 +2831,22 @@ fn host_diagnostics_report() -> String {
         "Listener: {requested}; pairing address: https://{advertised}:{}.",
         requested_address.port()
     ));
+    #[cfg(windows)]
+    if requested_address.ip().is_loopback() {
+        checks.push("Windows Firewall: not required for a loopback listener.".into());
+    } else if firewall_rule_exists(requested_address.port()) {
+        checks.push(format!(
+            "Windows Firewall: PASS (PocketAgent inbound TCP {}).",
+            requested_address.port()
+        ));
+    } else {
+        checks.push(format!(
+            "Windows Firewall: FAIL (no inbound allow rule for TCP {}). Start the host and approve the prompt.",
+            requested_address.port()
+        ));
+    }
+    #[cfg(not(windows))]
+    checks.push("Windows Firewall: not applicable on this platform.".into());
     if let Some(public) = detected_public {
         checks.push(format!("Public IPv4 lookup: PASS ({public})."));
     } else if configured_advertise.is_some() {
