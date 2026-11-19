@@ -3078,12 +3078,6 @@ fn ensure_host_firewall_rule(address: std::net::SocketAddr) -> Result<(), String
             return Ok(());
         }
         diagnostics::record("host", "firewall_rule_missing");
-        if !confirm_firewall_rule(port) {
-            diagnostics::record("host", "firewall_rule_declined");
-            return Err(format!(
-                "Windows Firewall access for TCP {port} was not approved; the host was not started"
-            ));
-        }
         if configure_firewall_rule(port) && firewall_rule_exists(port) {
             diagnostics::record("host", "firewall_rule_configured");
             return Ok(());
@@ -3107,20 +3101,11 @@ fn firewall_rule_name(port: u16) -> String {
 }
 
 #[cfg(windows)]
-fn firewall_rule_arguments(port: u16) -> Vec<String> {
-    vec![
-        "advfirewall".into(),
-        "firewall".into(),
-        "add".into(),
-        "rule".into(),
-        format!("name={}", firewall_rule_name(port)),
-        "dir=in".into(),
-        "action=allow".into(),
-        "protocol=TCP".into(),
-        format!("localport={port}"),
-        "profile=any".into(),
-        "edge=no".into(),
-    ]
+fn firewall_rule_command_line(port: u16) -> String {
+    format!(
+        "advfirewall firewall add rule name=\"{}\" dir=in action=allow protocol=TCP localport={port} profile=any edge=no",
+        firewall_rule_name(port)
+    )
 }
 
 #[cfg(windows)]
@@ -3145,63 +3130,42 @@ fn firewall_rule_exists(port: u16) -> bool {
 }
 
 #[cfg(windows)]
-fn confirm_firewall_rule(port: u16) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IDYES, MB_DEFBUTTON2, MB_ICONQUESTION, MB_YESNO, MessageBoxW,
+fn configure_firewall_rule(port: u16) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, INFINITE, WaitForSingleObject,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
     };
 
-    let message = format!(
-        "PocketAgent needs an inbound Windows Firewall rule for TCP port {port} so a paired phone can connect. Create the port-based rule now?\n\nThe rule is tied to the port, not this executable, and future builds will reuse it."
-    );
-    let title = "PocketAgent Windows Firewall";
-    let message = message
+    let arguments = firewall_rule_command_line(port);
+    let verb = "runas\0".encode_utf16().collect::<Vec<_>>();
+    let file = "netsh.exe\0".encode_utf16().collect::<Vec<_>>();
+    let arguments = arguments
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let title = title
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            message.as_ptr(),
-            title.as_ptr(),
-            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
-        ) == IDYES
+    let mut execute = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: verb.as_ptr(),
+        lpFile: file.as_ptr(),
+        lpParameters: arguments.as_ptr(),
+        nShow: 0,
+        ..Default::default()
+    };
+    let launched = unsafe { ShellExecuteExW(&mut execute) } != 0;
+    if !launched || execute.hProcess.is_null() {
+        return false;
     }
-}
-
-#[cfg(windows)]
-fn configure_firewall_rule(port: u16) -> bool {
-    use std::os::windows::process::CommandExt;
-    use std::process::Stdio;
-
-    // Start-Process -Verb RunAs produces the normal UAC consent prompt. The
-    // outer PowerShell process is hidden so no command window is left behind.
-    let arguments = firewall_rule_arguments(port)
-        .into_iter()
-        .map(|argument| format!("'{}'", argument.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(",");
-    let command = format!(
-        "Start-Process -FilePath 'netsh.exe' -ArgumentList @({arguments}) -Verb RunAs -Wait"
-    );
-    std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            command.as_str(),
-        ])
-        .creation_flags(0x0800_0000)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    let completed = unsafe { WaitForSingleObject(execute.hProcess, INFINITE) } == WAIT_OBJECT_0;
+    let mut exit_code = 1u32;
+    let succeeded = completed
+        && unsafe { GetExitCodeProcess(execute.hProcess, &mut exit_code) != 0 }
+        && exit_code == 0;
+    unsafe { CloseHandle(execute.hProcess) };
+    succeeded
 }
 
 fn start_relay_host(
@@ -3657,14 +3621,14 @@ fn flush_block(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::firewall_rule_name;
     use super::{
         can_queue_usage_exhausted, codex_status_available, decode_data_image, endpoint_host,
-        host_certificate_names, image_from_bytes, is_public_ipv4, is_read_only_session,
-        markdown_blocks, normalize_model_selection, parse_session_key, resolve_advertised_endpoint,
-        resolve_codex_from_paths, schedule_pending,
+        firewall_rule_command_line, host_certificate_names, image_from_bytes, is_public_ipv4,
+        is_read_only_session, markdown_blocks, normalize_model_selection, parse_session_key,
+        resolve_advertised_endpoint, resolve_codex_from_paths, schedule_pending,
     };
-    #[cfg(windows)]
-    use super::{firewall_rule_arguments, firewall_rule_name};
     use crate::store::{DesktopStore, ScheduledMessage};
     use std::collections::HashSet;
     use uuid::Uuid;
@@ -3672,15 +3636,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn firewall_rule_is_port_based_and_stable_across_builds() {
-        let arguments = firewall_rule_arguments(8788);
+        let arguments = firewall_rule_command_line(8788);
         assert_eq!(firewall_rule_name(8788), "PocketAgent inbound TCP 8788");
-        assert!(
-            arguments
-                .iter()
-                .any(|argument| argument == "localport=8788")
-        );
-        assert!(arguments.iter().any(|argument| argument == "profile=any"));
-        assert!(!arguments.iter().any(|argument| argument.contains(".exe")));
+        assert!(arguments.contains("localport=8788"));
+        assert!(arguments.contains("profile=any"));
+        assert!(arguments.contains("name=\"PocketAgent inbound TCP 8788\""));
+        assert!(!arguments.contains(".exe"));
     }
 
     #[test]
