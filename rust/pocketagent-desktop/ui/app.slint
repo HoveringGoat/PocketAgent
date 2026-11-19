@@ -366,7 +366,9 @@ export component AppWindow inherits Window {
                 vertical-alignment: center;
             }
             VerticalBox {
-                width: 1px;
+                // Keep the identity column flexible. A fixed width here also
+                // becomes a layout constraint for the resizable window.
+                min-width: 1px;
                 horizontal-stretch: 1;
                 spacing: 0px;
                 Text {
