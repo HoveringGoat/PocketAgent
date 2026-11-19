@@ -62,7 +62,7 @@ component ActionButton inherits Rectangle {
         text: root.label;
         color: root.active || root.primary ? #111b17 : #c1daa6;
         font-size: 13px;
-        font-family: "Segoe UI";
+        font-family: "Arial";
         font-weight: root.active || root.primary ? 700 : 600;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -117,7 +117,7 @@ component ServerPower inherits Rectangle {
         text: root.running ? "ON" : "OFF";
         color: root.running ? #f0fadf : #a7b5aa;
         font-size: 11px;
-        font-family: "Segoe UI";
+        font-family: "Arial";
         font-weight: 500;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -186,7 +186,7 @@ component SessionTab inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
         color: root.selected ? #e8f1e6 : #c1daa6;
-        font-family: "Segoe UI";
+        font-family: "Arial";
     }
     Rectangle { y: parent.height - 2px; height: 2px; background: root.selected ? #c1daa6 : transparent; }
     keys := FocusScope {
@@ -284,9 +284,10 @@ export component AppWindow inherits Window {
         padding: 16px;
         spacing: 8px;
 
-        // Keep identity, location, and usage on one compact line.
+        // Keep the identity block beside the branding: location on row one,
+        // usage on row two so neither line competes with the other.
         HorizontalBox {
-            height: 46px;
+            height: 58px;
             spacing: 12px;
             Text {
                 width: 170px;
@@ -294,26 +295,30 @@ export component AppWindow inherits Window {
                 color: #c1daa6;
                 font-size: 22px;
                 font-weight: 700;
-                font-family: "Segoe UI";
+                font-family: "Arial";
                 vertical-alignment: center;
             }
-            Text {
+            VerticalBox {
                 horizontal-stretch: 1;
-                text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
-                color: #a7baa7;
-                font-size: 11px;
-                font-family: "Segoe UI";
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            Text {
-                width: 130px;
-                text: usage-summary;
-                color: #c1daa6;
-                font-size: 11px;
-                font-family: "Segoe UI";
-                vertical-alignment: center;
-                overflow: elide;
+                spacing: 0px;
+                Text {
+                    height: 26px;
+                    text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
+                    color: #a7baa7;
+                    font-size: 11px;
+                    font-family: "Arial";
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    height: 26px;
+                    text: usage-summary;
+                    color: #c1daa6;
+                    font-size: 11px;
+                    font-family: "Arial";
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
             }
             HorizontalBox {
                 width: 370px;
@@ -371,7 +376,7 @@ export component AppWindow inherits Window {
                 VerticalBox {
                     spacing: 6px;
                     HorizontalBox {
-                        LineEdit { placeholder-text: "Working folder"; text <=> new-session-folder; }
+                        LineEdit { placeholder-text: "Working folder"; font-family: "Arial"; text <=> new-session-folder; }
                         ActionButton { icon: "folder"; label: "Browse"; tooltip: "Browse folders"; clicked => { browse-folders(new-session-folder); } }
                     }
                     if folder-choices.length > 0 : ComboBox {
@@ -401,7 +406,7 @@ export component AppWindow inherits Window {
                             VerticalBox {
                                 padding: 12px;
                                 spacing: 8px;
-                                if transcript-blocks.length == 0 : Text { text: current-session-id == "" ? "Select a conversation" : "Send a message to start working."; color: #c1daa6; font-size: 15px; font-family: "Segoe UI"; }
+                                if transcript-blocks.length == 0 : Text { text: current-session-id == "" ? "Select a conversation" : "Send a message to start working."; color: #c1daa6; font-size: 15px; font-family: "Arial"; }
                                 for block in transcript-blocks : Rectangle {
                                     horizontal-stretch: 1;
                                     height: block.has-image ? 320px : max(42px, block-text.preferred-height + 24px);
@@ -417,7 +422,7 @@ export component AppWindow inherits Window {
                                         color: block.kind == "code" ? #c1daa6 : #e8f1e6;
                                         font-size: block.kind == "heading" ? 18px : 14px;
                                         font-weight: block.kind == "heading" ? 700 : 400;
-                                        font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                                        font-family: block.kind == "code" ? "Consolas" : "Arial";
                                         wrap: word-wrap;
                                     }
                                     if block.has-image : Image {
@@ -438,9 +443,9 @@ export component AppWindow inherits Window {
                                     VerticalBox {
                                         padding: 12px;
                                         spacing: 8px;
-                                        Text { text: "Your input is needed"; color: #f3d28a; font-size: 15px; font-weight: 700; font-family: "Segoe UI"; }
-                                        Text { text: pending-interaction; color: #e8f1e6; wrap: word-wrap; font-family: "Segoe UI"; }
-                                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; }
+                                        Text { text: "Your input is needed"; color: #f3d28a; font-size: 15px; font-weight: 700; font-family: "Arial"; }
+                                        Text { text: pending-interaction; color: #e8f1e6; wrap: word-wrap; font-family: "Arial"; }
+                                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; font-family: "Arial"; }
                                         HorizontalBox {
                                             spacing: 6px;
                                             if interaction-method == "item/tool/requestUserInput" : ActionButton { icon: "\u{27a4}"; label: "Send answers"; tooltip: "Send answers"; enabled: response.text != ""; clicked => { answer-interaction(response.text); response.text = ""; } }
@@ -461,7 +466,7 @@ export component AppWindow inherits Window {
                         HorizontalBox {
                             padding: 8px;
                             spacing: 8px;
-                            Text { text: codex-status + (work-timing == "" ? "" : "  -  " + work-timing); color: #c1daa6; font-size: 12px; font-family: "Segoe UI"; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: codex-status + (work-timing == "" ? "" : "  -  " + work-timing); color: #c1daa6; font-size: 12px; font-family: "Arial"; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                             if codex-status == "Codex is working..." : ActionButton { icon: "\u{25a0}"; label: ""; tooltip: "Stop"; clicked => { stop-work(); } }
                         }
                     }
@@ -473,6 +478,7 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 prompt := TextEdit {
                     vertical-stretch: 1;
+                    font-family: "Arial";
                     text <=> composer-draft;
                     placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
                     enabled: codex-available;
@@ -504,20 +510,20 @@ export component AppWindow inherits Window {
             VerticalBox {
                 padding: 20px;
                 spacing: 12px;
-                Text { text: "Connect your phone"; color: #c1daa6; font-size: 24px; font-weight: 700; font-family: "Segoe UI"; }
-                Text { text: "Scan the pairing QR or copy the full pairing string into the phone app. Treat an unused pairing string like a temporary password."; color: #c1daa6; wrap: word-wrap; font-family: "Segoe UI"; }
+                Text { text: "Connect your phone"; color: #c1daa6; font-size: 24px; font-weight: 700; font-family: "Arial"; }
+                Text { text: "Scan the pairing QR or copy the full pairing string into the phone app. Treat an unused pairing string like a temporary password."; color: #c1daa6; wrap: word-wrap; font-family: "Arial"; }
                 GroupBox {
                     title: "Add new device";
                     VerticalBox {
                         padding: 16px;
                         spacing: 8px;
-                        Text { text: host-status; color: #c1daa6; font-family: "Segoe UI"; }
-                        Text { text: host-endpoint; color: #8fbc8f; font-family: "Segoe UI"; }
+                    Text { text: host-status; color: #c1daa6; font-family: "Arial"; }
+                    Text { text: host-endpoint; color: #8fbc8f; font-family: "Arial"; }
                         ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { pairing-open = !pairing-open; } }
                         if pairing-open : VerticalBox {
                             spacing: 8px;
                             Image { source: host-qr; width: 220px; height: 220px; image-fit: contain; accessible-role: image; accessible-label: "New device pairing QR code"; }
-                            Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; font-family: "Segoe UI"; }
+                            Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; font-family: "Arial"; }
                             ActionButton { icon: "connect"; label: "Renew pairing"; tooltip: "Renew pairing"; clicked => { renew-pairing(); } }
                         }
                     }
@@ -552,8 +558,8 @@ export component AppWindow inherits Window {
                         spacing: 8px;
                         HorizontalBox {
                             spacing: 8px;
-                            repository := LineEdit { text: repository-path; edited => { repository-path = self.text; } }
-                            executable := LineEdit { text: codex-executable; edited => { codex-executable = self.text; } }
+                            repository := LineEdit { text: repository-path; font-family: "Arial"; edited => { repository-path = self.text; } }
+                            executable := LineEdit { text: codex-executable; font-family: "Arial"; edited => { codex-executable = self.text; } }
                             ActionButton { icon: "\u{21bb}"; label: "Connect Codex"; tooltip: "Connect Codex"; clicked => { connect-codex(repository.text, executable.text); } }
                         }
                         Text { text: codex-status; color: codex-available ? #c1daa6 : #f3b8a5; font-size: 14px; }
@@ -568,7 +574,7 @@ export component AppWindow inherits Window {
                         Text { text: relay-status; color: #a7baa7; }
                         Text { text: relay-endpoint; color: #c1daa6; }
                         Text { text: root.relay-session-key; color: #f3d28a; overflow: elide; }
-                        relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }
+                        relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; font-family: "Arial"; text: "127.0.0.1:0"; }
                         HorizontalBox {
                             spacing: 8px;
                             ActionButton { width: 132px; icon: "\u{25b6}"; label: relay-running ? "Running" : "Start relay"; tooltip: "Start relay"; primary: relay-running; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
@@ -576,10 +582,10 @@ export component AppWindow inherits Window {
                         }
                         Text { height: 116px; text: relay-enrollment; color: #f3d28a; wrap: word-wrap; overflow: elide; }
                         Text { text: relay-host-status; color: #a7baa7; wrap: word-wrap; }
-                        relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; }
-                        relay-host-id := LineEdit { placeholder-text: "Relay host ID"; }
-                        relay-host-token := LineEdit { placeholder-text: "Relay host token"; }
-                        relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>)"; }
+                        relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; font-family: "Arial"; }
+                        relay-host-id := LineEdit { placeholder-text: "Relay host ID"; font-family: "Arial"; }
+                        relay-host-token := LineEdit { placeholder-text: "Relay host token"; font-family: "Arial"; }
+                        relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>)"; font-family: "Arial"; }
                         ActionButton { icon: "\u{21c4}"; label: "Connect"; tooltip: "Connect this desktop through relay"; enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != ""; clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); } }
                         ActionButton { icon: "\u{00d7}"; label: "Disconnect"; tooltip: "Disconnect outbound host"; enabled: relay-host-connected; clicked => { disconnect-relay-host(); } }
                     }
@@ -608,7 +614,7 @@ export component AppWindow inherits Window {
                 padding: 20px;
                 spacing: 12px;
                 Text { text: "Rename conversation"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
-                LineEdit { text <=> rename-dialog-draft; placeholder-text: "New conversation name"; }
+                LineEdit { text <=> rename-dialog-draft; placeholder-text: "New conversation name"; font-family: "Arial"; }
                 HorizontalBox {
                     spacing: 8px;
                     ActionButton { icon: "rename"; label: "Save name"; tooltip: "Save name"; enabled: rename-dialog-draft != ""; clicked => { rename-session(rename-dialog-draft); rename-dialog-open = false; } }
@@ -640,7 +646,7 @@ export component AppWindow inherits Window {
                 Text { text: "Model and reasoning"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
                 Text { text: model-catalog; color: #a7baa7; font-size: 12px; overflow: elide; }
                 ComboBox { model: model-options; current-value: model-dialog-draft; selected(value) => { model-dialog-draft = value; } }
-                LineEdit { text <=> effort-dialog-draft; placeholder-text: "Reasoning effort"; }
+                LineEdit { text <=> effort-dialog-draft; placeholder-text: "Reasoning effort"; font-family: "Arial"; }
                 HorizontalBox {
                     spacing: 8px;
                     ActionButton { icon: "approve"; label: "Apply model"; tooltip: "Apply model"; clicked => { selected-model = model-dialog-draft; selected-effort = effort-dialog-draft; model-dialog-open = false; } }

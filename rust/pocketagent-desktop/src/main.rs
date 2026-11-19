@@ -889,6 +889,18 @@ fn start_codex_worker(
                             .map(|conversation| conversation.working_directory.clone())
                             .filter(|directory| !directory.is_empty())
                             .unwrap_or_else(|| store.repository_path.clone());
+                        // Selection and local conversation actions must not depend on
+                        // Codex being able to hydrate the remote rollout history.
+                        // A missing rollout is recoverable for archive/restore/rename.
+                        selected_id = Some(id.clone());
+                        set_selected_session(&weak, id.clone());
+                        set_current_working_directory(&weak, working_directory.clone());
+                        set_selected_model_options(
+                            &weak,
+                            (!options.trim().is_empty()).then_some(options.clone()),
+                            (!reasoning_effort.trim().is_empty()).then_some(reasoning_effort.clone()),
+                        );
+                        set_host_devices(&weak, &host_registry, &id);
                         current.set_repository(working_directory.clone());
                         match current
                             .resume_thread(
@@ -898,16 +910,6 @@ fn start_codex_worker(
                             .await
                         {
                             Ok(history) => {
-                                selected_id = Some(id.clone());
-                                set_selected_session(&weak, id.clone());
-                                set_current_working_directory(&weak, working_directory);
-                                set_selected_model_options(
-                                    &weak,
-                                    (!options.trim().is_empty()).then_some(options.clone()),
-                                    (!reasoning_effort.trim().is_empty())
-                                        .then_some(reasoning_effort),
-                                );
-                                set_host_devices(&weak, &host_registry, &id);
                                 if let Some(record) = store
                                     .conversations
                                     .iter()
@@ -935,7 +937,16 @@ fn start_codex_worker(
                                     },
                                 )
                             }
-                            Err(error) => set_codex_error(&weak, error.to_string()),
+                            Err(error) => {
+                                // Do not leave the previous thread attached after a
+                                // failed resume; later prompts must not target it.
+                                current.clear_thread();
+                                set_codex_error(&weak, error.to_string());
+                                set_transcript(
+                                    &weak,
+                                    "Conversation history is unavailable. You can still archive, restore, or rename this conversation.".into(),
+                                );
+                            }
                         }
                     }
                     CodexCommand::ArchiveSelected => {
