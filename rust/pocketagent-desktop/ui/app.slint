@@ -461,7 +461,7 @@ export component AppWindow inherits Window {
                 height: 38px;
                 spacing: 8px;
                 delay := LineEdit { width: 100px; placeholder-text: "Delay (s)"; text <=> schedule-delay; }
-                ActionButton { icon: "\u{2637}"; label: ""; tooltip: "Review scheduled messages"; enabled: current-session-id != ""; active: reviewing-schedules; clicked => { reviewing-schedules = !reviewing-schedules; } }
+                ActionButton { width: 38px; horizontal-stretch: 0; icon: "\u{2637}"; label: ""; tooltip: "Review scheduled messages"; enabled: current-session-id != ""; active: reviewing-schedules; clicked => { reviewing-schedules = !reviewing-schedules; } }
             }
             HorizontalBox {
                 height: 92px;
@@ -473,10 +473,11 @@ export component AppWindow inherits Window {
                     enabled: codex-available;
                 }
                 VerticalBox {
-                    width: 112px;
+                    width: 104px;
+                    horizontal-stretch: 0;
                     spacing: 8px;
-                    ActionButton { icon: "\u{27a4}"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
-                    ActionButton { icon: "\u{23f1}"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-prompt(prompt.text, selected-model, selected-effort, delay.text); } }
+                    ActionButton { width: 104px; horizontal-stretch: 0; icon: "\u{27a4}"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
+                    ActionButton { width: 38px; horizontal-stretch: 0; icon: "\u{23f1}"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-prompt(prompt.text, selected-model, selected-effort, delay.text); } }
                 }
             }
             if submission-warning != "" : Text { text: submission-warning; color: #f3b8a5; wrap: word-wrap; }

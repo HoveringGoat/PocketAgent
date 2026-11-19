@@ -114,6 +114,8 @@ The Rust desktop header keeps the app identity, machine/directory location, usag
 
 Session actions are compact icon buttons beside the conversation tabs and use the same semantic vector shapes as the WPF toolbar (access, edit, robot/model, pin, archive/unarchive). Rename and model/reasoning edits open modal dialogs; their drafts apply only when confirmed, and the session smoke test verifies both dialogs are reachable.
 
+The composer keeps the multiline prompt on the left and uses a fixed-width action column on the right: Send is 104px wide, while Schedule and scheduled-message review remain 38px icon actions. The session smoke test checks these bounds so the actions cannot stretch into the composer.
+
 The Rust desktop relay panel now exposes the persisted enrollment bundle and shared application-session key needed to provision one attached host/device pair. Native Android/WPF relay clients and multi-enrollment management remain open.
 
 The Rust desktop writes category-only lifecycle diagnostics under the user-local PocketAgent-rust data directory; it never records message bodies, provider stderr, pairing tokens, or relay secrets. `Build-RustDesktop.ps1 -Installer` packages the executable into a per-user Windows installer while leaving that runtime state outside the replaceable install directory.

@@ -59,6 +59,15 @@ try {
   Click-Audit 'Model and reasoning'
   $null=Await-Audit { Find-Audit 'Apply model' } 'model dialog'
   Click-Audit 'Cancel model changes'
+  $sendButton = Await-Audit { Find-Audit 'Send' } 'send button'
+  $scheduleButton = Await-Audit { Find-Audit 'Schedule message' } 'schedule button'
+  $reviewButton = Await-Audit { Find-Audit 'Review scheduled messages' } 'scheduled review button'
+  if ($sendButton.Current.BoundingRectangle.Width -lt 110 -or $sendButton.Current.BoundingRectangle.Width -gt 145) {
+    throw 'Send button is not the .NET-matched action width.'
+  }
+  if ($scheduleButton.Current.BoundingRectangle.Width -gt 70 -or $reviewButton.Current.BoundingRectangle.Width -gt 70) {
+    throw 'Schedule or scheduled-review action is still stretched.'
+  }
   Click-Audit 'Review scheduled messages'
   $null=Await-Audit { Find-Audit 'Pending messages for this conversation' } 'pending job view'
   # The composer is the tall multiline edit. The delay is the last single-line edit.
