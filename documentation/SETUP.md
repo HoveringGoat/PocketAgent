@@ -16,7 +16,7 @@ android/PocketAgent-0.2.2-android.apk
 android/PocketAgent-0.2.2-android.apk.sha256
 ```
 
-Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. This release includes a pocket/terminal icon.
+Extract the ZIP and run the executable inside its desktop folder. The Windows package is self-contained; no .NET runtime, Node or source checkout is required. Install the signed APK over the existing phone app using the same signing identity; no uninstall/data reset is needed. Desktop Settings displays the running version and executable path so shortcuts to old builds can be identified. The Rust executable and installer use the committed PocketAgent pocket/terminal icon. The Rust client uses the live Codex model catalog and falls back to a supported catalog model when the local Codex configuration names a model unavailable to the signed-in account.
 
 Finish active work and close the old desktop before starting the new version. Saved state is under LocalAppData/PocketAgent, outside release folders. Closing a server ends its provider process; pending schedules wait for startup. An upgrade does not preserve in-flight execution. The running 0.1.9 artifact folder was left at its original path because it is in use; older artifacts were grouped without deletion. GitHub Releases and built-in update checks remain future work.
 
@@ -28,7 +28,7 @@ Choose Use Codex settings (inherit), Ask for approval (workspace writes and on-r
 
 ### Check Codex sign-in and model compatibility
 
-Start the server and click Check Codex sign-in. Diagnostics read account/config/model metadata through the same local process; they do not generate model responses. Catalog presence is not inference verification. The model picker changes the conversation model. When the installed Codex app-server advertises supported reasoning efforts, the conversation model dialog also offers a per-conversation reasoning setting; “Use model default” clears the override.
+Start the server and click Check Codex sign-in. Diagnostics read account/config/model metadata through the same local process; they do not generate model responses. Catalog presence is not inference verification. The desktop model picker searches readable model names and shows the technical model ID beneath each choice. When the installed Codex app-server advertises supported reasoning efforts, the conversation model dialog also offers a per-conversation reasoning setting with friendly labels; "Use model default" clears the override.
 
 ## Direct internet (IP and port)
 
@@ -45,6 +45,10 @@ On the first start after choosing a non-loopback listener, PocketAgent offers to
 A CGNAT/private WAN address needs ISP/router changes to permit direct inbound access. Double NAT needs both routers configured. Local diagnostics check the listener, certificate identity, exact Host and API; they cannot certify outside reachability. No silent relay fallback exists.
 
 Public-IP changes require setup again and a new phone origin; the desktop key is preserved, but saved tokens are never forwarded to a changed origin. On home Wi-Fi, using the public address requires router NAT loopback support; otherwise use cellular or configure a separate LAN connection.
+
+### Relay mode status
+
+The planned relay mode uses an unlocked PocketAgent server as a relay node. A locked-down remote desktop connects outbound to that relay; the phone connects to the relay and selects the attached remote host. This removes the inbound firewall requirement from the remote desktop, but the relay node itself must remain reachable. The Rust workspace now has authenticated WebSocket transport, including a native Rustls `wss://` loopback round trip. The Rust desktop persists one relay host/client enrollment bundle and shared application-session key under `%LOCALAPPDATA%/PocketAgent-rust/relay.json`, and displays that bundle while the relay is running so another host can be provisioned without opening the secrets file. Native Android/WPF relay clients and multi-enrollment management are not available in the current release.
 
 ## Connect over Wi-Fi
 
@@ -66,7 +70,7 @@ The desktop key and server.pfx remain private. Do not export them to the phone o
 
 Appearance settings are available from the main Settings page on Android and desktop. Compact (90%), Comfortable (100%), Plus (110%), and Large (120%) presets are stored locally and apply to fonts and primary controls without changing server or conversation data.
 
-Current navigation uses the Settings gear for a full page listing all paired servers uniformly, per-server actions, add-server access, and inline application information. Usage and reset details are opened from the relevant server card, so Personal and Work quotas remain separate. Paired servers remain connected and poll independently; switching the visible workspace does not disconnect another machine. Conversation tabs visually join the open pane; its title strip contains rename, model/reasoning, archive, and archived-history actions. The active tab has the outlined top/side boundary while inactive tabs keep a lower divider. The status/model row, composer, Send, and timer controls share one full-width bottom control panel. Scheduling is created or reviewed from the timer button beside Send; its pending count appears beside the timer, and tapping it with an empty composer opens the review/cancel dialog. The desktop Devices page can grant or revoke binary access to the selected conversation for each paired device; ungranted devices do not see that conversation.
+Current navigation uses the Settings gear for a full page listing all paired servers uniformly, per-server actions, add-server access, and inline application information. Usage and reset details are opened from the relevant server card, so Personal and Work quotas remain separate. Paired servers remain connected and poll independently; switching the visible workspace does not disconnect another machine. Conversation tabs visually join the open pane; its title strip contains rename, model/reasoning, archive, and archived-history actions. The active tab has the outlined top/side boundary while inactive tabs keep a lower divider. The status/model row, composer, Send, and timer controls share one full-width bottom control panel. Scheduling is created or reviewed from the timer button beside Send; its pending count appears beside the timer, and tapping it with an empty composer opens the review/cancel dialog. When a conversation is selected, the **Access** action appears beside the other conversation actions and opens that conversation's device checklist; the Devices page is for pairing and device-wide revocation. Ungranted devices do not see that conversation.
 
 Open the gear to view the full Settings page, then use the unified server list to switch saved machines or add a new one. Each origin has its own encrypted device token, tabs, draft and uncertain-delivery state. Adding a connection opens pairing; unpairing one server does not remove other saved servers. The selected conversation pane contains compact actions for Rename, Model/reasoning, Pin/unpin, Archive, and archived-history immediately beside the new-conversation button; the global header shows the server machine and selected working directory. + opens working-folder and optional model choices; it never asks for a name. **Browse folders** navigates the home machine's local drives; **Use this folder** selects the current directory. You can also enter an absolute desktop path. Paired owner devices can select existing local directories accessible to the desktop account; host permission settings remain desktop-owned. A conversation's folder stays fixed after creation. The desktop Settings repository remains the creation default. There is no sidebar or decorative footer.
 
@@ -98,6 +102,8 @@ Write a prompt, then choose the timer button beside Send in Android or **Schedul
 
 Schedules are persisted on the desktop and survive restarts. The desktop must be awake and the server running. Missed deadlines are reconsidered when it runs again; there is no wake timer or cloud execution. Revoking/expiring a device cancels its pending schedules. Submitted means Codex acknowledged receipt, not successful task completion. An uncertain dispatch is never replayed after restart: review history and explicitly create another message if needed.
 
+
+After a connected provider turn fails, the Rust desktop keeps the composer available so the user can inspect the error and explicitly retry; connection and disconnect failures still disable provider actions. Revoking a device refreshes the access checklist for the conversation currently selected instead of clearing that conversation context.
 
 ## Build from source
 
@@ -147,6 +153,48 @@ pairing, provider credentials, and conversation state are not used.
 
 ## Verification commands and limits
 
+### Rust desktop MVP preview
+
+Rust desktop diagnostics are appended to `%LOCALAPPDATA%/PocketAgent-rust/desktop.log` (or the XDG data equivalent). Entries record lifecycle and failure categories without message bodies, tokens, or provider stderr.
+
+On startup and every ten minutes while the worker is running, the Rust local store applies the same seven-day idle archive rule as the server: unpinned conversations with no recent activity are moved to Archived; pinned conversations and recent activity are preserved. This is local metadata only and never deletes Codex history.
+
+Rust metadata writes use a temporary file plus a recoverable backup replacement, so repeated saves work on Windows even when the previous JSON file exists; a backup is read if a power loss leaves the main file missing.
+
+The Rust composer also accepts a delay in seconds for a scheduled prompt and shows persisted entries in a compact Scheduled messages panel with per-entry Cancel actions. Scheduled entries are persisted with their target conversation and dispatched through the normal Codex turn path after restart; canceling a pending entry is rechecked at the dispatch boundary so a sleeping timer cannot send it later. A failed dispatch is recorded in the local schedule state rather than silently retried.
+
+Before a Rust turn is dispatched, the provider rate-limit response is checked. If a known usage window is exhausted, the original prompt is persisted as a pending schedule until the reported reset (or a five-minute retry when no reset is reported); it is not sent into a known quota failure.
+
+The Rust rewrite now has a runnable native desktop shell. It defaults to local Codex mode: the repository defaults to saved local state, `POCKETAGENT_REPOSITORY`, or the launch directory, and Windows detects `%APPDATA%/npm/codex.ps1` when present. It connects to Codex on startup, persists settings, thread metadata, per-conversation working directories, and per-conversation model/reasoning values under the user data directory, lists the provider model catalog and sanitized rate-limit usage summary, lists saved threads, creates a new conversation (using an optional working-folder field or the saved repository by default), resumes a selected thread, sends prompts, keeps status beside the transcript composer, steers an active turn with its observed turn ID, rejects remote steering whose expected turn no longer matches the active turn or is omitted, keeps an active turn's model/reasoning policy fixed while steering, disables model/reasoning edits during active work, preserves the composer draft, renders headings, bullets, code blocks, command output, file changes, and local `imageView` results as Markdown-styled transcript blocks, resolves relative image paths against the selected conversation folder, accepts structured image URL/data fields, surfaces failed provider turns instead of treating them as successful, and presents supported Codex approval/user-input requests in the conversation view. Archiving an active conversation is rejected until the work is stopped or completed. The host UI exposes per-conversation grants, a device-wide **Revoke** action that invalidates the device token and removes its conversation access, and **Renew pairing** to replace an expired or consumed one-time code without restarting the app. The **Optional relay** panel starts/stops the authenticated relay and accepts an explicit bind address (it defaults to loopback). Its host/client identity and shared application-session key are persisted under `%LOCALAPPDATA%/PocketAgent-rust/relay.json`; the running panel displays that bundle for local provisioning, and the file must still be treated as secret. Local conversation use does not require the relay. The Rust desktop now starts an authenticated HTTP host on `127.0.0.1:8788` by default; set `POCKETAGENT_HOST_BIND` to an explicit non-loopback address when remote access is intended. Pairing state is persisted under `%LOCALAPPDATA%/PocketAgent-rust/devices.json`, bearer tokens are stored only as SHA-256 digests, and the host UI manages per-conversation device access. The Android-compatible routes cover pairing, session discovery, authorized conversation listing, directory browsing, per-folder conversation creation, send, archive/restore, pin, rename, history, images, and schedules; every remote action is forwarded to the same local Codex worker. The relay crate now has an encrypted host dispatch loop; native WPF/Android relay clients and multi-enrollment management remain open.
+
+The Rust desktop status row shows live elapsed work time and the duration of the last completed turn; host snapshots expose the corresponding active-start and completed-duration fields.
+
+The Rust desktop uses persistent top-level **Sessions**, **Devices**, and **Settings** pages. Its native layout follows the packaged desktop shell: a compact server/context header, right-aligned navigation and lifecycle indicator, title-only conversation tabs, adjacent conversation actions, a bounded transcript surface, status row, and composer/action panel. Sessions owns conversation selection and the transcript/composer; Devices owns pairing renewal, per-conversation grants, and device revocation; Settings owns Codex connection and relay configuration. Each page is scrollable so controls below the initial viewport remain reachable, and transcript rows size themselves to their Markdown content so blocks do not overlap.
+
+The relay panel now displays the persisted host/client enrollment bundle and shared application-session key while the relay is running. This is sufficient to provision one attached host/device pair locally; native Android/WPF relay clients and multi-enrollment management remain open.
+
+The Rust host binds loopback by default. Non-loopback HTTP is rejected unless `POCKETAGENT_HOST_ALLOW_INSECURE_REMOTE=1` is explicitly set; that development escape hatch has no TLS and must not be used on an untrusted network. Production remote access still requires the Rust relay application transport or a TLS host implementation. The host now also exposes provider status/models/usage, authenticated session logout/revocation, conversation creation and model/reasoning/interrupt controls, bounded conversation snapshots and cursor-paginated history through `/api/conversations/{id}` and `/api/conversations/{id}/history`, owner-authenticated non-hidden directory browsing through `/api/directories`, repository-scoped images through `/api/conversations/{id}/images?path=...`, and persisted schedules through `/api/scheduled` and `/api/conversations/{id}/scheduled`. During an active turn, an authenticated non-paginated conversation read can return the last complete snapshot immediately with the current `working` status and active turn ID; paginated history remains provider-backed. Relay application transport and replacement of the packaged WPF/ASP.NET desktop remain open.
+
+For a development remote-host connection, fill the **Connect this desktop through relay** fields in the Rust desktop's Optional relay panel, or set `POCKETAGENT_RELAY_HOST_URL`, `POCKETAGENT_RELAY_HOST_ID`, `POCKETAGENT_RELAY_HOST_TOKEN`, and `POCKETAGENT_RELAY_SESSION_KEY` (`<uuid>:<64 hex characters>`) before launching. The desktop opens an outbound authenticated relay-host connection and dispatches encrypted HTTP-like requests to the same local host router. The panel's **Disconnect outbound host** action closes that connection before another relay target is configured. The relay session key and transport token are secrets; the form does not persist them, and this enrollment remains a development hook rather than production provisioning. The Android client does not yet use the relay transport.
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-desktop
+```
+
+To produce a portable preview directory and ZIP, run:
+
+```powershell
+.\scripts\Build-RustDesktop.ps1
+```
+
+The build first runs the Rust workspace test, warnings-as-errors clippy, and authenticated relay process-demo gates; a failure stops before packaging. It then runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-preview/` with a ZIP beside it. To also build and install-test the per-user Rust Windows installer, run:
+
+```powershell
+.\scripts\Build-RustDesktop.ps1 -Installer
+```
+
+That command compiles `installer/PocketAgentRustDesktop.iss`, installs the resulting setup into an isolated temporary directory, launches the installed executable through the same UI smoke test, and uninstalls it. The Rust preview artifacts are separate from the current .NET/WPF release channel and are not publicly uploaded by this local build.
+
 Focused checks for this change:
 
 ```powershell
@@ -156,10 +204,34 @@ dotnet run --project tests/PocketAgent.DesktopChecks -c Release
 $env:POCKETAGENT_TEST_SERVER_DLL = (Resolve-Path src/PocketAgent.Server/bin/Release/net10.0/PocketAgent.Server.dll).Path
 node --test tests/direct-internet.test.mjs
 .\tests\desktop-smoke.ps1
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- demo
 ```
+
+The Rust relay foundation is checked with `cargo test --manifest-path rust/Cargo.toml --workspace`; it covers protocol serialization, AES-GCM envelope round trips, tamper/wrong-key rejection, encrypted application request/response route binding, authenticated loopback WebSocket routing, native Rustls WSS routing, invalid-auth rejection, opaque payload preservation, outbound-host routing and device/session mismatch rejection. The `pocketagent-relay demo` command runs the same authenticated encrypted request/response flow as a real process-level smoke check. These checks do not yet prove production certificate enrollment or a real two-desktop application deployment.
+
+For a three-process routing probe, start the relay with explicit test identities and tokens, then run one host and one client in separate terminals:
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- serve 127.0.0.1:8787 11111111-1111-1111-1111-111111111111 host-token 22222222-2222-2222-2222-222222222222 client-token
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- host ws://127.0.0.1:8787 11111111-1111-1111-1111-111111111111 host-token
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- client ws://127.0.0.1:8787 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 client-token
+```
+
+The host probe echoes the client's opaque envelope and the client verifies the request ID and envelope. These commands use loopback `ws://`, in-memory authentication and a deliberately non-provider payload; they are development probes, not a production service or a replacement for device enrollment.
+
+To keep probe identities across restarts, create a local config once and start from it:
+
+```powershell
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- init-config .local/relay-config.json
+cargo run --manifest-path rust/Cargo.toml -p pocketagent-relay --bin pocketagent-relay -- serve-config 127.0.0.1:8787 .local/relay-config.json
+```
+
+The generated file contains bearer tokens and must stay local/ignored. This format is intentionally plain JSON for the MVP; it is not encrypted secret storage and must not be used for production deployment.
 
 NetworkChecks verifies ticket single use/rotation/expiry, same-key certificate renewal, real HTTPS enrollment and replay rejection, protected API access and certificate hot reload. DesktopChecks verifies effective colors, rendered surfaces, confirmation Yes/dismiss behavior and render limits; it generates a desktop QR fixture. PairingInstrumentation on an isolated Android emulator decodes both ZXing-generated and actual desktop-generated QR images, exercises manual-paste UI enrollment, encrypted pin restoration/server switching and real TLS. Wrong pins, wrong hostnames and expired certificates fail before HTTP delivery. The chat smoke regression seeds its isolated debug connection separately so steering/drafts/folder/model/archive checks remain independent of camera input. Debug instrumentation/HTTP exceptions do not ship in the signed APK.
 
 Build/lint/signature checks and focused native/protocol tests are distinguished from physical acceptance: scanning a real screen with the phone camera and connecting through the actual router/cellular route still require user verification. No public endpoint, router/Caddy configuration, live model turn or full test suite was used. Native title-bar attributes can fall back to Windows behavior; OS-owned folder pickers retain the OS theme. A prior theme claim was too broad: brush/render tests do not prove every OS theme state matches the user's display.
 
 For previews of the actual desktop server switch, run `dotnet run --project tests/PocketAgent.DesktopChecks -- --toggle-preview`. This captures OFF and ON from the real WPF template at twice normal resolution into `.local/previews/desktop/server-switch-off.png` and `server-switch-on.png`, plus full-window views with dummy conversations in `desktop-switch-off.png` and `desktop-switch-on.png`. The fixture changes only the displayed state and does not start a server. These visual captures do not verify real server start/stop failure recovery.
+
+The Rust 0.1.4 preview uses the same Codex executable discovery priority as the .NET desktop (latest stable VS Code extension native binary, then native PATH installation, then local npm fallback). Its Windows executable and provider child use GUI/no-console process flags. Session tabs scroll horizontally, every actionable control has an accessible icon and tooltip, active/primary controls use the filled-green treatment, machine/directory and usage occupy separate header lines, model/reasoning controls sit above the composer, and command/tool/file provider activity is omitted from the normal conversation transcript. Build and smoke verification must inspect the minimum and resized layouts for clipping or overlap.

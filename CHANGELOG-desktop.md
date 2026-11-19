@@ -4,6 +4,35 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.4
+
+- Match the .NET Codex executable discovery order and launch the Windows desktop/provider processes without console windows.
+- Select a provider-supported model from Codex's live catalog so stale local model settings cannot block prompts.
+- Replace Rust text-only controls with accessible icon actions and clear filled-green selected/primary states.
+- Embed the generated PocketAgent icon in the Rust Windows executable and keep it aligned with the installer icon.
+- Rework the Sessions layout to keep tabs scrollable and visible, place machine/directory and usage context consistently, move model/reasoning selection above the composer, and filter provider activity out of conversation history.
+- Add focused regressions for Codex resolution and transcript filtering, plus resize/overflow/overlap verification for the packaged desktop shell.
+
+### Rust desktop preview 0.1.3
+
+- Add selectable session tabs with visible pin state, a dedicated usage line, and folder/model choices when creating a conversation.
+- Keep in-memory drafts per session, clear accepted submissions only when the composer still matches, and add a per-session view for reviewing and canceling pending messages.
+
+### Rust desktop preview 0.1.2
+
+- Skip automatic archive for conversations with pending messages. Manual archive cancels queued messages, and restoring a conversation keeps those jobs canceled.
+
+## Rust desktop preview 0.1.1 - 2026-11-17
+
+- Persisted relay enrollment now includes a shared application-session key and is displayed by the running relay panel for local peer provisioning.
+- Added relay session-key wire-format validation and smoke coverage for the visible enrollment bundle.
+
+## 0.3.13 - 2026-11-16
+
+- Added an Access action beside the selected conversation's desktop actions, with a per-conversation device checklist.
+- Moved per-conversation grants out of the Devices page; Devices now focuses on pairing and device-wide revocation.
+- Reworked the conversation model picker with searchable readable names, technical IDs, and friendly reasoning labels.
+
 ## 0.3.12 - 2026-11-16
 
 - Allow archiving and restoring an idle conversation from PocketAgent metadata when its Codex thread is unavailable.

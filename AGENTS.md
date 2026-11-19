@@ -25,6 +25,18 @@
 - If a change is incomplete or validation is blocked, leave it uncommitted and report the exact blocker rather than creating a misleading partial commit.
 - Do not amend, rewrite, or push existing commits unless the user explicitly requests it.
 
+### Commit procedure
+
+- At the start of a task, inspect `git status --short` and treat existing modifications as protected user work unless their ownership is clear.
+- Define the change boundary before staging: behavior, tests, documentation and required build/configuration files belong together; unrelated fixes do not.
+- Use the prep commit only for mechanical edits. It must not change runtime behavior or test expectations.
+- In the behavior commit, include the implementation, focused regression tests and durable documentation for that behavior.
+- If one file contains both current work and unrelated changes, stage by hunk or use a temporary worktree; never stage the whole file by convenience.
+- Before committing, run the narrowest relevant validation, then review both `git diff` and `git diff --cached --check`.
+- Review the staged file list and patch, confirm no secrets or generated artifacts are included, and verify the commit subject describes the complete staged change in one sentence.
+- After committing, run `git status --short` and report the commit ID, validation commands and any intentionally uncommitted work.
+- Do not leave completed approved work uncommitted while starting a separate change set.
+
 ## Documentation workflow
 
 - Documentation must explain how a feature or system is intended to work as well as actual implementation details.
@@ -41,6 +53,7 @@
 - Prefer solution- or project-level build commands over low-level compiler invocations unless the user asks for something narrower.
 - Do not run full test suites unless the user explicitly asks for that. Hand test verification back to the user when appropriate.
 - For bug fixes, write a correct regression first, observe its failure before changing behavior, then observe it pass. Use focused tests.
+- For every UI change, verify the supported minimum window size and at least one larger/resized layout; no control, label, tab, icon, or status surface may be clipped, overlap another element, or become unreachable. Exercise long labels and overflow paths, inspect screenshots or equivalent visual evidence for each touched page, and treat any visible clipping or overlap as a release blocker.
 - Keep linting, formatting, and warnings clean on touched files before handoff.
 - Record validation commands that were run and call out environment limitations that affect verification.
 - Increment the patch once per completed change set after the initial 0.1.0 milestone.

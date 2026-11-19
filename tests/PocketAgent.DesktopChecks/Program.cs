@@ -44,10 +44,17 @@ internal static class Program
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
             if (window.FindName("PinButton") is null)
                 throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
+            if (window.FindResource("ModelOptionTemplate") is not DataTemplate)
+                throw new InvalidOperationException("The model picker must render human-readable names with a technical ID template.");
+            var reasoningLabel = typeof(MainWindow).GetMethod("ReasoningLabel", BindingFlags.NonPublic | BindingFlags.Static)!;
+            if (!Equals(reasoningLabel.Invoke(null, ["xhigh"]), "Extra high"))
+                throw new InvalidOperationException("Reasoning choices must use readable labels.");
             if (Environment.GetCommandLineArgs().Contains("--interactive-image", StringComparer.OrdinalIgnoreCase))
                 return RunInteractiveImagePreview(window, root);
             if (Environment.GetCommandLineArgs().Contains("--interactive-pin", StringComparer.OrdinalIgnoreCase))
                 return RunInteractivePinPreview(window, root);
+            if (Environment.GetCommandLineArgs().Contains("--access-preview", StringComparer.OrdinalIgnoreCase))
+                return RunAccessPreview(window, root);
             foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
@@ -131,6 +138,9 @@ internal static class Program
                 "Error sample", "PocketAgent", root, "fixture", "inherit", null, null, null, null, null, false);
             typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
             window.Show();
+            var accessButton = (Button)window.FindName("AccessButton")!;
+            if (System.Windows.Automation.AutomationProperties.GetName(accessButton) != "Manage conversation access" || !Equals(accessButton.Content, "Access"))
+                throw new InvalidOperationException("The selected conversation action group must expose a direct access action.");
             var initialMeta = (TextBlock)window.FindName("ConversationMeta")!;
             if (string.IsNullOrWhiteSpace(initialMeta.Text))
                 throw new InvalidOperationException("The conversation status bar must identify the idle/no-selection state.");
@@ -261,6 +271,7 @@ internal static class Program
             [], null, "PocketAgent", root, Environment.MachineName, "fixture", "inherit", null, null, null, null, false);
         typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
         ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
+        ((StackPanel)window.FindName("ConversationActions")!).IsEnabled = true;
         window.Show();
         typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
         window.Activate();
@@ -289,6 +300,30 @@ internal static class Program
         window.Activate();
         Console.WriteLine("Interactive pin preview is open. Inspect the pushpin icon in the action row; close the window when finished.");
         System.Windows.Threading.Dispatcher.Run();
+        return 0;
+    }
+
+    private static int RunAccessPreview(MainWindow window, string root)
+    {
+        ((TabControl)window.FindName("Navigation")!).SelectedIndex = 0;
+        ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
+        ((StackPanel)window.FindName("ConversationActions")!).IsEnabled = true;
+        ((TextBlock)window.FindName("ServerNameDisplay")!).Text = "WORK-PC";
+        ((TextBlock)window.FindName("ConversationLocation")!).Text = "C:\\Github\\PocketAgent";
+        ((TextBlock)window.FindName("UsageDisplay")!).Text = "5hr: 63%  •  weekly: 8%";
+        ((TextBlock)window.FindName("ConversationMeta")!).Text = "Idle  •  Select a conversation";
+        var sessions = (ListBox)window.FindName("SessionList")!;
+        sessions.ItemsSource = new[]
+        {
+            new { Id = "preview-one", Title = "Release planning", Label = "Release planning\ncompleted" },
+            new { Id = "preview-two", Title = "Image review", Label = "Image review\nidle" }
+        };
+        window.Show();
+        window.UpdateLayout();
+        var path = Path.Combine(root, ".local", "previews", "desktop", "conversation-access.png");
+        CaptureWindow(window, path);
+        Console.WriteLine($"Conversation access preview written to {path}");
+        window.Close();
         return 0;
     }
 

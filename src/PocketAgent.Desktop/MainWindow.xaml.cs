@@ -603,28 +603,59 @@ public partial class MainWindow : Window
     {
         DeviceList.Children.Clear();
         var store = relay!.Services.GetRequiredService<LocalStore>();
-        var selectedConversation = selected;
-        DeviceAccessStatus.Text = selectedConversation is null
-            ? "Select a conversation on the Sessions page to manage which paired devices can access it."
-            : $"Access for selected conversation: {conversation?.Title ?? selectedConversation}";
+        DeviceAccessStatus.Text = "Manage conversation access from the Access action beside the selected session. Revoke device removes the device entirely.";
         foreach (var device in store.Devices())
         {
             var row = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
-            var access = new Button { Content = selectedConversation is null ? "Select a conversation" : store.HasConversationAccess(selectedConversation, device.Id) ? "Revoke session access" : "Grant session access", IsEnabled = selectedConversation is not null, Margin = new Thickness(8, 0, 0, 0) };
-            DockPanel.SetDock(access, Dock.Right);
-            access.Click += async (_, _) => await Act(() =>
-            {
-                if (selectedConversation is null) return Task.CompletedTask;
-                if (store.HasConversationAccess(selectedConversation, device.Id)) store.RevokeConversationAccess(selectedConversation, device.Id);
-                else store.GrantConversationAccess(selectedConversation, device.Id);
-                RenderDevices();
-                return Task.CompletedTask;
-            });
             var revoke = new Button { Content = "Revoke device" }; DockPanel.SetDock(revoke, Dock.Right);
             revoke.Click += (_, _) => { store.Revoke(device.Id); RenderDevices(); };
-            row.Children.Add(access); row.Children.Add(revoke); row.Children.Add(new TextBlock { Text = $"{device.Name}\nID {device.Id}\nExpires {device.ExpiresAt.LocalDateTime:d}", VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(revoke); row.Children.Add(new TextBlock { Text = $"{device.Name}\nID {device.Id}\nExpires {device.ExpiresAt.LocalDateTime:d}", VerticalAlignment = VerticalAlignment.Center });
             DeviceList.Children.Add(row);
         }
+    }
+    private async void ManageSelectedAccess(object sender, RoutedEventArgs e)
+    {
+        if (selected is null || conversation is null || relay is null) return;
+        await Act(() => ShowConversationAccess(selected, conversation.Title));
+    }
+    private async Task ShowConversationAccess(string conversationId, string title)
+    {
+        var store = relay!.Services.GetRequiredService<LocalStore>();
+        var devices = store.Devices();
+        var panel = new StackPanel { Margin = new Thickness(18) };
+        panel.Children.Add(new TextBlock { Text = $"Choose which paired devices can access \"{title}\".", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+        var checks = new List<(Device Device, CheckBox Check)>();
+        foreach (var device in devices)
+        {
+            var check = new CheckBox
+            {
+                Content = $"{device.Name}\nID {device.Id}\nExpires {device.ExpiresAt.LocalDateTime:d}",
+                IsChecked = store.HasConversationAccess(conversationId, device.Id),
+                Margin = new Thickness(0, 5, 0, 5),
+                Padding = new Thickness(4)
+            };
+            checks.Add((device, check));
+            panel.Children.Add(check);
+        }
+        if (checks.Count == 0)
+            panel.Children.Add(new TextBlock { Text = "No paired devices yet. Pair a device from the Devices page first.", Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A7BAA7")), TextWrapping = TextWrapping.Wrap });
+        var save = new Button { Content = "Done", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
+        panel.Children.Add(save);
+        var dialog = new Window { Title = $"Conversation access - {title}", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 520, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        save.Click += async (_, _) =>
+        {
+            foreach (var (device, check) in checks)
+            {
+                var granted = check.IsChecked == true;
+                var current = store.HasConversationAccess(conversationId, device.Id);
+                if (granted == current) continue;
+                if (granted) store.GrantConversationAccess(conversationId, device.Id);
+                else store.RevokeConversationAccess(conversationId, device.Id);
+            }
+            await relay.Services.GetRequiredService<ProgressPublisher>().Changed(conversationId);
+            dialog.DialogResult = true;
+        };
+        dialog.ShowDialog();
     }
     private async void SessionSelected(object sender, SelectionChangedEventArgs e)
     {
@@ -678,31 +709,67 @@ public partial class MainWindow : Window
         if (relay is null || conversation is null) return;
         var id = conversation.Id;
         var models = await relay.Services.GetRequiredService<ProviderDiagnostics>().Models();
-        var choices = new ComboBox { Margin = new Thickness(16), DisplayMemberPath = "DisplayName", ItemsSource = models, SelectedIndex = Array.FindIndex(models, model => model.Model == conversation.Model) };
-        var effort = new ComboBox { Margin = new Thickness(16) };
+        var search = new TextBox { ToolTip = "Search by model name or ID", Margin = new Thickness(16, 8, 16, 4) };
+        var choices = new ListBox
+        {
+            Margin = new Thickness(16, 4, 16, 8),
+            Height = 260,
+            BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#47604B")),
+            ItemTemplate = (DataTemplate)FindResource("ModelOptionTemplate")
+        };
+        var selectedModelId = conversation.Model;
+        choices.ItemsSource = models;
+        choices.SelectedItem = models.FirstOrDefault(model => model.Model == selectedModelId);
+        var effort = new ComboBox { Margin = new Thickness(16, 4, 16, 8), MinHeight = 38 };
         void RefreshEffortChoices()
         {
             var selected = choices.SelectedItem as ModelOption;
-            var options = new[] { new EffortChoice(null, "Use model default") }.Concat((selected?.SupportedReasoningEfforts ?? []).Select(value => new EffortChoice(value, value))).ToArray();
+            var options = new[] { new EffortChoice(null, "Use model default") }.Concat((selected?.SupportedReasoningEfforts ?? []).Select(value => new EffortChoice(value, ReasoningLabel(value)))).ToArray();
             effort.ItemsSource = options;
             effort.DisplayMemberPath = "Label";
             effort.SelectedIndex = Array.FindIndex(options, option => string.Equals(option.Value, conversation.ReasoningEffort, StringComparison.OrdinalIgnoreCase));
             if (effort.SelectedIndex < 0) effort.SelectedIndex = 0;
         }
-        choices.SelectionChanged += (_, _) => RefreshEffortChoices();
-        RefreshEffortChoices();
-        var save = new Button { Content = "Use selected model", Margin = new Thickness(16) };
-        var panel = new StackPanel(); panel.Children.Add(new TextBlock { Text = "Applies to future messages, including scheduled messages.", Margin = new Thickness(16) }); panel.Children.Add(new TextBlock { Text = "Model", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(choices); panel.Children.Add(new TextBlock { Text = "Reasoning effort", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(effort); panel.Children.Add(save);
-        var dialog = new Window { Title = "Conversation model", Owner = this, Content = panel, Width = 500, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        save.Click += (_, _) => { if (choices.SelectedItem is not null) dialog.DialogResult = true; };
-        if (dialog.ShowDialog() == true)
+        choices.SelectionChanged += (_, _) =>
         {
-            var selected = (ModelOption)choices.SelectedItem;
+            if (choices.SelectedItem is ModelOption selected) selectedModelId = selected.Model;
+            RefreshEffortChoices();
+        };
+        search.TextChanged += (_, _) =>
+        {
+            var query = search.Text.Trim();
+            choices.ItemsSource = string.IsNullOrWhiteSpace(query)
+                ? models
+                : models.Where(model => model.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) || model.Model.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+            choices.SelectedItem = models.FirstOrDefault(model => model.Model == selectedModelId && (string.IsNullOrWhiteSpace(query) || model.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) || model.Model.Contains(query, StringComparison.OrdinalIgnoreCase)));
+        };
+        RefreshEffortChoices();
+        var save = new Button { Content = "Use selected model", Margin = new Thickness(16), IsDefault = true };
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock { Text = "Choose the model for future messages and scheduled work.", Margin = new Thickness(16, 16, 16, 4) });
+        panel.Children.Add(new TextBlock { Text = "Search models", Margin = new Thickness(16, 8, 16, 0) });
+        panel.Children.Add(search);
+        panel.Children.Add(choices);
+        panel.Children.Add(new TextBlock { Text = "Reasoning", Margin = new Thickness(16, 4, 16, 0) });
+        panel.Children.Add(effort);
+        panel.Children.Add(save);
+        var dialog = new Window { Title = "Choose conversation model", Owner = this, Content = panel, Width = 560, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        save.Click += (_, _) => { if (choices.SelectedItem is not null) dialog.DialogResult = true; };
+        if (dialog.ShowDialog() == true && choices.SelectedItem is ModelOption selected && effort.SelectedItem is EffortChoice selectedEffort)
+        {
             await Conversations.SetModel(id, selected.Model);
-            await Conversations.SetReasoning(id, ((EffortChoice)effort.SelectedItem).Value);
+            await Conversations.SetReasoning(id, selectedEffort.Value);
             await Refresh();
         }
     });
+    private static string ReasoningLabel(string value) => value.ToLowerInvariant() switch
+    {
+        "xhigh" => "Extra high",
+        "high" => "High",
+        "medium" => "Medium",
+        "low" => "Low",
+        _ => value
+    };
     private sealed record EffortChoice(string? Value, string Label);
     private async void ArchiveConversation(object sender, RoutedEventArgs e) => await Act(async () =>
     {

@@ -1,0 +1,687 @@
+import { ComboBox, GroupBox, HorizontalBox, LineEdit, ScrollView, TextEdit, VerticalBox } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> tooltip;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> show-icon: true;
+    callback clicked();
+    min-width: label == "" ? 38px : 104px;
+    height: 36px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: !enabled ? #2a382f : (active || primary ? #c1daa6 : #47604b);
+    background: !enabled ? #18231d : (active || primary ? #c1daa6 : (touch.has-hover ? #294633 : #203328));
+    opacity: !enabled ? 0.72 : 1.0;
+    accessible-role: button;
+    accessible-enabled: enabled;
+    accessible-label: label == "" ? tooltip : label;
+    forward-focus: focus;
+    accessible-action-default => { if enabled { root.clicked(); } }
+
+    icon-path := Path {
+        visible: root.show-icon;
+        x: root.label == "" ? (parent.width - 18px) / 2 : 8px;
+        y: 9px;
+        width: 18px;
+        height: 18px;
+        commands: (root.icon == "sessions" || root.icon == "\u{25a4}") ? "M3 4 H21 V7 H3 Z M3 10 H21 V13 H3 Z M3 16 H21 V19 H3 Z" :
+            (root.icon == "devices" || root.icon == "\u{25a6}") ? "M5 3 H19 V21 H5 Z M8 6 H16 V8 H8 Z M8 11 H16 V13 H8 Z M8 16 H13 V18 H8 Z" :
+            (root.icon == "settings" || root.icon == "⚙") ? "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 Z" :
+            (root.icon == "power" || root.icon == "\u{23fb}") ? "M12 3 V12 M6 6 A8 8 0 1 0 18 6" :
+            (root.icon == "new" || root.icon == "+") ? "M12 3 V21 M3 12 H21" :
+            root.icon == "robot" ? "M8 7 H16 C18.2 7 20 8.8 20 11 V14 C20 16.2 18.2 18 16 18 H8 C5.8 18 4 16.2 4 14 V11 C4 8.8 5.8 7 8 7 Z M12 7 V4 M10 4 H14 M8 12 A1 1 0 1 0 8 12.1 M16 12 A1 1 0 1 0 16 12.1" :
+            (root.icon == "pin" || root.icon == "\u{1f4cc}") ? "M16 12 V4 H17 V2 H7 V4 H8 V12 L6 14 V16 H11 V22 H13 V16 H18 V14 Z" :
+            (root.icon == "archive" || root.icon == "\u{21a5}" || root.icon == "\u{25a3}" || root.icon == "\u{21c4}") ? "M3 6 H21 V20 H3 Z M3 6 L5 3 H19 L21 6 M8 13 L12 17 L16 13 M12 9 V17" :
+            root.icon == "restore" || root.icon == "history" ? "M3 6 H21 V20 H3 Z M3 6 L5 3 H19 L21 6 M8 11 L12 7 L16 11 M12 7 V16" :
+            (root.icon == "rename" || root.icon == "\u{270e}") ? "M3 17.25 V21 H6.75 L17.81 9.94 L14.06 6.19 L3 17.25 Z M20.71 7.04 C21.1 6.65 21.1 6.02 20.71 5.63 L18.37 3.29 C17.98 2.9 17.35 2.9 16.96 3.29 L15.13 5.12 L18.88 8.87 L20.71 7.04 Z" :
+            (root.icon == "folder" || root.icon == "\u{1f4c1}") ? "M3 5 H10 L12 7 H21 V19 H3 Z" :
+            (root.icon == "create" || root.icon == "\u{1f4ac}") ? "M4 4 H20 V16 H13 L8 20 V16 H4 Z" :
+            (root.icon == "send" || root.icon == "\u{27a4}") ? "M3 12 H18 M12 6 L18 12 L12 18" :
+            (root.icon == "schedule" || root.icon == "\u{23f1}") ? "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 H16" :
+            (root.icon == "review" || root.icon == "\u{2637}") ? "M4 5 H20 M4 12 H20 M4 19 H20" :
+            (root.icon == "approve" || root.icon == "\u{2713}") ? "M4 12 L9 17 L20 6" :
+            (root.icon == "deny" || root.icon == "\u{2298}" || root.icon == "\u{2297}") ? "M4 4 L20 20 M20 4 L4 20" :
+            (root.icon == "connect" || root.icon == "\u{21bb}" || root.icon == "\u{21c4}") ? "M4 8 A8 8 0 0 1 18 6 L20 8 M20 8 V3 M20 8 H15 M20 16 A8 8 0 0 1 6 18 L4 16 M4 16 V21 M4 16 H9" :
+            (root.icon == "cancel" || root.icon == "stop" || root.icon == "\u{25a0}" || root.icon == "\u{00d7}") ? "M6 6 H18 V18 H6 Z" :
+            (root.icon == "remove" || root.icon == "\u{2212}") ? "M4 12 H20" :
+            "M12 3 V21 M3 12 H21";
+        fill: (root.icon == "pin" || root.icon == "rename") ? #c1daa6 : transparent;
+        stroke: root.active || root.primary ? #111b17 : #c1daa6;
+        stroke-width: 1.8px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+    icon-label := Text {
+        x: root.label == "" ? 0px : 30px;
+        width: root.label == "" ? parent.width : parent.width - 34px;
+        height: parent.height;
+        text: root.label;
+        color: root.active || root.primary ? #111b17 : #c1daa6;
+        font-size: 13px;
+        font-family: "Segoe UI";
+        font-weight: root.active || root.primary ? 700 : 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") && root.enabled { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+component ServerPower inherits Rectangle {
+    in property <bool> running;
+    callback clicked();
+    width: 64px;
+    height: 26px;
+    border-radius: 13px;
+    background: #0c1410;
+    border-width: 1px;
+    border-color: #46544a;
+    accessible-role: button;
+    accessible-enabled: true;
+    accessible-label: running ? "ON" : "OFF";
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        border-radius: 11px;
+        background: root.running ? #4e7845 : #202c24;
+    }
+    Rectangle {
+        x: root.running ? parent.width - 23px : 3px;
+        y: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        background: #c0ccc0;
+    }
+    Text {
+        x: root.running ? 3px : 27px;
+        width: 34px;
+        height: parent.height;
+        text: root.running ? "ON" : "OFF";
+        color: root.running ? #f0fadf : #a7b5aa;
+        font-size: 11px;
+        font-family: "Segoe UI";
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        clicked => { focus.focus(); root.clicked(); }
+    }
+}
+
+export struct MarkdownBlock {
+    text: string,
+    kind: string,
+    has-image: bool,
+    image: image,
+}
+
+export struct SessionItem {
+    id: string,
+    title: string,
+    pinned: bool,
+}
+
+export struct HostDeviceItem {
+    id: string,
+    name: string,
+    authorized: bool,
+}
+
+export struct ScheduledItem {
+    id: string,
+    conversation-id: string,
+    text: string,
+    due-at: string,
+    status: string,
+}
+
+component SessionTab inherits Rectangle {
+    in property <string> title;
+    in property <bool> selected;
+    in property <bool> pinned;
+    callback activated();
+    width: clamp(label.preferred-width + 24px, 96px, 220px);
+    height: 35px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    background: selected ? #294633 : touch.has-hover ? #203328 : #18271f;
+    border-width: 1px;
+    border-color: keys.has-focus ? #c1daa6 : #47604b;
+    accessible-role: tab;
+    accessible-label: label.text;
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-action-default => { root.activated(); }
+
+    label := Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: (root.pinned ? "Pinned | " : "") + root.title;
+        vertical-alignment: center;
+        overflow: elide;
+        color: root.selected ? #e8f1e6 : #c1daa6;
+        font-family: "Segoe UI";
+    }
+    Rectangle { y: parent.height - 2px; height: 2px; background: root.selected ? #c1daa6 : transparent; }
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea { clicked => { keys.focus(); root.activated(); } }
+}
+
+export component AppWindow inherits Window {
+    title: "PocketAgent Rust Desktop";
+    preferred-width: 1150px;
+    preferred-height: 820px;
+    min-width: 800px;
+    min-height: 580px;
+
+    in-out property <string> server-name: "Desktop";
+    in-out property <string> repository-path: "";
+    in-out property <string> codex-executable: "codex";
+    in-out property <string> current-page: "sessions";
+    in-out property <string> codex-status: "Codex is disconnected";
+    in-out property <bool> codex-available: false;
+    in-out property <string> work-timing: "";
+    in-out property <[SessionItem]> session-items: [];
+    in-out property <string> current-session-id: "";
+    in-out property <string> current-working-directory: "";
+    in-out property <string> selected-model: "";
+    in-out property <string> selected-effort: "";
+    in-out property <bool> showing-archived: false;
+    in-out property <bool> rename-dialog-open: false;
+    in-out property <string> rename-dialog-draft: "";
+    in-out property <bool> model-dialog-open: false;
+    in-out property <string> model-dialog-draft: "";
+    in-out property <string> effort-dialog-draft: "";
+    in-out property <string> pending-interaction: "";
+    in-out property <string> interaction-method: "";
+    in-out property <string> interaction-decisions: "";
+    in-out property <string> model-catalog: "Provider model catalog unavailable";
+    in-out property <[string]> model-options: [""];
+    in-out property <string> usage-summary: "Usage unavailable";
+    in-out property <[MarkdownBlock]> transcript-blocks: [];
+    in-out property <string> relay-status: "Relay is stopped";
+    in-out property <string> relay-endpoint: "No endpoint";
+    in-out property <string> relay-enrollment: "Relay enrollment is not loaded";
+    in-out property <string> relay-session-key: "Session key unavailable";
+    in-out property <bool> relay-running: false;
+    in-out property <string> relay-host-status: "Outbound host connection is not configured";
+    in-out property <bool> relay-host-connected: false;
+    in-out property <string> host-status: "Host API is stopped";
+    in-out property <string> host-endpoint: "No host endpoint";
+    in-out property <string> host-pairing: "Pairing code unavailable";
+    in-out property <image> host-qr;
+    in-out property <[HostDeviceItem]> host-devices: [];
+    in-out property <[ScheduledItem]> scheduled-items: [];
+    in-out property <bool> creating-session: false;
+    in-out property <string> composer-draft: "";
+    in-out property <bool> schedule-dialog-open: false;
+    in-out property <string> schedule-choice: "900";
+    in-out property <string> submission-warning: "";
+    in-out property <string> new-session-folder: "";
+    in-out property <[string]> folder-choices: [];
+    property <bool> pairing-open: false;
+
+    callback connect-codex(string, string);
+    callback new-conversation(string, string, string);
+    callback refresh-sessions();
+    callback select-session(string);
+    callback archive-session();
+    callback restore-session();
+    callback toggle-pin();
+    callback rename-session(string);
+    callback toggle-archived();
+    callback answer-interaction(string);
+    callback send-prompt(string, string, string);
+    callback schedule-prompt(string, string, string, string);
+    callback stop-work();
+    callback start-relay(string);
+    callback stop-relay();
+    callback connect-relay-host(string, string, string, string);
+    callback disconnect-relay-host();
+    callback set-device-access(string, string, bool);
+    callback revoke-device(string);
+    callback renew-pairing();
+    callback toggle-host();
+    callback cancel-schedule(string);
+    callback navigate(string);
+    callback switch-draft(string);
+    callback browse-folders(string);
+
+    background: #111b17;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 8px;
+
+        // Keep identity, location, and usage on one compact line.
+        HorizontalBox {
+            height: 46px;
+            spacing: 12px;
+            Text {
+                width: 170px;
+                text: "PocketAgent";
+                color: #c1daa6;
+                font-size: 22px;
+                font-weight: 700;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: server-name + " | " + (current-working-directory == "" ? "No folder selected" : current-working-directory);
+                color: #a7baa7;
+                font-size: 11px;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                width: 130px;
+                text: usage-summary;
+                color: #c1daa6;
+                font-size: 11px;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            HorizontalBox {
+                width: 370px;
+                spacing: 6px;
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
+                ActionButton { width: 96px; horizontal-stretch: 0; icon: "settings"; label: "Settings"; tooltip: "Settings"; active: current-page == "settings"; clicked => { navigate("settings"); } }
+                ServerPower { running: host-status == "Host API is running"; clicked => { toggle-host(); } }
+            }
+        }
+
+        if current-page == "sessions" : VerticalBox {
+            vertical-stretch: 1;
+            spacing: 12px;
+
+            // Conversation tabs and actions share one row, as in the .NET app.
+            HorizontalBox {
+                min-height: 44px;
+                spacing: 6px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 1px;
+                    height: 44px;
+                    background: #111b17;
+                    border-width: 1px;
+                    border-color: #20382b;
+                    ScrollView {
+                        HorizontalBox {
+                            padding: 2px;
+                            spacing: 3px;
+                            accessible-role: tab-list;
+                            for session in session-items : SessionTab {
+                                title: session.title;
+                                selected: session.id == current-session-id;
+                                pinned: session.pinned;
+                                activated => { select-session(session.id); }
+                            }
+                        }
+                    }
+                }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "new"; label: ""; tooltip: "New conversation"; primary: creating-session; clicked => {
+                        creating-session = !creating-session;
+                        if creating-session { new-session-folder = repository-path; }
+                    } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "devices"; label: ""; tooltip: "Manage conversation access"; enabled: current-session-id != ""; clicked => { navigate("devices"); } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "rename"; label: ""; tooltip: "Rename conversation"; enabled: current-session-id != ""; clicked => { rename-dialog-draft = ""; rename-dialog-open = true; } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "robot"; label: ""; tooltip: "Model and reasoning"; enabled: current-session-id != ""; clicked => { model-dialog-draft = selected-model; effort-dialog-draft = selected-effort; model-dialog-open = true; } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "pin"; label: ""; tooltip: "Pin conversation"; enabled: current-session-id != ""; clicked => { toggle-pin(); } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: showing-archived ? "restore" : "archive"; label: ""; tooltip: showing-archived ? "Restore conversation" : "Archive conversation"; enabled: current-session-id != ""; clicked => { if (showing-archived) { restore-session(); } else { archive-session(); } } }
+                ActionButton { width: 38px; height: 32px; horizontal-stretch: 0; icon: "restore"; label: ""; tooltip: showing-archived ? "Show active conversations" : "Show archived conversations"; active: showing-archived; clicked => { toggle-archived(); } }
+            }
+
+            if creating-session : GroupBox {
+                title: "New conversation";
+                VerticalBox {
+                    spacing: 6px;
+                    HorizontalBox {
+                        LineEdit { placeholder-text: "Working folder"; text <=> new-session-folder; }
+                        ActionButton { icon: "folder"; label: "Browse"; tooltip: "Browse folders"; clicked => { browse-folders(new-session-folder); } }
+                    }
+                    if folder-choices.length > 0 : ComboBox {
+                        model: folder-choices;
+                        selected(path) => { if path != "Choose a folder..." { new-session-folder = path; browse-folders(path); } }
+                    }
+                    new-model := ComboBox { model: model-options; }
+                    HorizontalBox {
+                        ActionButton { icon: "create"; label: "Create"; tooltip: "Create conversation"; enabled: codex-available; clicked => { new-conversation(new-model.current-value, "", new-session-folder); } }
+                        ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel new conversation"; clicked => { creating-session = false; } }
+                    }
+                }
+            }
+
+            GroupBox {
+                title: "Conversation";
+                vertical-stretch: 1;
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 0px;
+                    Rectangle {
+                        vertical-stretch: 1;
+                        background: #111b17;
+                        border-width: 1px;
+                        border-color: #294633;
+                        ScrollView {
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 8px;
+                                if transcript-blocks.length == 0 : Text { text: current-session-id == "" ? "Select a conversation" : "Send a message to start working."; color: #c1daa6; font-size: 15px; font-family: "Segoe UI"; }
+                                for block in transcript-blocks : Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: block.has-image ? 320px : max(42px, block-text.preferred-height + 24px);
+                                    background: block.kind == "code" ? #19271f : #18271f;
+                                    border-width: block.kind == "code" ? 1px : 0px;
+                                    border-color: #47604b;
+                                    border-radius: 7px;
+                                    block-text := Text {
+                                        x: 12px;
+                                        y: 12px;
+                                        width: parent.width - 24px;
+                                        text: block.text;
+                                        color: block.kind == "code" ? #c1daa6 : #e8f1e6;
+                                        font-size: block.kind == "heading" ? 18px : 14px;
+                                        font-weight: block.kind == "heading" ? 700 : 400;
+                                        font-family: block.kind == "code" ? "Consolas" : "Segoe UI";
+                                        wrap: word-wrap;
+                                    }
+                                    if block.has-image : Image {
+                                        x: 12px;
+                                        y: 12px;
+                                        width: parent.width - 24px;
+                                        height: parent.height - 24px;
+                                        source: block.image;
+                                        image-fit: contain;
+                                    }
+                                }
+                                if interaction-method != "" : Rectangle {
+                                    horizontal-stretch: 1;
+                                    min-height: 130px;
+                                    background: #111b17;
+                                    border-width: 1px;
+                                    border-color: #aaa65c;
+                                    VerticalBox {
+                                        padding: 12px;
+                                        spacing: 8px;
+                                        Text { text: "Your input is needed"; color: #f3d28a; font-size: 15px; font-weight: 700; font-family: "Segoe UI"; }
+                                        Text { text: pending-interaction; color: #e8f1e6; wrap: word-wrap; font-family: "Segoe UI"; }
+                                        response := LineEdit { placeholder-text: interaction-method == "item/tool/requestUserInput" ? "One answer per line" : "Decision"; }
+                                        HorizontalBox {
+                                            spacing: 6px;
+                                            if interaction-method == "item/tool/requestUserInput" : ActionButton { icon: "\u{27a4}"; label: "Send answers"; tooltip: "Send answers"; enabled: response.text != ""; clicked => { answer-interaction(response.text); response.text = ""; } }
+                                            if interaction-method != "item/tool/requestUserInput" : ActionButton { icon: "\u{2713}"; label: "Approve"; tooltip: "Approve once"; clicked => { answer-interaction("accept"); } }
+                                            if interaction-method != "item/tool/requestUserInput" : ActionButton { icon: "\u{2298}"; label: "Deny"; tooltip: "Deny"; clicked => { answer-interaction("decline"); } }
+                                            if interaction-method != "item/tool/requestUserInput" : ActionButton { icon: "\u{25a0}"; label: "Cancel"; tooltip: "Cancel work"; clicked => { answer-interaction("cancel"); } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 38px;
+                        background: #1d2c23;
+                        border-width: 1px;
+                        border-color: #47604b;
+                        HorizontalBox {
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: codex-status + (work-timing == "" ? "" : "  -  " + work-timing); color: #c1daa6; font-size: 12px; font-family: "Segoe UI"; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            if codex-status == "Codex is working..." : ActionButton { icon: "\u{25a0}"; label: ""; tooltip: "Stop"; clicked => { stop-work(); } }
+                        }
+                    }
+                }
+            }
+
+            HorizontalBox {
+                height: 92px;
+                spacing: 8px;
+                prompt := TextEdit {
+                    vertical-stretch: 1;
+                    text <=> composer-draft;
+                    placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
+                    enabled: codex-available;
+                }
+                VerticalBox {
+                    width: 104px;
+                    horizontal-stretch: 0;
+                    spacing: 8px;
+                    ActionButton { width: 104px; horizontal-stretch: 0; show-icon: false; icon: "send"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
+                    ActionButton { width: 38px; horizontal-stretch: 0; icon: "schedule"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-choice = "900"; schedule-dialog-open = true; } }
+                }
+            }
+            if submission-warning != "" : Text { text: submission-warning; color: #f3b8a5; wrap: word-wrap; }
+            if scheduled-items.length > 0 : GroupBox {
+                title: "Pending scheduled messages";
+                ScrollView {
+                    height: 100px;
+                    VerticalBox {
+                        for job in scheduled-items : HorizontalBox {
+                            if job.conversation-id == current-session-id && job.status == "pending" : Text { text: job.due-at + " | " + job.text; color: #c1daa6; horizontal-stretch: 1; overflow: elide; }
+                            if job.conversation-id == current-session-id && job.status == "pending" : ActionButton { icon: "\u{00d7}"; label: ""; tooltip: "Cancel scheduled message"; clicked => { cancel-schedule(job.id); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        if current-page == "devices" : ScrollView {
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Connect your phone"; color: #c1daa6; font-size: 24px; font-weight: 700; font-family: "Segoe UI"; }
+                Text { text: "Scan the pairing QR or copy the full pairing string into the phone app. Treat an unused pairing string like a temporary password."; color: #c1daa6; wrap: word-wrap; font-family: "Segoe UI"; }
+                GroupBox {
+                    title: "Add new device";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: host-status; color: #c1daa6; font-family: "Segoe UI"; }
+                        Text { text: host-endpoint; color: #8fbc8f; font-family: "Segoe UI"; }
+                        ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { pairing-open = !pairing-open; } }
+                        if pairing-open : VerticalBox {
+                            spacing: 8px;
+                            Image { source: host-qr; width: 220px; height: 220px; image-fit: contain; accessible-role: image; accessible-label: "New device pairing QR code"; }
+                            Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; font-family: "Segoe UI"; }
+                            ActionButton { icon: "connect"; label: "Renew pairing"; tooltip: "Renew pairing"; clicked => { renew-pairing(); } }
+                        }
+                    }
+                }
+                GroupBox {
+                    title: "Paired devices";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: current-session-id == "" ? "Select a conversation on Sessions before changing access." : "Manage access for the selected conversation."; color: #a7baa7; wrap: word-wrap; }
+                        for device in host-devices : HorizontalBox {
+                            spacing: 8px;
+                            Text { text: device.name; color: #e8f1e6; horizontal-stretch: 1; }
+                            ActionButton { icon: device.authorized ? "\u{2212}" : "+"; label: device.authorized ? "Remove" : "Add"; tooltip: device.authorized ? "Remove conversation access" : "Grant conversation access"; enabled: current-session-id != ""; clicked => { set-device-access(current-session-id, device.id, !device.authorized); } }
+                            ActionButton { icon: "\u{2297}"; label: "Revoke"; tooltip: "Revoke device"; clicked => { revoke-device(device.id); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        if current-page == "settings" : ScrollView {
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Desktop setup"; color: #c1daa6; font-size: 24px; font-weight: 700; }
+                Text { text: "Codex and relay settings are stored on this computer."; color: #c1daa6; wrap: word-wrap; }
+                GroupBox {
+                    title: "Codex connection";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        HorizontalBox {
+                            spacing: 8px;
+                            repository := LineEdit { text: repository-path; edited => { repository-path = self.text; } }
+                            executable := LineEdit { text: codex-executable; edited => { codex-executable = self.text; } }
+                            ActionButton { icon: "\u{21bb}"; label: "Connect Codex"; tooltip: "Connect Codex"; clicked => { connect-codex(repository.text, executable.text); } }
+                        }
+                        Text { text: codex-status; color: codex-available ? #c1daa6 : #f3b8a5; font-size: 14px; }
+                        Text { text: usage-summary; color: #a7baa7; wrap: word-wrap; }
+                    }
+                }
+                GroupBox {
+                    title: "Optional relay";
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: relay-status; color: #a7baa7; }
+                        Text { text: relay-endpoint; color: #c1daa6; }
+                        Text { text: root.relay-session-key; color: #f3d28a; overflow: elide; }
+                        relay-bind-field := LineEdit { placeholder-text: "Relay bind address"; text: "127.0.0.1:0"; }
+                        HorizontalBox {
+                            spacing: 8px;
+                            ActionButton { width: 132px; icon: "\u{25b6}"; label: relay-running ? "Running" : "Start relay"; tooltip: "Start relay"; primary: relay-running; enabled: !relay-running; clicked => { start-relay(relay-bind-field.text); } }
+                            ActionButton { width: 104px; icon: "\u{25a0}"; label: "Stop"; tooltip: "Stop relay"; clicked => { if (relay-running) { stop-relay(); } } }
+                        }
+                        Text { height: 116px; text: relay-enrollment; color: #f3d28a; wrap: word-wrap; overflow: elide; }
+                        Text { text: relay-host-status; color: #a7baa7; wrap: word-wrap; }
+                        relay-host-url := LineEdit { placeholder-text: "Relay URL (ws:// or wss://)"; }
+                        relay-host-id := LineEdit { placeholder-text: "Relay host ID"; }
+                        relay-host-token := LineEdit { placeholder-text: "Relay host token"; }
+                        relay-session-key := LineEdit { placeholder-text: "Session key (<uuid>:<64 hex>)"; }
+                        ActionButton { icon: "\u{21c4}"; label: "Connect"; tooltip: "Connect this desktop through relay"; enabled: relay-host-url.text != "" && relay-host-id.text != "" && relay-host-token.text != "" && relay-session-key.text != ""; clicked => { connect-relay-host(relay-host-url.text, relay-host-id.text, relay-host-token.text, relay-session-key.text); } }
+                        ActionButton { icon: "\u{00d7}"; label: "Disconnect"; tooltip: "Disconnect outbound host"; enabled: relay-host-connected; clicked => { disconnect-relay-host(); } }
+                    }
+                }
+            }
+        }
+    }
+
+    if rename-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 460px) / 2;
+            y: (parent.height - 190px) / 2;
+            width: 460px;
+            height: 190px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Rename conversation"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                LineEdit { text <=> rename-dialog-draft; placeholder-text: "New conversation name"; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "rename"; label: "Save name"; tooltip: "Save name"; enabled: rename-dialog-draft != ""; clicked => { rename-session(rename-dialog-draft); rename-dialog-open = false; } }
+                    ActionButton { icon: "cancel"; label: "Cancel rename"; tooltip: "Cancel rename"; clicked => { rename-dialog-open = false; } }
+                }
+            }
+        }
+    }
+
+    if model-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 520px) / 2;
+            y: (parent.height - 250px) / 2;
+            width: 520px;
+            height: 250px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Model and reasoning"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                Text { text: model-catalog; color: #a7baa7; font-size: 12px; overflow: elide; }
+                ComboBox { model: model-options; current-value: model-dialog-draft; selected(value) => { model-dialog-draft = value; } }
+                LineEdit { text <=> effort-dialog-draft; placeholder-text: "Reasoning effort"; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "approve"; label: "Apply model"; tooltip: "Apply model"; clicked => { selected-model = model-dialog-draft; selected-effort = effort-dialog-draft; model-dialog-open = false; } }
+                    ActionButton { icon: "cancel"; label: "Cancel model changes"; tooltip: "Cancel model changes"; clicked => { model-dialog-open = false; } }
+                }
+            }
+        }
+    }
+
+    if schedule-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 520px) / 2;
+            y: (parent.height - 230px) / 2;
+            width: 520px;
+            height: 230px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Schedule message"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                Text { text: "Choose when this prompt should be sent."; color: #a7baa7; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { width: 150px; icon: "schedule"; label: "In 15 minutes"; tooltip: "Schedule in 15 minutes"; active: schedule-choice == "900"; clicked => { schedule-choice = "900"; } }
+                    ActionButton { width: 130px; icon: "schedule"; label: "In 1 hour"; tooltip: "Schedule in 1 hour"; active: schedule-choice == "3600"; clicked => { schedule-choice = "3600"; } }
+                }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "schedule"; label: "Confirm schedule"; tooltip: "Confirm schedule"; primary: true; clicked => { schedule-prompt(composer-draft, selected-model, selected-effort, schedule-choice); schedule-dialog-open = false; } }
+                    ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel scheduling"; clicked => { schedule-dialog-open = false; } }
+                }
+            }
+        }
+    }
+}
