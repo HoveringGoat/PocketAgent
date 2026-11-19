@@ -47,6 +47,8 @@ component ActionButton inherits Rectangle {
             (root.icon == "deny" || root.icon == "\u{2298}" || root.icon == "\u{2297}") ? "M4 4 L20 20 M20 4 L4 20" :
             (root.icon == "connect" || root.icon == "\u{21bb}" || root.icon == "\u{21c4}") ? "M4 8 A8 8 0 0 1 18 6 L20 8 M20 8 V3 M20 8 H15 M20 16 A8 8 0 0 1 6 18 L4 16 M4 16 V21 M4 16 H9" :
             (root.icon == "cancel" || root.icon == "stop" || root.icon == "\u{25a0}" || root.icon == "\u{00d7}") ? "M6 6 H18 V18 H6 Z" :
+            root.icon == "expand" ? "M4 9 L12 17 L20 9" :
+            root.icon == "collapse" ? "M4 15 L12 7 L20 15" :
             (root.icon == "remove" || root.icon == "\u{2212}") ? "M4 12 H20" :
             "M12 3 V21 M3 12 H21";
         fill: (root.icon == "pin" || root.icon == "rename") ? #c1daa6 : transparent;
@@ -136,6 +138,9 @@ component ServerPower inherits Rectangle {
 export struct MarkdownBlock {
     text: string,
     kind: string,
+    role: string,
+    summary: string,
+    collapsible: bool,
     has-image: bool,
     image: image,
 }
@@ -196,6 +201,61 @@ component SessionTab inherits Rectangle {
         }
     }
     touch := TouchArea { clicked => { keys.focus(); root.activated(); } }
+}
+
+component TranscriptCard inherits Rectangle {
+    in property <MarkdownBlock> block;
+    property <bool> expanded: !block.collapsible;
+    horizontal-stretch: 1;
+    height: block.has-image ? 320px : (block.collapsible && !expanded ? 52px : 120px);
+    background: block.role == "user" ? #294633 : (block.role == "activity" ? #132019 : #18271f);
+    border-width: block.role == "activity" ? 1px : 0px;
+    border-color: block.role == "activity" ? #47604b : transparent;
+    border-radius: 7px;
+
+    role-label := Text {
+        x: 12px;
+        y: 7px;
+        width: parent.width - 24px;
+        height: 18px;
+        text: block.role == "user" ? "You" : (block.role == "activity" ? "Activity" : "Codex");
+        color: block.role == "user" ? #d8f0c8 : (block.role == "activity" ? #a7baa7 : #c1daa6);
+        font-size: 11px;
+        font-weight: 700;
+        font-family: "Arial";
+        overflow: elide;
+    }
+    if block.collapsible : ActionButton {
+        x: 10px;
+        y: 27px;
+        width: parent.width - 20px;
+        height: 22px;
+        icon: expanded ? "collapse" : "expand";
+        label: expanded ? "Hide activity" : block.summary;
+        tooltip: expanded ? "Collapse activity" : "Expand activity";
+        clicked => { expanded = !expanded; }
+    }
+    if !block.collapsible || expanded : Text {
+        x: 12px;
+        y: block.collapsible ? 53px : 28px;
+        width: parent.width - 24px;
+        height: parent.height - (block.collapsible ? 62px : 36px);
+        text: block.text;
+        color: #e8f1e6;
+        font-size: block.kind == "heading" ? 18px : 14px;
+        font-weight: block.kind == "heading" ? 700 : 400;
+        font-family: block.kind == "code" ? "Consolas" : "Arial";
+        wrap: word-wrap;
+        overflow: clip;
+    }
+    if block.has-image : Image {
+        x: 12px;
+        y: 30px;
+        width: parent.width - 24px;
+        height: parent.height - 42px;
+        source: block.image;
+        image-fit: contain;
+    }
 }
 
 export component AppWindow inherits Window {
@@ -408,33 +468,7 @@ export component AppWindow inherits Window {
                                 padding: 12px;
                                 spacing: 8px;
                                 if transcript-blocks.length == 0 : Text { text: current-session-id == "" ? "Select a conversation" : "Send a message to start working."; color: #c1daa6; font-size: 15px; font-family: "Arial"; }
-                                for block in transcript-blocks : Rectangle {
-                                    horizontal-stretch: 1;
-                                    height: block.has-image ? 320px : max(42px, block-text.preferred-height + 24px);
-                                    background: block.kind == "code" ? #19271f : #18271f;
-                                    border-width: block.kind == "code" ? 1px : 0px;
-                                    border-color: #47604b;
-                                    border-radius: 7px;
-                                    block-text := Text {
-                                        x: 12px;
-                                        y: 12px;
-                                        width: parent.width - 24px;
-                                        text: block.text;
-                                        color: block.kind == "code" ? #c1daa6 : #e8f1e6;
-                                        font-size: block.kind == "heading" ? 18px : 14px;
-                                        font-weight: block.kind == "heading" ? 700 : 400;
-                                        font-family: block.kind == "code" ? "Consolas" : "Arial";
-                                        wrap: word-wrap;
-                                    }
-                                    if block.has-image : Image {
-                                        x: 12px;
-                                        y: 12px;
-                                        width: parent.width - 24px;
-                                        height: parent.height - 24px;
-                                        source: block.image;
-                                        image-fit: contain;
-                                    }
-                                }
+                                for block in transcript-blocks : TranscriptCard { block: block; }
                                 if interaction-method != "" : Rectangle {
                                     horizontal-stretch: 1;
                                     min-height: 130px;

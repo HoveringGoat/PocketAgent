@@ -960,7 +960,12 @@ fn start_codex_worker(
                                     },
                                 )
                             }
-                            Err(resume_error) => match current.read_thread(&id).await {
+                            Err(resume_error) => {
+                                diagnostics::record(
+                                    "conversation",
+                                    &format!("resume_failed {resume_error}"),
+                                );
+                                match current.read_thread(&id).await {
                                 Ok(history) => {
                                     // A read-only thread/read succeeds even when another
                                     // client owns the active writer lease.
@@ -982,6 +987,10 @@ fn start_codex_worker(
                                     );
                                 }
                                 Err(read_error) => {
+                                    diagnostics::record(
+                                        "conversation",
+                                        &format!("read_mirror_failed {read_error}"),
+                                    );
                                     // Do not leave the previous thread attached after a
                                     // failed resume; later prompts must not target it.
                                     current.clear_thread();
@@ -998,7 +1007,8 @@ fn start_codex_worker(
                                         "Conversation history is unavailable. You can still archive, restore, or rename this conversation.".into(),
                                     );
                                 }
-                            },
+                                }
+                            }
                         }
                     }
                     CodexCommand::ArchiveSelected => {
@@ -1349,7 +1359,7 @@ fn start_codex_worker(
                                     .await
                                     .ok()
                                     .filter(|text| !text.is_empty())
-                                    .unwrap_or(response);
+                                    .unwrap_or_else(|| format!("\u{001e}assistant\n{response}"));
                                 set_codex_status(
                                     &weak,
                                     "Codex is ready".into(),
@@ -1941,7 +1951,7 @@ fn set_scheduled_items(weak: &slint::Weak<AppWindow>, store: &DesktopStore) {
 }
 
 fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value> {
-    let chars = history.chars().collect::<Vec<_>>();
+    let chars = transcript_plain_text(history).chars().collect::<Vec<_>>();
     if chars.is_empty() {
         return Vec::new();
     }
@@ -1958,6 +1968,31 @@ fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value>
             })
         })
         .collect()
+}
+
+fn transcript_plain_text(history: &str) -> String {
+    if !history.contains(TRANSCRIPT_MARKER) {
+        return history.to_owned();
+    }
+    history
+        .split(TRANSCRIPT_MARKER)
+        .enumerate()
+        .filter_map(|(index, segment)| {
+            if segment.is_empty() {
+                return None;
+            }
+            if index == 0 {
+                return Some(segment.to_owned());
+            }
+            Some(
+                segment
+                    .split_once('\n')
+                    .map_or(segment, |(_, body)| body)
+                    .to_owned(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn host_snapshot(
@@ -2201,6 +2236,9 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
             MarkdownBlock {
                 text: block.text.into(),
                 kind: block.kind.into(),
+                role: block.role.into(),
+                summary: block.summary.into(),
+                collapsible: block.collapsible,
                 has_image: image.is_some(),
                 image: image.unwrap_or_default(),
             }
@@ -2904,10 +2942,51 @@ fn parse_session_key(value: &str) -> Option<SessionKey> {
 struct ParsedBlock {
     text: String,
     kind: String,
+    role: String,
+    summary: String,
+    collapsible: bool,
     image_path: Option<String>,
 }
 
+const TRANSCRIPT_MARKER: char = '\u{001e}';
+
 fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
+    if !markdown.contains(TRANSCRIPT_MARKER) {
+        return markdown_blocks_segment(markdown, "system", false, "");
+    }
+    markdown
+        .split(TRANSCRIPT_MARKER)
+        .enumerate()
+        .filter_map(|(index, segment)| {
+            if segment.is_empty() {
+                return None;
+            }
+            let (header, body) = segment.split_once('\n').unwrap_or(("system", segment));
+            if index == 0 {
+                return Some(markdown_blocks_segment(segment, "system", false, ""));
+            }
+            if let Some(summary) = header.strip_prefix("activity|") {
+                return Some(vec![ParsedBlock {
+                    text: body.trim().to_owned(),
+                    kind: "activity".into(),
+                    role: "activity".into(),
+                    summary: summary.trim().to_owned(),
+                    collapsible: true,
+                    image_path: None,
+                }]);
+            }
+            Some(markdown_blocks_segment(body, header, false, ""))
+        })
+        .flatten()
+        .collect()
+}
+
+fn markdown_blocks_segment(
+    markdown: &str,
+    role: &str,
+    collapsible: bool,
+    summary: &str,
+) -> Vec<ParsedBlock> {
     let mut blocks = Vec::new();
     let mut current = String::new();
     let mut kind = "paragraph".to_owned();
@@ -2917,71 +2996,168 @@ fn markdown_blocks(markdown: &str) -> Vec<ParsedBlock> {
     for event in parser {
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 kind = if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) {
                     "heading".into()
                 } else {
                     "subheading".into()
                 };
             }
-            Event::End(TagEnd::Heading(_)) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
-            }
+            Event::End(TagEnd::Heading(_)) => flush_block(
+                &mut blocks,
+                &mut current,
+                &mut kind,
+                &mut image_path,
+                role,
+                collapsible,
+                summary,
+            ),
             Event::Start(Tag::Paragraph) => {
                 if current.is_empty() {
                     kind = "paragraph".into();
                 }
             }
-            Event::End(TagEnd::Paragraph) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
-            }
+            Event::End(TagEnd::Paragraph) => flush_block(
+                &mut blocks,
+                &mut current,
+                &mut kind,
+                &mut image_path,
+                role,
+                collapsible,
+                summary,
+            ),
             Event::Start(Tag::Item) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 kind = "bullet".into();
                 current.push_str("* ");
                 list_depth += 1;
             }
             Event::End(TagEnd::Item) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 list_depth = list_depth.saturating_sub(1);
             }
             Event::Start(Tag::CodeBlock(_)) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 kind = "code".into();
             }
-            Event::End(TagEnd::CodeBlock) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
-            }
+            Event::End(TagEnd::CodeBlock) => flush_block(
+                &mut blocks,
+                &mut current,
+                &mut kind,
+                &mut image_path,
+                role,
+                collapsible,
+                summary,
+            ),
             Event::Start(Tag::Image { dest_url, .. }) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 kind = "image".into();
                 image_path = Some(dest_url.to_string());
             }
-            Event::End(TagEnd::Image) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
-            }
+            Event::End(TagEnd::Image) => flush_block(
+                &mut blocks,
+                &mut current,
+                &mut kind,
+                &mut image_path,
+                role,
+                collapsible,
+                summary,
+            ),
             Event::Text(text) | Event::Code(text) => current.push_str(&text),
             Event::SoftBreak | Event::HardBreak => current.push('\n'),
             Event::Rule => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                flush_block(
+                    &mut blocks,
+                    &mut current,
+                    &mut kind,
+                    &mut image_path,
+                    role,
+                    collapsible,
+                    summary,
+                );
                 blocks.push(ParsedBlock {
                     text: "---".into(),
                     kind: "rule".into(),
+                    role: role.into(),
+                    summary: summary.into(),
+                    collapsible,
                     image_path: None,
                 });
             }
             Event::Start(Tag::List(_)) => {
                 if list_depth == 0 {
-                    flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+                    flush_block(
+                        &mut blocks,
+                        &mut current,
+                        &mut kind,
+                        &mut image_path,
+                        role,
+                        collapsible,
+                        summary,
+                    );
                 }
             }
-            Event::End(TagEnd::List(_)) => {
-                flush_block(&mut blocks, &mut current, &mut kind, &mut image_path)
-            }
+            Event::End(TagEnd::List(_)) => flush_block(
+                &mut blocks,
+                &mut current,
+                &mut kind,
+                &mut image_path,
+                role,
+                collapsible,
+                summary,
+            ),
             _ => {}
         }
     }
-    flush_block(&mut blocks, &mut current, &mut kind, &mut image_path);
+    flush_block(
+        &mut blocks,
+        &mut current,
+        &mut kind,
+        &mut image_path,
+        role,
+        collapsible,
+        summary,
+    );
     blocks
 }
 
@@ -2990,12 +3166,18 @@ fn flush_block(
     current: &mut String,
     kind: &mut String,
     image_path: &mut Option<String>,
+    role: &str,
+    collapsible: bool,
+    summary: &str,
 ) {
     let text = current.trim_end_matches('\n').to_owned();
     if !text.is_empty() || image_path.is_some() {
         blocks.push(ParsedBlock {
             text,
             kind: kind.clone(),
+            role: role.into(),
+            summary: summary.into(),
+            collapsible,
             image_path: image_path.take(),
         });
     }
@@ -3070,6 +3252,18 @@ mod tests {
         let blocks = markdown_blocks("![diagram](C:/repo/output.png)");
         assert_eq!(blocks[0].kind, "image");
         assert_eq!(blocks[0].image_path.as_deref(), Some("C:/repo/output.png"));
+    }
+
+    #[test]
+    fn transcript_blocks_preserve_roles_and_collapsible_activity() {
+        let blocks = markdown_blocks(
+            "\u{001e}user\nhello\n\u{001e}activity|Command: cargo test\ncargo test\n\npassed\n\u{001e}assistant\ndone",
+        );
+        assert_eq!(blocks[0].role, "user");
+        assert_eq!(blocks[1].role, "activity");
+        assert!(blocks[1].collapsible);
+        assert_eq!(blocks[1].summary, "Command: cargo test");
+        assert_eq!(blocks[2].role, "assistant");
     }
 
     #[test]

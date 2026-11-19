@@ -683,7 +683,7 @@ fn render_item(item: &Value) -> Option<String> {
         "userMessage" => item
             .get("text")
             .and_then(Value::as_str)
-            .map(str::to_owned)
+            .map(|text| transcript_item("user", text))
             .or_else(|| {
                 item.get("content")
                     .and_then(Value::as_array)
@@ -698,14 +698,63 @@ fn render_item(item: &Value) -> Option<String> {
                             .collect::<Vec<_>>()
                             .join("\n")
                     })
+                    .map(|text| transcript_item("user", &text))
             }),
-        "agentMessage" => item.get("text").and_then(Value::as_str).map(str::to_owned),
-        // Provider plumbing stays out of the conversation transcript. Approval
-        // cards are still surfaced through InteractionState in the UI.
-        "commandExecution" | "fileChange" | "mcpToolCall" | "webSearch" => None,
-        "imageView" => image_view_source(item).map(|source| format!("![Image]({source})")),
+        "agentMessage" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| transcript_item("assistant", text)),
+        "commandExecution" => {
+            let command = item
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or("Command execution");
+            let output = item
+                .get("aggregatedOutput")
+                .or_else(|| item.get("output"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let detail = if output.trim().is_empty() {
+                command.to_owned()
+            } else {
+                format!("{command}\n\n{output}")
+            };
+            let summary = command
+                .lines()
+                .next()
+                .unwrap_or("Command execution")
+                .chars()
+                .take(96)
+                .collect::<String>();
+            Some(activity_item(&format!("Command: {summary}"), &detail))
+        }
+        "fileChange" => Some(activity_item(
+            "File change",
+            &serde_json::to_string_pretty(item).unwrap_or_else(|_| "File change".into()),
+        )),
+        "mcpToolCall" => Some(activity_item(
+            item.get("toolName")
+                .or_else(|| item.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("MCP tool call"),
+            &serde_json::to_string_pretty(item).unwrap_or_else(|_| "MCP tool call".into()),
+        )),
+        "webSearch" => Some(activity_item(
+            "Web search",
+            &serde_json::to_string_pretty(item).unwrap_or_else(|_| "Web search".into()),
+        )),
+        "imageView" => image_view_source(item)
+            .map(|source| transcript_item("assistant", &format!("![Image]({source})"))),
         _ => None,
     }
+}
+
+fn transcript_item(role: &str, text: &str) -> String {
+    format!("\u{001e}{role}\n{text}")
+}
+
+fn activity_item(summary: &str, text: &str) -> String {
+    format!("\u{001e}activity|{summary}\n{text}")
 }
 
 fn image_view_source(item: &Value) -> Option<String> {
@@ -971,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_text_filters_provider_activity_to_conversation_items() {
+    fn thread_text_preserves_roles_and_activity_items() {
         let text = thread_text(&json!({
             "thread": { "items": [
                 { "type": "userMessage", "content": [{ "type": "text", "text": "hello" }] },
@@ -980,8 +1029,10 @@ mod tests {
             ] }
         }));
         assert!(text.contains("hello"));
-        assert!(!text.contains("Command: cargo test"));
+        assert!(text.contains("\u{001e}user\nhello"));
+        assert!(text.contains("\u{001e}activity|Command: cargo test"));
         assert!(text.contains("done"));
+        assert!(text.contains("\u{001e}assistant\ndone"));
     }
 
     #[test]
@@ -1030,7 +1081,7 @@ mod tests {
             json!({ "items": [{ "type": "userMessage", "text": "first" }] }),
             json!({ "items": [{ "type": "agentMessage", "text": "second" }] }),
         ]);
-        assert_eq!(text, "first\n\nsecond");
+        assert_eq!(text, "\u{001e}user\nfirst\n\n\u{001e}assistant\nsecond");
     }
 
     #[test]
@@ -1063,12 +1114,15 @@ mod tests {
                 { "type": "imageView", "path": "C:/repo/output.png" }
             ] }
         }));
-        assert_eq!(text, "![Image](C:/repo/output.png)");
+        assert_eq!(text, "\u{001e}assistant\n![Image](C:/repo/output.png)");
         let structured = thread_text(&json!({
             "thread": { "items": [
                 { "type": "imageView", "source": { "url": "data:image/png;base64,abc" } }
             ] }
         }));
-        assert_eq!(structured, "![Image](data:image/png;base64,abc)");
+        assert_eq!(
+            structured,
+            "\u{001e}assistant\n![Image](data:image/png;base64,abc)"
+        );
     }
 }
