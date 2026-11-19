@@ -45,6 +45,14 @@ slint::include_modules!();
 
 const CODEX_DEFAULT_MODEL_LABEL: &str = "Use Codex settings";
 
+#[derive(Clone, Copy, Default)]
+enum PendingFirewallAction {
+    #[default]
+    None,
+    StartHost,
+    PairDevice,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::record("startup", "desktop_launch");
     // axum-server enables both rustls providers through its dependency graph;
@@ -183,6 +191,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("host conversation lock should not be poisoned")
         .clear();
     let host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
+    let pending_firewall_action = Arc::new(Mutex::new(PendingFirewallAction::None));
+    if let Ok(address) = configured_host_address() {
+        window.set_firewall_dialog_port(address.port().to_string().into());
+    }
     let host_endpoint = start_host_server(host_state.clone(), host_shutdown.clone());
     let relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     start_relay_host(host_state.clone(), relay_host_shutdown.clone());
@@ -209,6 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let host_state = host_state.clone();
         let host_shutdown = host_shutdown.clone();
+        let pending_firewall_action = pending_firewall_action.clone();
         let weak = window.as_weak();
         window.on_toggle_host(move || {
             let is_running = host_shutdown
@@ -227,6 +240,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.set_host_endpoint("No endpoint".into());
                 }
             } else {
+                if host_firewall_required() {
+                    if let Ok(mut pending) = pending_firewall_action.lock() {
+                        *pending = PendingFirewallAction::StartHost;
+                    }
+                    if let Some(window) = weak.upgrade() {
+                        window.set_firewall_dialog_open(true);
+                    }
+                    return;
+                }
                 match start_host_server(host_state.clone(), host_shutdown.clone()) {
                     Ok(endpoint) => {
                         diagnostics::record("host", "started_from_ui");
@@ -243,6 +265,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+            }
+        });
+    }
+    {
+        let pending_firewall_action = pending_firewall_action.clone();
+        let weak = window.as_weak();
+        window.on_request_pairing(move || {
+            let Some(window) = weak.upgrade() else { return };
+            if window.get_pairing_open() {
+                window.set_pairing_open(false);
+                return;
+            }
+            if host_firewall_required() {
+                if let Ok(mut pending) = pending_firewall_action.lock() {
+                    *pending = PendingFirewallAction::PairDevice;
+                }
+                window.set_firewall_dialog_open(true);
+            } else {
+                window.set_pairing_open(true);
+            }
+        });
+    }
+    {
+        let host_state = host_state.clone();
+        let host_shutdown = host_shutdown.clone();
+        let pending_firewall_action = pending_firewall_action.clone();
+        let weak = window.as_weak();
+        window.on_approve_firewall_access(move || {
+            let action = pending_firewall_action
+                .lock()
+                .map(|mut pending| std::mem::take(&mut *pending))
+                .unwrap_or_default();
+            if let Some(window) = weak.upgrade() {
+                window.set_firewall_dialog_open(false);
+            }
+            let result = configured_host_address().and_then(ensure_host_firewall_rule);
+            match (action, result) {
+                (PendingFirewallAction::PairDevice, Ok(())) => {
+                    if let Some(window) = weak.upgrade() {
+                        window.set_pairing_open(true);
+                    }
+                }
+                (PendingFirewallAction::StartHost, Ok(())) => {
+                    match start_host_server(host_state.clone(), host_shutdown.clone()) {
+                        Ok(endpoint) => {
+                            diagnostics::record("host", "started_from_ui");
+                            if let Some(window) = weak.upgrade() {
+                                window.set_host_status("Host API is running".into());
+                                window.set_host_endpoint(endpoint.into());
+                            }
+                        }
+                        Err(error) => {
+                            diagnostics::record("host", "start_from_ui_failed");
+                            if let Some(window) = weak.upgrade() {
+                                window.set_host_status(
+                                    format!("Host API unavailable: {error}").into(),
+                                );
+                                window.set_host_endpoint("No endpoint".into());
+                            }
+                        }
+                    }
+                }
+                (_, Err(error)) => {
+                    diagnostics::record("host", "firewall_setup_failed");
+                    if let Some(window) = weak.upgrade() {
+                        window.set_host_status(format!("Firewall setup failed: {error}").into());
+                    }
+                }
+                (PendingFirewallAction::None, Ok(())) => {}
+            }
+        });
+    }
+    {
+        let pending_firewall_action = pending_firewall_action.clone();
+        let weak = window.as_weak();
+        window.on_cancel_firewall_access(move || {
+            if let Ok(mut pending) = pending_firewall_action.lock() {
+                *pending = PendingFirewallAction::None;
+            }
+            if let Some(window) = weak.upgrade() {
+                window.set_firewall_dialog_open(false);
             }
         });
     }
@@ -2910,18 +3013,37 @@ fn host_diagnostics_report() -> String {
     checks.join("\n")
 }
 
+fn configured_host_address() -> Result<std::net::SocketAddr, String> {
+    let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "0.0.0.0:8788".to_owned());
+    requested
+        .parse::<std::net::SocketAddr>()
+        .map_err(|error| format!("invalid host bind address: {error}"))
+}
+
+fn host_firewall_required() -> bool {
+    let Ok(address) = configured_host_address() else {
+        return false;
+    };
+    if address.ip().is_loopback() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        !firewall_rule_exists(address.port())
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 fn start_host_server(
     state: HostHttpState,
     shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 ) -> Result<String, String> {
     let configured_bind = env::var("POCKETAGENT_HOST_BIND").ok();
-    let requested = configured_bind
-        .clone()
-        .unwrap_or_else(|| "0.0.0.0:8788".into());
-    let requested_address = requested
-        .parse::<std::net::SocketAddr>()
-        .map_err(|error| format!("invalid host bind address: {error}"))?;
-    ensure_host_firewall_rule(requested_address)?;
+    let requested_address = configured_host_address()?;
+    let requested = requested_address.to_string();
     let configured_advertise = env::var("POCKETAGENT_HOST_ADVERTISE")
         .ok()
         .filter(|value| !value.trim().is_empty());

@@ -304,6 +304,8 @@ export component AppWindow inherits Window {
     in-out property <string> host-status: "Host API is stopped";
     in-out property <string> host-endpoint: "No host endpoint";
     in-out property <string> host-diagnostics: "Connection diagnostics have not run.";
+    in-out property <bool> firewall-dialog-open: false;
+    in-out property <string> firewall-dialog-port: "8788";
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <image> host-qr;
     in-out property <[HostDeviceItem]> host-devices: [];
@@ -315,7 +317,7 @@ export component AppWindow inherits Window {
     in-out property <string> submission-warning: "";
     in-out property <string> new-session-folder: "";
     in-out property <[string]> folder-choices: [];
-    property <bool> pairing-open: false;
+    in-out property <bool> pairing-open: false;
 
     callback connect-codex(string, string);
     callback new-conversation(string, string, string);
@@ -338,6 +340,9 @@ export component AppWindow inherits Window {
     callback revoke-device(string);
     callback renew-pairing();
     callback run-host-diagnostics();
+    callback request-pairing();
+    callback approve-firewall-access();
+    callback cancel-firewall-access();
     callback toggle-host();
     callback cancel-schedule(string);
     callback navigate(string);
@@ -568,7 +573,7 @@ export component AppWindow inherits Window {
                     Text { text: host-endpoint; color: #8fbc8f; font-family: "Segoe UI"; }
                         ActionButton { icon: "review"; label: "Connection diagnostics"; tooltip: "Check local listener, HTTPS, and API"; clicked => { run-host-diagnostics(); } }
                         Text { text: host-diagnostics; color: #a7baa7; wrap: word-wrap; font-family: "Segoe UI"; font-size: 12px; }
-                        ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { pairing-open = !pairing-open; } }
+                        ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { request-pairing(); } }
                         if pairing-open : VerticalBox {
                             spacing: 8px;
                             Image { source: host-qr; width: 220px; height: 220px; image-fit: contain; accessible-role: image; accessible-label: "New device pairing QR code"; }
@@ -735,6 +740,36 @@ export component AppWindow inherits Window {
                     spacing: 8px;
                     ActionButton { icon: "schedule"; label: "Confirm schedule"; tooltip: "Confirm schedule"; primary: true; enabled: !selected-session-read-only; clicked => { schedule-prompt(composer-draft, selected-model, selected-effort, schedule-choice); schedule-dialog-open = false; } }
                     ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel scheduling"; clicked => { schedule-dialog-open = false; } }
+                }
+            }
+        }
+    }
+
+    if firewall-dialog-open : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000099;
+        TouchArea { clicked => { } }
+        Rectangle {
+            x: (parent.width - 520px) / 2;
+            y: (parent.height - 220px) / 2;
+            width: 520px;
+            height: 220px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #47604b;
+            background: #18271f;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Allow phone connections?"; color: #e8f1e6; font-size: 18px; font-weight: 700; }
+                Text { text: "PocketAgent needs an inbound Windows Firewall rule for TCP " + firewall-dialog-port + ". The next step opens Windows' standard permission prompt. No rule is created until you approve both prompts."; color: #a7baa7; wrap: word-wrap; font-family: "Segoe UI"; }
+                HorizontalBox {
+                    spacing: 8px;
+                    ActionButton { icon: "approve"; label: "Continue"; tooltip: "Continue to Windows permission prompt"; primary: true; clicked => { approve-firewall-access(); } }
+                    ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel firewall setup"; clicked => { cancel-firewall-access(); } }
                 }
             }
         }
