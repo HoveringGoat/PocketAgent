@@ -215,6 +215,7 @@ export component AppWindow inherits Window {
     in-out property <[SessionItem]> session-items: [];
     in-out property <string> current-session-id: "";
     in-out property <string> current-working-directory: "";
+    in-out property <bool> selected-session-read-only: false;
     in-out property <string> selected-model: "";
     in-out property <string> selected-effort: "";
     in-out property <bool> showing-archived: false;
@@ -480,15 +481,15 @@ export component AppWindow inherits Window {
                     vertical-stretch: 1;
                     font-family: "Arial";
                     text <=> composer-draft;
-                    placeholder-text: codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt";
-                    enabled: codex-available;
+                    placeholder-text: selected-session-read-only ? "Read-only mirror" : (codex-status == "Codex is working..." ? "Steer the active turn" : "Send a prompt");
+                    enabled: codex-available && !selected-session-read-only;
                 }
                 VerticalBox {
                     width: 104px;
                     horizontal-stretch: 0;
                     spacing: 8px;
-                    ActionButton { width: 104px; horizontal-stretch: 0; show-icon: false; icon: "send"; label: "Send"; primary: true; height: 44px; enabled: codex-available && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
-                    ActionButton { width: 38px; horizontal-stretch: 0; icon: "schedule"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-choice = "900"; schedule-dialog-open = true; } }
+                    ActionButton { width: 104px; horizontal-stretch: 0; show-icon: false; icon: "send"; label: "Send"; primary: true; height: 44px; enabled: codex-available && !selected-session-read-only && prompt.text != "" && !showing-archived; clicked => { submission-warning = ""; send-prompt(prompt.text, selected-model, selected-effort); } }
+                    ActionButton { width: 38px; horizontal-stretch: 0; icon: "schedule"; label: ""; tooltip: "Schedule message"; height: 36px; enabled: codex-available && !selected-session-read-only && prompt.text != "" && current-session-id != "" && !showing-archived; clicked => { schedule-choice = "900"; schedule-dialog-open = true; } }
                 }
             }
             if submission-warning != "" : Text { text: submission-warning; color: #f3b8a5; wrap: word-wrap; }
@@ -684,7 +685,7 @@ export component AppWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 8px;
-                    ActionButton { icon: "schedule"; label: "Confirm schedule"; tooltip: "Confirm schedule"; primary: true; clicked => { schedule-prompt(composer-draft, selected-model, selected-effort, schedule-choice); schedule-dialog-open = false; } }
+                    ActionButton { icon: "schedule"; label: "Confirm schedule"; tooltip: "Confirm schedule"; primary: true; enabled: !selected-session-read-only; clicked => { schedule-prompt(composer-draft, selected-model, selected-effort, schedule-choice); schedule-dialog-open = false; } }
                     ActionButton { icon: "cancel"; label: "Cancel"; tooltip: "Cancel scheduling"; clicked => { schedule-dialog-open = false; } }
                 }
             }

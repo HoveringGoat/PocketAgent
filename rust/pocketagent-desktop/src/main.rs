@@ -27,7 +27,7 @@ use rustls::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     env, fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -654,6 +654,7 @@ fn start_codex_worker(
             let mut session: Option<CodexSession> = None;
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
+            let mut read_only_sessions = HashSet::<String>::new();
             let mut provider_default_model = None::<String>;
             let mut showing_archived = false;
             let mut deferred_commands = VecDeque::new();
@@ -714,6 +715,8 @@ fn start_codex_worker(
                         match CodexSession::connect(&executable, &repository).await {
                             Ok(mut connected) => {
                                 diagnostics::record("codex", "connect_ready");
+                                read_only_sessions.clear();
+                                set_session_read_only(&weak, false);
                                 let sessions = connected.list_threads().await;
                                 store.repository_path = repository;
                                 store.codex_executable = executable;
@@ -805,7 +808,9 @@ fn start_codex_worker(
                         {
                             Ok(id) => {
                                 diagnostics::record("conversation", "created");
+                                read_only_sessions.remove(&id);
                                 selected_id = Some(id.clone());
+                                set_session_read_only(&weak, false);
                                 set_selected_session(&weak, id.clone());
                                 let _ = weak.upgrade_in_event_loop(|window| window.set_creating_session(false));
                                 set_current_working_directory(&weak, working_directory.clone());
@@ -901,6 +906,7 @@ fn start_codex_worker(
                             (!reasoning_effort.trim().is_empty()).then_some(reasoning_effort.clone()),
                         );
                         set_host_devices(&weak, &host_registry, &id);
+                        set_session_read_only(&weak, false);
                         current.set_repository(working_directory.clone());
                         match current
                             .resume_thread(
@@ -910,6 +916,8 @@ fn start_codex_worker(
                             .await
                         {
                             Ok(history) => {
+                                read_only_sessions.remove(&id);
+                                set_session_read_only(&weak, false);
                                 if let Some(record) = store
                                     .conversations
                                     .iter()
@@ -937,16 +945,45 @@ fn start_codex_worker(
                                     },
                                 )
                             }
-                            Err(error) => {
-                                // Do not leave the previous thread attached after a
-                                // failed resume; later prompts must not target it.
-                                current.clear_thread();
-                                set_codex_error(&weak, error.to_string());
-                                set_transcript(
-                                    &weak,
-                                    "Conversation history is unavailable. You can still archive, restore, or rename this conversation.".into(),
-                                );
-                            }
+                            Err(resume_error) => match current.read_thread(&id).await {
+                                Ok(history) => {
+                                    // A read-only thread/read succeeds even when another
+                                    // client owns the active writer lease.
+                                    current.clear_thread();
+                                    read_only_sessions.insert(id.clone());
+                                    set_session_read_only(&weak, true);
+                                    set_codex_status(
+                                        &weak,
+                                        "Read-only mirror (another client is writing)".into(),
+                                        None,
+                                    );
+                                    set_transcript(
+                                        &weak,
+                                        if history.is_empty() {
+                                            "Conversation is being mirrored; no messages yet.".into()
+                                        } else {
+                                            history
+                                        },
+                                    );
+                                }
+                                Err(read_error) => {
+                                    // Do not leave the previous thread attached after a
+                                    // failed resume; later prompts must not target it.
+                                    current.clear_thread();
+                                    read_only_sessions.insert(id.clone());
+                                    set_session_read_only(&weak, true);
+                                    set_codex_error(
+                                        &weak,
+                                        format!(
+                                            "Conversation could not be loaded for editing or mirroring. Resume: {resume_error}; read-only: {read_error}"
+                                        ),
+                                    );
+                                    set_transcript(
+                                        &weak,
+                                        "Conversation history is unavailable. You can still archive, restore, or rename this conversation.".into(),
+                                    );
+                                }
+                            },
                         }
                     }
                     CodexCommand::ArchiveSelected => {
@@ -1024,6 +1061,15 @@ fn start_codex_worker(
                         if let Some(schedule_id) = schedule_id.as_deref()
                             && !schedule_pending(&store, schedule_id)
                         {
+                            continue;
+                        }
+                        let target_id = conversation_id.as_deref().or(selected_id.as_deref());
+                        if is_read_only_session(&read_only_sessions, target_id) {
+                            set_codex_error(
+                                &weak,
+                                "This conversation is read-only while another client is writing."
+                                    .into(),
+                            );
                             continue;
                         }
                         let from_desktop = schedule_id.is_none() && conversation_id.is_none();
@@ -1425,6 +1471,10 @@ fn start_codex_worker(
                             text,
                             expected_turn_id,
                         } => {
+                            if is_read_only_session(&read_only_sessions, Some(&conversation_id)) {
+                                diagnostics::record("turn", "read_only_rejected");
+                                continue;
+                            }
                             let _ = scheduler.send(CodexCommand::Prompt {
                                 prompt: text,
                                 model: String::new(),
@@ -2118,6 +2168,7 @@ fn clear_selected_conversation(
     }
     *selected_id = None;
     set_selected_session(weak, String::new());
+    set_session_read_only(weak, false);
     set_current_working_directory(weak, String::new());
     set_selected_model_options(weak, None, None);
     set_transcript(weak, "No conversation selected".into());
@@ -2240,6 +2291,16 @@ fn refresh_host_devices_for_selection(weak: &slint::Weak<AppWindow>, registry: &
 
 fn set_selected_session(weak: &slint::Weak<AppWindow>, id: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.invoke_switch_draft(id.into()));
+}
+
+fn set_session_read_only(weak: &slint::Weak<AppWindow>, read_only: bool) {
+    let _ = weak.upgrade_in_event_loop(move |window| {
+        window.set_selected_session_read_only(read_only);
+    });
+}
+
+fn is_read_only_session(read_only_sessions: &HashSet<String>, target_id: Option<&str>) -> bool {
+    target_id.is_some_and(|id| read_only_sessions.contains(id))
 }
 
 fn folder_choices(folder: &std::path::Path) -> std::io::Result<Vec<slint::SharedString>> {
@@ -2932,10 +2993,11 @@ fn flush_block(
 mod tests {
     use super::{
         can_queue_usage_exhausted, codex_status_available, decode_data_image, image_from_bytes,
-        markdown_blocks, normalize_model_selection, parse_session_key, resolve_codex_from_paths,
-        schedule_pending,
+        is_read_only_session, markdown_blocks, normalize_model_selection, parse_session_key,
+        resolve_codex_from_paths, schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
+    use std::collections::HashSet;
     use uuid::Uuid;
 
     #[test]
@@ -2951,6 +3013,15 @@ mod tests {
     fn model_selection_uses_provider_default_label_without_forcing_configured_model() {
         assert_eq!(normalize_model_selection("Use Codex settings"), "");
         assert_eq!(normalize_model_selection("gpt-6-astra"), "gpt-6-astra");
+    }
+
+    #[test]
+    fn active_writer_mirror_blocks_local_commands_but_keeps_other_sessions_writable() {
+        let mut read_only = HashSet::new();
+        read_only.insert("thread-mirrored".to_owned());
+        assert!(is_read_only_session(&read_only, Some("thread-mirrored")));
+        assert!(!is_read_only_session(&read_only, Some("thread-writable")));
+        assert!(!is_read_only_session(&read_only, None));
     }
 
     #[test]

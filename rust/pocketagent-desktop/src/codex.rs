@@ -388,7 +388,33 @@ impl CodexSession {
             parameters["model"] = json!(model);
         }
         let result = self.request("thread/resume", parameters).await?;
+        let history = self.thread_history(thread_id, result).await?;
         self.thread_id = Some(thread_id.to_owned());
+        Ok(history)
+    }
+
+    /// Read a thread without acquiring the provider's active-writer lease.
+    ///
+    /// A second desktop or mobile client can use this path to mirror a
+    /// conversation while another client owns the writable Codex session.
+    pub async fn read_thread(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let result = self
+            .request(
+                "thread/read",
+                json!({ "threadId": thread_id, "includeTurns": true }),
+            )
+            .await?;
+        self.thread_history(thread_id, result).await
+    }
+
+    async fn thread_history(
+        &mut self,
+        thread_id: &str,
+        result: Value,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread = result.get("thread").cloned().unwrap_or(Value::Null);
         if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
             let mut turns = Vec::new();
@@ -435,37 +461,7 @@ impl CodexSession {
                 json!({ "threadId": thread_id, "includeTurns": true }),
             )
             .await?;
-        let thread = result.get("thread").cloned().unwrap_or(Value::Null);
-        if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
-            let mut turns = Vec::new();
-            let mut cursor = None::<String>;
-            loop {
-                let mut parameters = json!({
-                    "threadId": thread_id,
-                    "limit": 100,
-                    "sortDirection": "asc",
-                    "itemsView": "full"
-                });
-                if let Some(cursor_value) = cursor.as_deref() {
-                    parameters["cursor"] = json!(cursor_value);
-                }
-                let page = self.request("thread/turns/list", parameters).await?;
-                if let Some(data) = page.get("data").and_then(Value::as_array) {
-                    turns.extend(data.iter().cloned());
-                }
-                cursor = page
-                    .get("nextCursor")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned);
-                if cursor.is_none() {
-                    break;
-                }
-            }
-            Ok(turns_text(&turns))
-        } else {
-            Ok(thread_text(&result))
-        }
+        self.thread_history(&thread_id, result).await
     }
 
     pub async fn list_threads(
