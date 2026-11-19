@@ -661,6 +661,9 @@ fn start_codex_worker(
             let mut archive_timer = tokio::time::interval(std::time::Duration::from_secs(600));
             archive_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             archive_timer.tick().await;
+            let mut mirror_timer = tokio::time::interval(std::time::Duration::from_secs(3));
+            mirror_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            mirror_timer.tick().await;
             if store.archive_stale(now_unix() - 7 * 24 * 60 * 60) > 0 {
                 diagnostics::record("conversation", "auto_archived_stale");
                 let _ = store.save();
@@ -698,6 +701,18 @@ fn start_codex_worker(
                                 let _ = store.save();
                                 sync_host_conversations(&host_conversations, &store);
                                 set_sessions(&weak, visible_sessions(&store, showing_archived));
+                            }
+                            continue;
+                        }
+                        _ = mirror_timer.tick() => {
+                            let Some(id) = selected_id.clone() else { continue };
+                            if !read_only_sessions.contains(&id) {
+                                continue;
+                            }
+                            if let Some(current) = session.as_mut()
+                                && let Ok(history) = current.read_thread(&id).await
+                            {
+                                set_transcript(&weak, history);
                             }
                             continue;
                         }
