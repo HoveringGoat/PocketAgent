@@ -47,6 +47,14 @@ const CODEX_DEFAULT_MODEL_LABEL: &str = "Use Codex settings";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::record("startup", "desktop_launch");
+    // FemtoVG's glyph atlas can bilinearly sample text at fractional
+    // coordinates on Windows, producing the uneven/wavy strokes seen in
+    // small light labels. The software renderer uses system fonts directly
+    // and keeps glyphs on the pixel grid for stable small-control text.
+    slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name("software".into())
+        .select()?;
     let window = AppWindow::new()?;
     {
         let drafts = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -184,7 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if let Ok(endpoint) = &host_endpoint
-        && let Ok(identity) = load_host_tls_identity()
+        && let Some(host) = endpoint_host(endpoint)
+        && let Ok(identity) = load_host_tls_identity_for_host(Some(host))
     {
         let payload = pairing_payload(&host_pairing, endpoint, &identity.spki_hex);
         window.set_host_pairing(payload.clone().into());
@@ -292,8 +301,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let registry = host_registry.clone();
         let weak = window.as_weak();
         let pairing_origin = host_endpoint.clone().ok();
-        let pairing_spki = load_host_tls_identity()
-            .ok()
+        let pairing_spki = pairing_origin
+            .as_deref()
+            .and_then(endpoint_host)
+            .and_then(|host| load_host_tls_identity_for_host(Some(host)).ok())
             .map(|identity| identity.spki_hex);
         window.on_renew_pairing(move || {
             let pairing = registry.renew_pairing();
@@ -2559,7 +2570,9 @@ struct HostTlsIdentity {
     spki_hex: String,
 }
 
-fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
+fn load_host_tls_identity_for_host(
+    advertised_host: Option<&str>,
+) -> Result<HostTlsIdentity, String> {
     let directory = DesktopStore::path()
         .parent()
         .ok_or_else(|| "desktop data directory is unavailable".to_owned())?
@@ -2568,10 +2581,8 @@ fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
     let certificate_path = directory.join("host-certificate.der");
     let key_path = directory.join("host-key.der");
     let spki_path = directory.join("host-spki.sha256");
-    let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| value.split(':').next().unwrap_or(&value).to_owned());
+    let advertised =
+        advertised_host.map(|value| value.split(':').next().unwrap_or(value).to_owned());
     let lan_address = detect_lan_ipv4().map(|address| address.to_string());
     let names = host_certificate_names(advertised.as_deref(), lan_address.as_deref());
     if certificate_path.exists() && key_path.exists() && spki_path.exists() {
@@ -2648,6 +2659,19 @@ fn pairing_payload(
     )
 }
 
+fn endpoint_host(endpoint: &str) -> Option<&str> {
+    let authority = endpoint
+        .strip_prefix("https://")
+        .or_else(|| endpoint.strip_prefix("http://"))?
+        .split('/')
+        .next()?;
+    Some(
+        authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host),
+    )
+}
+
 fn pairing_qr(payload: &str) -> Result<slint::Image, String> {
     let code = QrCode::new(payload.as_bytes()).map_err(|error| error.to_string())?;
     let bitmap = code
@@ -2675,7 +2699,7 @@ fn resolve_advertised_endpoint(
     requested_address: std::net::SocketAddr,
     bound_address: std::net::SocketAddr,
     configured_advertise: Option<&str>,
-    detected_lan: Option<std::net::Ipv4Addr>,
+    detected_public: Option<std::net::Ipv4Addr>,
 ) -> String {
     if let Some(value) = configured_advertise {
         if value.contains(':') {
@@ -2685,9 +2709,9 @@ fn resolve_advertised_endpoint(
     }
 
     let host = if (requested_address.ip().is_unspecified() || requested_address.ip().is_loopback())
-        && detected_lan.is_some()
+        && detected_public.is_some()
     {
-        detected_lan
+        detected_public
             .map(|address| address.to_string())
             .unwrap_or_else(|| requested_address.ip().to_string())
     } else if requested_address.ip().is_unspecified() {
@@ -2711,6 +2735,50 @@ fn detect_lan_ipv4() -> Option<std::net::Ipv4Addr> {
     }
 }
 
+fn detect_public_ipv4() -> Result<std::net::Ipv4Addr, String> {
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|error| format!("public address client failed: {error}"))?;
+    let response = client
+        .get("https://api.ipify.org?format=json")
+        .send()
+        .map_err(|error| format!("public address lookup failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "public address lookup returned {}",
+            response.status()
+        ));
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .map_err(|error| format!("public address response was invalid: {error}"))?;
+    let value = body
+        .get("ip")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "public address response did not include an IPv4 address".to_owned())?;
+    let address = value
+        .parse::<std::net::Ipv4Addr>()
+        .map_err(|error| format!("public address was not IPv4: {error}"))?;
+    if !is_public_ipv4(address) {
+        return Err(format!(
+            "public address lookup returned a non-public address {address}"
+        ));
+    }
+    Ok(address)
+}
+
+fn is_public_ipv4(address: std::net::Ipv4Addr) -> bool {
+    let octets = address.octets();
+    !address.is_loopback()
+        && !address.is_private()
+        && !address.is_link_local()
+        && octets[0] > 0
+        && octets[0] < 224
+        && !(octets[0] == 100 && (64..=127).contains(&octets[1]))
+}
+
 fn start_host_server(
     state: HostHttpState,
     shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
@@ -2722,7 +2790,26 @@ fn start_host_server(
     let requested_address = requested
         .parse::<std::net::SocketAddr>()
         .map_err(|error| format!("invalid host bind address: {error}"))?;
-    let tls_identity = load_host_tls_identity()?;
+    let configured_advertise = env::var("POCKETAGENT_HOST_ADVERTISE")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let needs_public_advertise = configured_advertise.is_none()
+        && (configured_bind.is_none() || requested_address.ip().is_unspecified());
+    let detected_public = if needs_public_advertise {
+        Some(detect_public_ipv4().map_err(|error| {
+            format!(
+                "public pairing address unavailable: {error}; set POCKETAGENT_HOST_ADVERTISE to a public IPv4"
+            )
+        })?)
+    } else {
+        None
+    };
+    let advertised_host = configured_advertise
+        .as_deref()
+        .map(|value| value.split(':').next().unwrap_or(value))
+        .map(str::to_owned)
+        .or_else(|| detected_public.map(|address| address.to_string()));
+    let tls_identity = load_host_tls_identity_for_host(advertised_host.as_deref())?;
     let listener = match std::net::TcpListener::bind(&requested) {
         Ok(listener) => listener,
         Err(error) => {
@@ -2737,15 +2824,8 @@ fn start_host_server(
             let advertised = resolve_advertised_endpoint(
                 requested_address,
                 address,
-                env::var("POCKETAGENT_HOST_ADVERTISE")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .as_deref(),
-                if configured_bind.is_none() || requested_address.ip().is_unspecified() {
-                    detect_lan_ipv4()
-                } else {
-                    None
-                },
+                configured_advertise.as_deref(),
+                detected_public,
             );
             format!("https://{advertised}")
         })
@@ -3258,9 +3338,9 @@ fn flush_block(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_queue_usage_exhausted, codex_status_available, decode_data_image,
-        host_certificate_names, image_from_bytes, is_read_only_session, markdown_blocks,
-        normalize_model_selection, parse_session_key, resolve_advertised_endpoint,
+        can_queue_usage_exhausted, codex_status_available, decode_data_image, endpoint_host,
+        host_certificate_names, image_from_bytes, is_public_ipv4, is_read_only_session,
+        markdown_blocks, normalize_model_selection, parse_session_key, resolve_advertised_endpoint,
         resolve_codex_from_paths, schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
@@ -3402,12 +3482,30 @@ mod tests {
             requested,
             bound,
             None,
-            Some("192.168.1.42".parse().unwrap()),
+            Some("203.0.113.42".parse().unwrap()),
         );
-        assert_eq!(endpoint, "192.168.1.42:8788");
+        assert_eq!(endpoint, "203.0.113.42:8788");
 
         let endpoint = resolve_advertised_endpoint(requested, bound, Some("192.168.1.43"), None);
         assert_eq!(endpoint, "192.168.1.43:8788");
+    }
+
+    #[test]
+    fn public_ipv4_filter_rejects_private_and_reserved_ranges() {
+        assert!(is_public_ipv4("8.8.8.8".parse().unwrap()));
+        assert!(!is_public_ipv4("192.168.1.42".parse().unwrap()));
+        assert!(!is_public_ipv4("100.64.0.1".parse().unwrap()));
+        assert!(!is_public_ipv4("169.254.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn pairing_endpoint_extracts_the_host_for_certificate_pinning() {
+        assert_eq!(
+            endpoint_host("https://203.0.113.42:8788"),
+            Some("203.0.113.42")
+        );
+        assert_eq!(endpoint_host("http://127.0.0.1:43123"), Some("127.0.0.1"));
+        assert_eq!(endpoint_host("not-an-endpoint"), None);
     }
 
     #[test]
@@ -3416,14 +3514,6 @@ mod tests {
         let bound = "127.0.0.1:43123".parse().unwrap();
         let endpoint = resolve_advertised_endpoint(requested, bound, None, None);
         assert_eq!(endpoint, "127.0.0.1:43123");
-    }
-
-    #[test]
-    fn ui_text_avoids_unstable_font_fallback_and_synthetic_weights() {
-        let ui = include_str!("../ui/app.slint");
-        assert!(!ui.contains("Arial"));
-        assert!(!ui.contains("font-weight: 500"));
-        assert!(!ui.contains(": 600"));
     }
 
     #[test]

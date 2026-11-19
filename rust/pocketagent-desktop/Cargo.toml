@@ -1,6 +1,6 @@
 [package]
 name = "pocketagent-desktop"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -12,6 +12,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 qrcode = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rcgen = "0.13"
 pocketagent-crypto = { path = "../pocketagent-crypto" }
 pocketagent-host = { path = "../pocketagent-host" }
@@ -22,7 +23,7 @@ pulldown-cmark = "0.13"
 rustls = "0.23"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
-slint = "1.14"
+slint = { version = "1.14", features = ["software-renderer-systemfonts"] }
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "rt", "time"] }
 tower = "0.5"
 uuid = "1"
