@@ -20,7 +20,7 @@ use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use qrcode::QrCode;
-use rcgen::generate_simple_self_signed;
+use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256, generate_simple_self_signed};
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -2244,6 +2244,7 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
             }
         })
         .collect::<Vec<_>>();
+    window.set_transcript_content_y(-1_000_000.0);
     window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
 }
 
@@ -2567,25 +2568,45 @@ fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
     let certificate_path = directory.join("host-certificate.der");
     let key_path = directory.join("host-key.der");
     let spki_path = directory.join("host-spki.sha256");
+    let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.split(':').next().unwrap_or(&value).to_owned());
+    let lan_address = detect_lan_ipv4().map(|address| address.to_string());
+    let names = host_certificate_names(advertised.as_deref(), lan_address.as_deref());
     if certificate_path.exists() && key_path.exists() && spki_path.exists() {
+        let certificate_der = fs::read(&certificate_path).map_err(|error| error.to_string())?;
+        let key_der = fs::read(&key_path).map_err(|error| error.to_string())?;
+        // Keep the persisted signing key/SPKI pin, but refresh the leaf SANs
+        // so a LAN-origin QR remains valid after upgrading from loopback-only
+        // builds. Existing paired devices keep the same public-key pin.
+        if (lan_address.is_some() || advertised.is_some())
+            && let Ok(key_pair) = KeyPair::from_pkcs8_der_and_sign_algo(
+                &PrivatePkcs8KeyDer::from(key_der.as_slice()),
+                &PKCS_ECDSA_P256_SHA256,
+            )
+            && let Ok(cert) = CertificateParams::new(names.clone())
+                .and_then(|params| params.self_signed(&key_pair))
+        {
+            let refreshed = cert.der().to_vec();
+            fs::write(&certificate_path, &refreshed).map_err(|error| error.to_string())?;
+            return Ok(HostTlsIdentity {
+                certificate_der: refreshed,
+                key_der,
+                spki_hex: fs::read_to_string(spki_path)
+                    .map_err(|error| error.to_string())?
+                    .trim()
+                    .to_owned(),
+            });
+        }
         return Ok(HostTlsIdentity {
-            certificate_der: fs::read(certificate_path).map_err(|error| error.to_string())?,
-            key_der: fs::read(key_path).map_err(|error| error.to_string())?,
+            certificate_der,
+            key_der,
             spki_hex: fs::read_to_string(spki_path)
                 .map_err(|error| error.to_string())?
                 .trim()
                 .to_owned(),
         });
-    }
-    let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| value.split(':').next().unwrap_or(&value).to_owned());
-    let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
-    if let Some(advertised) = advertised
-        && !names.iter().any(|name| name == &advertised)
-    {
-        names.push(advertised);
     }
     let certified = generate_simple_self_signed(names).map_err(|error| error.to_string())?;
     let certificate_der = certified.cert.der().to_vec();
@@ -2600,6 +2621,16 @@ fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
         key_der,
         spki_hex,
     })
+}
+
+fn host_certificate_names(advertised: Option<&str>, lan_address: Option<&str>) -> Vec<String> {
+    let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
+    for name in [advertised, lan_address].into_iter().flatten() {
+        if !names.iter().any(|existing| existing == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -2640,11 +2671,54 @@ fn pairing_qr(payload: &str) -> Result<slint::Image, String> {
     Ok(slint::Image::from_rgba8(pixels))
 }
 
+fn resolve_advertised_endpoint(
+    requested_address: std::net::SocketAddr,
+    bound_address: std::net::SocketAddr,
+    configured_advertise: Option<&str>,
+    detected_lan: Option<std::net::Ipv4Addr>,
+) -> String {
+    if let Some(value) = configured_advertise {
+        if value.contains(':') {
+            return value.to_owned();
+        }
+        return format!("{value}:{}", bound_address.port());
+    }
+
+    let host = if (requested_address.ip().is_unspecified() || requested_address.ip().is_loopback())
+        && detected_lan.is_some()
+    {
+        detected_lan
+            .map(|address| address.to_string())
+            .unwrap_or_else(|| requested_address.ip().to_string())
+    } else if requested_address.ip().is_unspecified() {
+        bound_address.ip().to_string()
+    } else {
+        requested_address.ip().to_string()
+    };
+    format!("{host}:{}", bound_address.port())
+}
+
+fn detect_lan_ipv4() -> Option<std::net::Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    // UDP connect only selects the route; it does not send a packet. This lets
+    // us discover the interface Android can reach without requiring a probe.
+    socket
+        .connect((std::net::Ipv4Addr::new(192, 0, 2, 1), 9))
+        .ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(address) if !address.is_loopback() => Some(address),
+        _ => None,
+    }
+}
+
 fn start_host_server(
     state: HostHttpState,
     shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 ) -> Result<String, String> {
-    let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
+    let configured_bind = env::var("POCKETAGENT_HOST_BIND").ok();
+    let requested = configured_bind
+        .clone()
+        .unwrap_or_else(|| "0.0.0.0:8788".into());
     let requested_address = requested
         .parse::<std::net::SocketAddr>()
         .map_err(|error| format!("invalid host bind address: {error}"))?;
@@ -2660,24 +2734,19 @@ fn start_host_server(
     let endpoint = listener
         .local_addr()
         .map(|address| {
-            let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .map(|value| {
-                    if value.contains(':') {
-                        value
-                    } else {
-                        format!("{value}:{}", address.port())
-                    }
-                })
-                .unwrap_or_else(|| {
-                    let host = if requested_address.ip().is_unspecified() {
-                        address.ip().to_string()
-                    } else {
-                        requested_address.ip().to_string()
-                    };
-                    format!("{host}:{}", address.port())
-                });
+            let advertised = resolve_advertised_endpoint(
+                requested_address,
+                address,
+                env::var("POCKETAGENT_HOST_ADVERTISE")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .as_deref(),
+                if configured_bind.is_none() || requested_address.ip().is_unspecified() {
+                    detect_lan_ipv4()
+                } else {
+                    None
+                },
+            );
             format!("https://{advertised}")
         })
         .unwrap_or_else(|_| format!("https://{requested}"));
@@ -3189,8 +3258,9 @@ fn flush_block(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_queue_usage_exhausted, codex_status_available, decode_data_image, image_from_bytes,
-        is_read_only_session, markdown_blocks, normalize_model_selection, parse_session_key,
+        can_queue_usage_exhausted, codex_status_available, decode_data_image,
+        host_certificate_names, image_from_bytes, is_read_only_session, markdown_blocks,
+        normalize_model_selection, parse_session_key, resolve_advertised_endpoint,
         resolve_codex_from_paths, schedule_pending,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
@@ -3322,5 +3392,46 @@ mod tests {
         let source = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
         let bytes = decode_data_image(source).expect("base64 image data should decode");
         assert!(image_from_bytes(&bytes).is_some());
+    }
+
+    #[test]
+    fn pairing_advertises_a_reachable_host_by_default() {
+        let requested = "0.0.0.0:8788".parse().unwrap();
+        let bound = "0.0.0.0:8788".parse().unwrap();
+        let endpoint = resolve_advertised_endpoint(
+            requested,
+            bound,
+            None,
+            Some("192.168.1.42".parse().unwrap()),
+        );
+        assert_eq!(endpoint, "192.168.1.42:8788");
+
+        let endpoint = resolve_advertised_endpoint(requested, bound, Some("192.168.1.43"), None);
+        assert_eq!(endpoint, "192.168.1.43:8788");
+    }
+
+    #[test]
+    fn explicit_loopback_bind_remains_local_for_development() {
+        let requested = "127.0.0.1:0".parse().unwrap();
+        let bound = "127.0.0.1:43123".parse().unwrap();
+        let endpoint = resolve_advertised_endpoint(requested, bound, None, None);
+        assert_eq!(endpoint, "127.0.0.1:43123");
+    }
+
+    #[test]
+    fn ui_text_avoids_unstable_font_fallback_and_synthetic_weights() {
+        let ui = include_str!("../ui/app.slint");
+        assert!(!ui.contains("Arial"));
+        assert!(!ui.contains("font-weight: 500"));
+        assert!(!ui.contains(": 600"));
+    }
+
+    #[test]
+    fn generated_certificate_names_include_the_detected_lan_address() {
+        let names = host_certificate_names(Some("pocketagent.local"), Some("192.168.1.42"));
+        assert!(names.iter().any(|name| name == "localhost"));
+        assert!(names.iter().any(|name| name == "127.0.0.1"));
+        assert!(names.iter().any(|name| name == "pocketagent.local"));
+        assert!(names.iter().any(|name| name == "192.168.1.42"));
     }
 }

@@ -6,6 +6,8 @@ use tokio::{
     sync::{Notify, mpsc, watch},
 };
 
+const INITIAL_HISTORY_TURNS: u64 = 40;
+
 #[derive(Clone, Debug)]
 pub struct PromptRequest {
     pub id: Value,
@@ -417,31 +419,22 @@ impl CodexSession {
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread = result.get("thread").cloned().unwrap_or(Value::Null);
         if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
-            let mut turns = Vec::new();
-            let mut cursor = None::<String>;
-            loop {
-                let mut parameters = json!({
-                    "threadId": thread_id,
-                    "limit": 100,
-                    "sortDirection": "asc",
-                    "itemsView": "full"
-                });
-                if let Some(cursor_value) = cursor.as_deref() {
-                    parameters["cursor"] = json!(cursor_value);
-                }
-                let page = self.request("thread/turns/list", parameters).await?;
-                if let Some(data) = page.get("data").and_then(Value::as_array) {
-                    turns.extend(data.iter().cloned());
-                }
-                cursor = page
-                    .get("nextCursor")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned);
-                if cursor.is_none() {
-                    break;
-                }
-            }
+            let page = self
+                .request(
+                    "thread/turns/list",
+                    json!({
+                        "threadId": thread_id,
+                        "limit": INITIAL_HISTORY_TURNS,
+                        "sortDirection": "desc",
+                        "itemsView": "full"
+                    }),
+                )
+                .await?;
+            let turns = page
+                .get("data")
+                .and_then(Value::as_array)
+                .map(|data| recent_turns_in_display_order(data, INITIAL_HISTORY_TURNS as usize))
+                .unwrap_or_default();
             Ok(turns_text(&turns))
         } else {
             Ok(thread_text(&result))
@@ -675,6 +668,10 @@ fn turns_text(turns: &[Value]) -> String {
         .flat_map(|items| items.iter().filter_map(render_item))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn recent_turns_in_display_order(data: &[Value], limit: usize) -> Vec<Value> {
+    data.iter().take(limit).cloned().rev().collect()
 }
 
 fn render_item(item: &Value) -> Option<String> {
@@ -1082,6 +1079,19 @@ mod tests {
             json!({ "items": [{ "type": "agentMessage", "text": "second" }] }),
         ]);
         assert_eq!(text, "\u{001e}user\nfirst\n\n\u{001e}assistant\nsecond");
+    }
+
+    #[test]
+    fn recent_paginated_turns_are_reversed_for_chronological_display() {
+        let newest_first = vec![
+            json!({ "items": [{ "type": "agentMessage", "text": "newest" }] }),
+            json!({ "items": [{ "type": "userMessage", "text": "older" }] }),
+        ];
+        let turns = recent_turns_in_display_order(&newest_first, 40);
+        assert_eq!(
+            turns_text(&turns),
+            "\u{001e}user\nolder\n\n\u{001e}assistant\nnewest"
+        );
     }
 
     #[test]
