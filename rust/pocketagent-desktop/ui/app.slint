@@ -391,7 +391,9 @@ export component AppWindow inherits Window {
                 }
             }
             HorizontalBox {
-                width: 370px;
+                // Four fixed navigation controls need this width at the
+                // supported DPI; a narrower box lets them overflow the window.
+                width: 450px;
                 spacing: 6px;
                 ActionButton { width: 96px; horizontal-stretch: 0; icon: "sessions"; label: "Sessions"; tooltip: "Sessions"; active: current-page == "sessions"; clicked => { navigate("sessions"); } }
                 ActionButton { width: 96px; horizontal-stretch: 0; icon: "devices"; label: "Devices"; tooltip: "Devices"; active: current-page == "devices"; clicked => { navigate("devices"); } }
