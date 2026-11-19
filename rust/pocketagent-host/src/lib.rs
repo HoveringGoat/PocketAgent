@@ -172,6 +172,7 @@ pub struct DeviceIdentity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PairingDisplay {
     pub code: String,
+    pub ticket: String,
     pub expires_at_unix: i64,
 }
 
@@ -206,6 +207,8 @@ pub enum HostAuthError {
 #[derive(Debug, Serialize, Deserialize)]
 struct RegistryState {
     code: String,
+    #[serde(default)]
+    ticket: String,
     expires_at_unix: i64,
     consumed: bool,
     attempts: VecDeque<i64>,
@@ -238,6 +241,7 @@ impl DeviceRegistry {
         Self {
             state: Arc::new(Mutex::new(RegistryState {
                 code: new_pairing_code(),
+                ticket: new_pairing_ticket(),
                 expires_at_unix: now + PAIRING_LIFETIME.as_secs() as i64,
                 consumed: false,
                 attempts: VecDeque::new(),
@@ -257,7 +261,10 @@ impl DeviceRegistry {
             });
         }
         let bytes = fs::read(&path)?;
-        let state = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let mut state: RegistryState = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        if state.ticket.is_empty() {
+            state.ticket = new_pairing_ticket();
+        }
         Ok(Self {
             state: Arc::new(Mutex::new(state)),
             persistence_path: Some(Arc::new(path)),
@@ -282,6 +289,7 @@ impl DeviceRegistry {
             .expect("registry lock should not be poisoned");
         PairingDisplay {
             code: state.code.clone(),
+            ticket: state.ticket.clone(),
             expires_at_unix: state.expires_at_unix,
         }
     }
@@ -292,12 +300,14 @@ impl DeviceRegistry {
             .lock()
             .expect("registry lock should not be poisoned");
         state.code = new_pairing_code();
+        state.ticket = new_pairing_ticket();
         state.expires_at_unix = now_unix() + PAIRING_LIFETIME.as_secs() as i64;
         state.consumed = false;
         state.attempts.clear();
         let _ = self.save_state(&state);
         PairingDisplay {
             code: state.code.clone(),
+            ticket: state.ticket.clone(),
             expires_at_unix: state.expires_at_unix,
         }
     }
@@ -326,7 +336,9 @@ impl DeviceRegistry {
             return Err(HostAuthError::InvalidPairingCode);
         }
         state.attempts.push_back(now);
-        if !constant_time_equal(candidate.as_bytes(), state.code.as_bytes()) {
+        if !constant_time_equal(candidate.as_bytes(), state.code.as_bytes())
+            && !constant_time_equal(candidate.as_bytes(), state.ticket.as_bytes())
+        {
             return Err(HostAuthError::InvalidPairingCode);
         }
         state.consumed = true;
@@ -1340,6 +1352,12 @@ fn new_pairing_code() -> String {
     format!("{:06}", rng().random_range(100_000..1_000_000))
 }
 
+fn new_pairing_ticket() -> String {
+    let mut bytes = [0u8; 32];
+    rng().fill(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rng().fill(&mut bytes);
@@ -1374,6 +1392,7 @@ mod tests {
     fn pairing_is_single_use_and_tokens_authenticate() {
         let registry = DeviceRegistry::new();
         let display = registry.pairing_display();
+        assert_eq!(display.ticket.len(), 64);
         let paired = registry
             .pair("Android phone", &display.code)
             .expect("pairing should work");
@@ -1383,6 +1402,19 @@ mod tests {
         );
         assert_eq!(
             registry.pair("second", &display.code),
+            Err(HostAuthError::InvalidPairingCode)
+        );
+    }
+
+    #[test]
+    fn pairing_ticket_is_accepted_once() {
+        let registry = DeviceRegistry::new();
+        let ticket = registry.pairing_display().ticket;
+        registry
+            .pair("Android phone", &ticket)
+            .expect("ticket pairing should work");
+        assert_eq!(
+            registry.pair("second", &ticket),
             Err(HostAuthError::InvalidPairingCode)
         );
     }

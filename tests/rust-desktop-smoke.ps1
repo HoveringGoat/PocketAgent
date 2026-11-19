@@ -229,13 +229,28 @@ try {
     Assert-VisibleControls 'Devices'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
-    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
+    $showPairing = $buttons | Where-Object { $_.Current.Name -eq 'Show pairing' } | Select-Object -First 1
+    if ($null -eq $showPairing) {
         throw 'Devices page did not expose pairing controls.'
     }
-    $hostEndpoint = $texts | Where-Object { $_ -like 'http://*' } | Select-Object -First 1
+    $showPairing.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 250
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition) | ForEach-Object { $_.Current.Name }
+    if ($null -eq ($buttons | Where-Object { $_.Current.Name -eq 'Renew pairing' })) {
+        throw 'Expanded pairing section did not expose renewal.'
+    }
+    $pairingPayload = $texts | Where-Object { $_ -like 'pocketagent://pair?v=1&origin=https://*' } | Select-Object -First 1
+    if (!$pairingPayload -or $pairingPayload -notmatch '^pocketagent://pair\?v=1&origin=https://[^&]+&spki=[A-Fa-f0-9]{64}&ticket=[A-Fa-f0-9]{64}$') {
+        throw 'Expanded pairing section did not expose an Android-compatible pairing payload.'
+    }
+    if ($null -eq ($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -eq 'New device pairing QR code' })) {
+        throw 'Expanded pairing section did not expose the QR image.'
+    }
+    $hostEndpoint = $texts | Where-Object { $_ -like 'https://*' } | Select-Object -First 1
     if ($null -eq $hostEndpoint) { throw 'Desktop host endpoint was not exposed.' }
-    $hostResponse = Invoke-WebRequest -Uri $hostEndpoint -UseBasicParsing
-    if ($hostResponse.StatusCode -ne 200 -or $hostResponse.Content -notlike '*PocketAgent Rust Host*') {
+    $hostBody = & curl.exe -ks --fail $hostEndpoint
+    if ($LASTEXITCODE -ne 0 -or $hostBody -notlike '*PocketAgent Rust Host*') {
         throw 'Desktop host endpoint did not return its health response.'
     }
 

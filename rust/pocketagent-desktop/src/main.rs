@@ -4,6 +4,7 @@ mod codex;
 mod diagnostics;
 mod store;
 
+use axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use codex::{
     CodexSession, InteractionState, PromptControl, PromptRequest, SharedInteraction, SteerRequest,
@@ -18,6 +19,13 @@ use pocketagent_relay::application::RelayApplicationHost;
 use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use qrcode::QrCode;
+use rcgen::generate_simple_self_signed;
+use rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+};
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     env, fs,
@@ -165,14 +173,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_endpoint = start_host_server(host_state.clone(), host_shutdown.clone());
     let relay_host_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
     start_relay_host(host_state.clone(), relay_host_shutdown.clone());
-    match host_endpoint {
+    match &host_endpoint {
         Ok(endpoint) => {
             window.set_host_status("Host API is running".into());
-            window.set_host_endpoint(endpoint.into());
+            window.set_host_endpoint(endpoint.clone().into());
         }
         Err(error) => {
             window.set_host_status(format!("Host API unavailable: {error}").into());
             window.set_host_endpoint("No endpoint".into());
+        }
+    }
+    if let Ok(endpoint) = &host_endpoint {
+        if let Ok(identity) = load_host_tls_identity() {
+            let payload = pairing_payload(&host_pairing, endpoint, &identity.spki_hex);
+            window.set_host_pairing(payload.clone().into());
+            if let Ok(qr) = pairing_qr(&payload) {
+                window.set_host_qr(qr);
+            }
         }
     }
     {
@@ -215,16 +232,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    window.set_host_pairing(
-        format!(
-            "Pairing code: {} (single use; expires {})",
-            host_pairing.code,
-            chrono::DateTime::<chrono::Utc>::from_timestamp(host_pairing.expires_at_unix, 0)
-                .map(|value| value.to_rfc3339())
-                .unwrap_or_else(|| "soon".into())
-        )
-        .into(),
-    );
     let codex_commands = start_codex_worker(
         window.as_weak(),
         interaction.clone(),
@@ -284,17 +291,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let registry = host_registry.clone();
         let weak = window.as_weak();
+        let pairing_origin = host_endpoint.clone().ok();
+        let pairing_spki = load_host_tls_identity()
+            .ok()
+            .map(|identity| identity.spki_hex);
         window.on_renew_pairing(move || {
             let pairing = registry.renew_pairing();
             diagnostics::record("pairing", "renewed");
-            let text = format!(
-                "Pairing code: {} (single use; expires {})",
-                pairing.code,
-                chrono::DateTime::<chrono::Utc>::from_timestamp(pairing.expires_at_unix, 0)
-                    .map(|value| value.to_rfc3339())
-                    .unwrap_or_else(|| "soon".into())
-            );
-            let _ = weak.upgrade_in_event_loop(move |window| window.set_host_pairing(text.into()));
+            let Some(endpoint) = pairing_origin.clone() else {
+                return;
+            };
+            let Some(spki) = pairing_spki.clone() else {
+                return;
+            };
+            let payload = pairing_payload(&pairing, &endpoint, &spki);
+            let _ = weak.upgrade_in_event_loop(move |window| {
+                window.set_host_pairing(payload.clone().into());
+                if let Ok(qr) = pairing_qr(&payload) {
+                    window.set_host_qr(qr);
+                }
+            });
         });
     }
     let relay_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>> = Arc::new(Mutex::new(None));
@@ -2411,20 +2427,103 @@ fn set_host_status(weak: &slint::Weak<AppWindow>, status: String) {
     let _ = weak.upgrade_in_event_loop(move |window| window.set_host_status(status.into()));
 }
 
+struct HostTlsIdentity {
+    certificate_der: Vec<u8>,
+    key_der: Vec<u8>,
+    spki_hex: String,
+}
+
+fn load_host_tls_identity() -> Result<HostTlsIdentity, String> {
+    let directory = DesktopStore::path()
+        .parent()
+        .ok_or_else(|| "desktop data directory is unavailable".to_owned())?
+        .to_owned();
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let certificate_path = directory.join("host-certificate.der");
+    let key_path = directory.join("host-key.der");
+    let spki_path = directory.join("host-spki.sha256");
+    if certificate_path.exists() && key_path.exists() && spki_path.exists() {
+        return Ok(HostTlsIdentity {
+            certificate_der: fs::read(certificate_path).map_err(|error| error.to_string())?,
+            key_der: fs::read(key_path).map_err(|error| error.to_string())?,
+            spki_hex: fs::read_to_string(spki_path)
+                .map_err(|error| error.to_string())?
+                .trim()
+                .to_owned(),
+        });
+    }
+    let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.split(':').next().unwrap_or(&value).to_owned());
+    let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
+    if let Some(advertised) = advertised {
+        if !names.iter().any(|name| name == &advertised) {
+            names.push(advertised);
+        }
+    }
+    let certified = generate_simple_self_signed(names).map_err(|error| error.to_string())?;
+    let certificate_der = certified.cert.der().to_vec();
+    let key_der = certified.key_pair.serialize_der();
+    let spki_der = certified.key_pair.public_key_der();
+    let spki_hex = bytes_to_hex(&Sha256::digest(spki_der));
+    fs::write(&certificate_path, &certificate_der).map_err(|error| error.to_string())?;
+    fs::write(&key_path, &key_der).map_err(|error| error.to_string())?;
+    fs::write(&spki_path, &spki_hex).map_err(|error| error.to_string())?;
+    Ok(HostTlsIdentity {
+        certificate_der,
+        key_der,
+        spki_hex,
+    })
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn pairing_payload(
+    display: &pocketagent_host::PairingDisplay,
+    endpoint: &str,
+    spki: &str,
+) -> String {
+    format!(
+        "pocketagent://pair?v=1&origin={endpoint}&spki={spki}&ticket={}",
+        display.ticket
+    )
+}
+
+fn pairing_qr(payload: &str) -> Result<slint::Image, String> {
+    let code = QrCode::new(payload.as_bytes()).map_err(|error| error.to_string())?;
+    let bitmap = code
+        .render::<image::Luma<u8>>()
+        .quiet_zone(true)
+        .min_dimensions(420, 420)
+        .build();
+    let (width, height) = bitmap.dimensions();
+    let mut pixels = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width, height);
+    for (index, pixel) in pixels.make_mut_slice().iter_mut().enumerate() {
+        let x = (index as u32) % width;
+        let y = (index as u32) / width;
+        let value = bitmap.get_pixel(x, y).0[0];
+        *pixel = slint::Rgba8Pixel {
+            r: value,
+            g: value,
+            b: value,
+            a: 0xff,
+        };
+    }
+    Ok(slint::Image::from_rgba8(pixels))
+}
+
 fn start_host_server(
     state: HostHttpState,
     shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 ) -> Result<String, String> {
     let requested = env::var("POCKETAGENT_HOST_BIND").unwrap_or_else(|_| "127.0.0.1:8788".into());
-    if requested
+    let requested_address = requested
         .parse::<std::net::SocketAddr>()
-        .map(|address| !address.ip().is_loopback())
-        .unwrap_or(false)
-        && env::var("POCKETAGENT_HOST_ALLOW_INSECURE_REMOTE").as_deref() != Ok("1")
-    {
-        diagnostics::record("host", "remote_bind_rejected_without_tls");
-        return Err("non-loopback HTTP requires explicit insecure opt-in".into());
-    }
+        .map_err(|error| format!("invalid host bind address: {error}"))?;
+    let tls_identity = load_host_tls_identity()?;
     let listener = match std::net::TcpListener::bind(&requested) {
         Ok(listener) => listener,
         Err(error) => {
@@ -2435,8 +2534,28 @@ fn start_host_server(
     let _ = listener.set_nonblocking(true);
     let endpoint = listener
         .local_addr()
-        .map(|address| format!("http://{address}"))
-        .unwrap_or_else(|_| format!("http://{requested}"));
+        .map(|address| {
+            let advertised = env::var("POCKETAGENT_HOST_ADVERTISE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| {
+                    if value.contains(':') {
+                        value
+                    } else {
+                        format!("{value}:{}", address.port())
+                    }
+                })
+                .unwrap_or_else(|| {
+                    let host = if requested_address.ip().is_unspecified() {
+                        address.ip().to_string()
+                    } else {
+                        requested_address.ip().to_string()
+                    };
+                    format!("{host}:{}", address.port())
+                });
+            format!("https://{advertised}")
+        })
+        .unwrap_or_else(|_| format!("https://{requested}"));
     let display_endpoint = endpoint.clone();
     let (shutdown, shutdown_signal) = oneshot::channel();
     if let Ok(mut slot) = shutdown_slot.lock() {
@@ -2453,15 +2572,36 @@ fn start_host_server(
             return;
         };
         runtime.block_on(async move {
-            let Ok(listener) = TcpListener::from_std(listener) else {
-                diagnostics::record("host", "listener_failed");
-                return;
-            };
             diagnostics::record("host", "ready");
-            if let Err(error) = axum::serve(listener, host_router(state))
-                .with_graceful_shutdown(async move { let _ = shutdown_signal.await; })
-                .await
-            {
+            let server_config = match ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![CertificateDer::from(tls_identity.certificate_der)],
+                    PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(tls_identity.key_der)),
+                ) {
+                Ok(config) => config,
+                Err(error) => {
+                    diagnostics::record("host", &format!("tls_config_failed_{error}"));
+                    return;
+                }
+            };
+            let tls_config = RustlsConfig::from_config(Arc::new(server_config));
+            let handle = axum_server::Handle::new();
+            let shutdown_handle = handle.clone();
+            tokio::spawn(async move {
+                let _ = shutdown_signal.await;
+                shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+            });
+            let server = match axum_server::from_tcp(listener) {
+                Ok(server) => server
+                    .acceptor(RustlsAcceptor::new(tls_config))
+                    .handle(handle),
+                Err(error) => {
+                    diagnostics::record("host", &format!("listener_failed_{error}"));
+                    return;
+                }
+            };
+            if let Err(error) = server.serve(host_router(state).into_make_service()).await {
                 diagnostics::record("host", &format!("stopped_{error}"));
             }
             diagnostics::record("host", "stopped");

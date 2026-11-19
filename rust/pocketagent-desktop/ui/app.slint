@@ -240,6 +240,7 @@ export component AppWindow inherits Window {
     in-out property <string> host-status: "Host API is stopped";
     in-out property <string> host-endpoint: "No host endpoint";
     in-out property <string> host-pairing: "Pairing code unavailable";
+    in-out property <image> host-qr;
     in-out property <[HostDeviceItem]> host-devices: [];
     in-out property <[ScheduledItem]> scheduled-items: [];
     in-out property <bool> creating-session: false;
@@ -249,6 +250,7 @@ export component AppWindow inherits Window {
     in-out property <string> submission-warning: "";
     in-out property <string> new-session-folder: "";
     in-out property <[string]> folder-choices: [];
+    property <bool> pairing-open: false;
 
     callback connect-codex(string, string);
     callback new-conversation(string, string, string);
@@ -505,14 +507,19 @@ export component AppWindow inherits Window {
                 Text { text: "Connect your phone"; color: #c1daa6; font-size: 24px; font-weight: 700; font-family: "Segoe UI"; }
                 Text { text: "Scan the pairing QR or copy the full pairing string into the phone app. Treat an unused pairing string like a temporary password."; color: #c1daa6; wrap: word-wrap; font-family: "Segoe UI"; }
                 GroupBox {
-                    title: "Desktop host";
+                    title: "Add new device";
                     VerticalBox {
                         padding: 16px;
                         spacing: 8px;
                         Text { text: host-status; color: #c1daa6; font-family: "Segoe UI"; }
                         Text { text: host-endpoint; color: #8fbc8f; font-family: "Segoe UI"; }
-                        Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; font-family: "Segoe UI"; }
-                        ActionButton { icon: "\u{21bb}"; label: "Renew pairing"; tooltip: "Renew pairing"; clicked => { renew-pairing(); } }
+                        ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { pairing-open = !pairing-open; } }
+                        if pairing-open : VerticalBox {
+                            spacing: 8px;
+                            Image { source: host-qr; width: 220px; height: 220px; image-fit: contain; accessible-role: image; accessible-label: "New device pairing QR code"; }
+                            Text { text: host-pairing; color: #f3d28a; wrap: word-wrap; font-family: "Segoe UI"; }
+                            ActionButton { icon: "connect"; label: "Renew pairing"; tooltip: "Renew pairing"; clicked => { renew-pairing(); } }
+                        }
                     }
                 }
                 GroupBox {

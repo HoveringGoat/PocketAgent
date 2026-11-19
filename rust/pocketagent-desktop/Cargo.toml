@@ -7,15 +7,20 @@ publish = false
 
 [dependencies]
 axum = "0.8"
+axum-server = { version = "0.9.2", features = ["tls-rustls"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+qrcode = "0.14"
+rcgen = "0.13"
 pocketagent-crypto = { path = "../pocketagent-crypto" }
 pocketagent-host = { path = "../pocketagent-host" }
 pocketagent-protocol = { path = "../pocketagent-protocol" }
 pocketagent-relay = { path = "../pocketagent-relay" }
 serde_json = "1"
 pulldown-cmark = "0.13"
+rustls = "0.23"
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 slint = "1.14"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "rt", "time"] }
