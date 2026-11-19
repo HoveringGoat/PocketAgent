@@ -303,6 +303,7 @@ export component AppWindow inherits Window {
     in-out property <bool> relay-host-connected: false;
     in-out property <string> host-status: "Host API is stopped";
     in-out property <string> host-endpoint: "No host endpoint";
+    in-out property <string> host-diagnostics: "Connection diagnostics have not run.";
     in-out property <string> host-pairing: "Pairing code unavailable";
     in-out property <image> host-qr;
     in-out property <[HostDeviceItem]> host-devices: [];
@@ -336,6 +337,7 @@ export component AppWindow inherits Window {
     callback set-device-access(string, string, bool);
     callback revoke-device(string);
     callback renew-pairing();
+    callback run-host-diagnostics();
     callback toggle-host();
     callback cancel-schedule(string);
     callback navigate(string);
@@ -351,6 +353,7 @@ export component AppWindow inherits Window {
         // Keep the identity block beside the branding: location on row one,
         // usage on row two so neither line competes with the other.
         HorizontalBox {
+            horizontal-stretch: 1;
             height: 58px;
             spacing: 12px;
             Text {
@@ -363,6 +366,7 @@ export component AppWindow inherits Window {
                 vertical-alignment: center;
             }
             VerticalBox {
+                width: 1px;
                 horizontal-stretch: 1;
                 spacing: 0px;
                 Text {
@@ -558,6 +562,8 @@ export component AppWindow inherits Window {
                         spacing: 8px;
                     Text { text: host-status; color: #c1daa6; font-family: "Segoe UI"; }
                     Text { text: host-endpoint; color: #8fbc8f; font-family: "Segoe UI"; }
+                        ActionButton { icon: "review"; label: "Connection diagnostics"; tooltip: "Check local listener, HTTPS, and API"; clicked => { run-host-diagnostics(); } }
+                        Text { text: host-diagnostics; color: #a7baa7; wrap: word-wrap; font-family: "Segoe UI"; font-size: 12px; }
                         ActionButton { icon: pairing-open ? "cancel" : "new"; label: pairing-open ? "Hide pairing" : "Show pairing"; tooltip: pairing-open ? "Hide new-device pairing" : "Show new-device pairing"; clicked => { pairing-open = !pairing-open; } }
                         if pairing-open : VerticalBox {
                             spacing: 8px;

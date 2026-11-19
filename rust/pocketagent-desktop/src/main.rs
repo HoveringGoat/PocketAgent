@@ -47,6 +47,11 @@ const CODEX_DEFAULT_MODEL_LABEL: &str = "Use Codex settings";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::record("startup", "desktop_launch");
+    // axum-server enables both rustls providers through its dependency graph;
+    // select the provider used by its TLS acceptor before any server config is
+    // built. Without this, host startup panics and leaves the UI falsely
+    // claiming that the API is running.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     // FemtoVG's glyph atlas can bilinearly sample text at fractional
     // coordinates on Windows, producing the uneven/wavy strokes seen in
     // small light labels. The software renderer uses system fonts directly
@@ -239,6 +244,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_run_host_diagnostics(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                diagnostics::record("host", "diagnostics_started");
+                let report = host_diagnostics_report();
+                diagnostics::record("host", "diagnostics_completed");
+                let _ = weak.upgrade_in_event_loop(move |window| {
+                    window.set_host_diagnostics(report.into());
+                });
+            });
         });
     }
     let codex_commands = start_codex_worker(
@@ -2779,6 +2798,102 @@ fn is_public_ipv4(address: std::net::Ipv4Addr) -> bool {
         && !(octets[0] == 100 && (64..=127).contains(&octets[1]))
 }
 
+fn host_diagnostics_report() -> String {
+    let mut checks = Vec::new();
+    let configured_bind = env::var("POCKETAGENT_HOST_BIND").ok();
+    let requested = configured_bind
+        .clone()
+        .unwrap_or_else(|| "0.0.0.0:8788".to_owned());
+    let Ok(requested_address) = requested.parse::<std::net::SocketAddr>() else {
+        return format!("FAIL: invalid POCKETAGENT_HOST_BIND `{requested}`.");
+    };
+    let probe_address = if requested_address.ip().is_unspecified() {
+        std::net::SocketAddr::from(([127, 0, 0, 1], requested_address.port()))
+    } else {
+        requested_address
+    };
+    let configured_advertise = env::var("POCKETAGENT_HOST_ADVERTISE")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let detected_public = if configured_advertise.is_none()
+        && (configured_bind.is_none() || requested_address.ip().is_unspecified())
+    {
+        detect_public_ipv4().ok()
+    } else {
+        None
+    };
+    let advertised = configured_advertise
+        .as_deref()
+        .map(|value| value.split(':').next().unwrap_or(value).to_owned())
+        .or_else(|| detected_public.map(|address| address.to_string()))
+        .unwrap_or_else(|| requested_address.ip().to_string());
+    checks.push(format!(
+        "Listener: {requested}; pairing address: https://{advertised}:{}.",
+        requested_address.port()
+    ));
+    if let Some(public) = detected_public {
+        checks.push(format!("Public IPv4 lookup: PASS ({public})."));
+    } else if configured_advertise.is_some() {
+        checks
+            .push("Public IPv4 lookup: skipped because POCKETAGENT_HOST_ADVERTISE is set.".into());
+    } else {
+        checks.push("Public IPv4 lookup: FAIL; set POCKETAGENT_HOST_ADVERTISE manually.".into());
+    }
+    match std::net::TcpStream::connect_timeout(&probe_address, std::time::Duration::from_secs(2)) {
+        Ok(_) => checks.push(format!("Local TCP listener: PASS ({probe_address}).")),
+        Err(error) => checks.push(format!(
+            "Local TCP listener: FAIL ({probe_address}): {error}. The host status must not be treated as running."
+        )),
+    }
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(5))
+        .build();
+    match client {
+        Ok(client) => {
+            let url = format!("https://{probe_address}/api/session");
+            match client.get(url).send() {
+                Ok(response) => {
+                    let status = response.status();
+                    match response.text() {
+                    Ok(body) if body.contains("version") && body.contains("authenticated") => {
+                        checks.push(format!("Local HTTPS/API: PASS (HTTP {status})."));
+                    }
+                    Ok(_) => checks.push(format!(
+                        "Local HTTPS/API: FAIL (HTTP {status} did not return PocketAgent metadata)."
+                    )),
+                    Err(error) => checks.push(format!("Local HTTPS/API: FAIL reading response: {error}.")),
+                    }
+                }
+                Err(error) => checks.push(format!("Local HTTPS/API: FAIL: {error}.")),
+            }
+        }
+        Err(error) => checks.push(format!("Local HTTPS/API client could not start: {error}.")),
+    }
+    let data_directory = DesktopStore::path().parent().map(|path| path.to_owned());
+    if let Some(directory) = data_directory {
+        let certificate = directory.join("host-certificate.der");
+        let key = directory.join("host-key.der");
+        checks.push(format!(
+            "TLS identity files: certificate={}, key={}, SPKI pin={}.",
+            if certificate.exists() {
+                "present"
+            } else {
+                "missing"
+            },
+            if key.exists() { "present" } else { "missing" },
+            if directory.join("host-spki.sha256").exists() {
+                "present"
+            } else {
+                "missing"
+            },
+        ));
+    }
+    checks.push("External reachability: not proven locally. Test from the phone with Wi-Fi disabled; confirm router forwarding and Windows Firewall for the listener port.".into());
+    checks.join("\n")
+}
+
 fn start_host_server(
     state: HostHttpState,
     shutdown_slot: Arc<Mutex<Option<oneshot::Sender<()>>>>,
@@ -2831,7 +2946,9 @@ fn start_host_server(
         })
         .unwrap_or_else(|_| format!("https://{requested}"));
     let display_endpoint = endpoint.clone();
+    let return_endpoint = display_endpoint.clone();
     let (shutdown, shutdown_signal) = oneshot::channel();
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
     if let Ok(mut slot) = shutdown_slot.lock() {
         *slot = Some(shutdown);
     } else {
@@ -2843,45 +2960,92 @@ fn start_host_server(
             .build()
         else {
             diagnostics::record("host", "runtime_failed");
+            let _ = ready_tx.send(Err("host runtime could not start".into()));
             return;
         };
-        runtime.block_on(async move {
-            diagnostics::record("host", "ready");
-            let server_config = match ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(
-                    vec![CertificateDer::from(tls_identity.certificate_der)],
-                    PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(tls_identity.key_der)),
-                ) {
-                Ok(config) => config,
-                Err(error) => {
-                    diagnostics::record("host", &format!("tls_config_failed_{error}"));
-                    return;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let startup_endpoint = display_endpoint.clone();
+            runtime.block_on(async move {
+                diagnostics::record("host", &format!("starting endpoint={startup_endpoint}"));
+                let server_config = match ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(
+                        vec![CertificateDer::from(tls_identity.certificate_der)],
+                        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(tls_identity.key_der)),
+                    ) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        let message = format!("TLS configuration failed: {error}");
+                        diagnostics::record("host", &format!("tls_config_failed_{error}"));
+                        let _ = ready_tx.send(Err(message));
+                        return;
+                    }
+                };
+                let tls_config = RustlsConfig::from_config(Arc::new(server_config));
+                let handle = axum_server::Handle::new();
+                let shutdown_handle = handle.clone();
+                tokio::spawn(async move {
+                    let _ = shutdown_signal.await;
+                    shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+                });
+                let server = match axum_server::from_tcp(listener) {
+                    Ok(server) => server
+                        .acceptor(RustlsAcceptor::new(tls_config))
+                        .handle(handle.clone()),
+                    Err(error) => {
+                        let message = format!("HTTPS listener could not start: {error}");
+                        diagnostics::record("host", &format!("listener_failed_{error}"));
+                        let _ = ready_tx.send(Err(message));
+                        return;
+                    }
+                };
+                let server_task =
+                    tokio::spawn(server.serve(host_router(state).into_make_service()));
+                match handle.listening().await {
+                    Some(address) => {
+                        diagnostics::record("host", &format!("listening local={address}"));
+                        let _ = ready_tx.send(Ok(()));
+                    }
+                    None => {
+                        let message = "HTTPS server failed to bind its listener".to_owned();
+                        diagnostics::record("host", "listening_failed");
+                        let _ = ready_tx.send(Err(message));
+                        return;
+                    }
                 }
-            };
-            let tls_config = RustlsConfig::from_config(Arc::new(server_config));
-            let handle = axum_server::Handle::new();
-            let shutdown_handle = handle.clone();
-            tokio::spawn(async move {
-                let _ = shutdown_signal.await;
-                shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+                match server_task.await {
+                    Ok(Ok(())) => diagnostics::record("host", "stopped"),
+                    Ok(Err(error)) => diagnostics::record("host", &format!("stopped_{error}")),
+                    Err(error) => {
+                        diagnostics::record("host", &format!("server_task_failed_{error}"))
+                    }
+                }
             });
-            let server = match axum_server::from_tcp(listener) {
-                Ok(server) => server
-                    .acceptor(RustlsAcceptor::new(tls_config))
-                    .handle(handle),
-                Err(error) => {
-                    diagnostics::record("host", &format!("listener_failed_{error}"));
-                    return;
-                }
-            };
-            if let Err(error) = server.serve(host_router(state).into_make_service()).await {
-                diagnostics::record("host", &format!("stopped_{error}"));
-            }
-            diagnostics::record("host", "stopped");
-        });
+        }));
+        if let Err(payload) = result {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic payload");
+            diagnostics::record("host", &format!("server_thread_panicked_{detail}"));
+        }
     });
-    Ok(display_endpoint)
+    match ready_rx.blocking_recv() {
+        Ok(Ok(())) => Ok(return_endpoint),
+        Ok(Err(error)) => {
+            if let Ok(mut slot) = shutdown_slot.lock() {
+                *slot = None;
+            }
+            Err(error)
+        }
+        Err(_) => {
+            if let Ok(mut slot) = shutdown_slot.lock() {
+                *slot = None;
+            }
+            Err("HTTPS host thread exited before it became ready".into())
+        }
+    }
 }
 
 fn start_relay_host(
