@@ -50,7 +50,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if previous != id {
                 drafts.insert(previous, window.get_composer_draft());
                 window.set_composer_draft(drafts.remove(&id).unwrap_or_default());
-                window.set_schedule_delay("".into());
                 window.set_current_session_id(id);
                 window.set_submission_warning("".into());
             }
@@ -1107,7 +1106,7 @@ fn start_codex_worker(
                                         continue;
                                     }
                                     if from_desktop {
-                                        acknowledge_draft(&weak, &conversation_id, &prompt, None);
+                                        acknowledge_draft(&weak, &conversation_id, &prompt);
                                     }
                                     sync_host_schedules(&host_schedules, &store);
                                     set_scheduled_items(&weak, &store);
@@ -1155,7 +1154,7 @@ fn start_codex_worker(
                         let active_turn_started_at_ms = now_millis();
                         let on_turn_started = |turn_id: Option<String>| {
                             if from_desktop {
-                                acknowledge_draft(&weak, &active_conversation_id, &prompt, None);
+                                acknowledge_draft(&weak, &active_conversation_id, &prompt);
                             }
                             *active_turn_state
                                 .write()
@@ -1170,7 +1169,7 @@ fn start_codex_worker(
                         };
                         let on_steer_response = |text: &str, accepted: bool| {
                             if accepted {
-                                acknowledge_draft(&weak, &active_conversation_id, text, None);
+                                acknowledge_draft(&weak, &active_conversation_id, text);
                             } else {
                                 let _ = weak.upgrade_in_event_loop(|window| {
                                     window.set_submission_warning("Codex did not accept the steer.".into());
@@ -1368,7 +1367,7 @@ fn start_codex_worker(
                             set_codex_error(&weak, format!("Could not save scheduled prompt: {error}"));
                             continue;
                         }
-                        acknowledge_draft(&weak, &conversation_id, &prompt, Some(delay));
+                        acknowledge_draft(&weak, &conversation_id, &prompt);
                         sync_host_schedules(&host_schedules, &store);
                         set_scheduled_items(&weak, &store);
                         queue_schedule(
@@ -2236,15 +2235,12 @@ fn folder_choices(folder: &std::path::Path) -> std::io::Result<Vec<slint::Shared
         .collect())
 }
 
-fn acknowledge_draft(weak: &slint::Weak<AppWindow>, id: &str, text: &str, delay: Option<u64>) {
+fn acknowledge_draft(weak: &slint::Weak<AppWindow>, id: &str, text: &str) {
     let id = id.to_owned();
     let text = text.to_owned();
     let _ = weak.upgrade_in_event_loop(move |window| {
         if window.get_current_session_id() == id && window.get_composer_draft() == text {
             window.set_composer_draft("".into());
-            if delay.is_some() && window.get_schedule_delay().trim().parse::<u64>().ok() == delay {
-                window.set_schedule_delay("".into());
-            }
         }
     });
 }

@@ -61,30 +61,25 @@ try {
   Click-Audit 'Cancel model changes'
   $sendButton = Await-Audit { Find-Audit 'Send' } 'send button'
   $scheduleButton = Await-Audit { Find-Audit 'Schedule message' } 'schedule button'
-  $reviewButton = Await-Audit { Find-Audit 'Review scheduled messages' } 'scheduled review button'
   if ($sendButton.Current.BoundingRectangle.Width -lt 110 -or $sendButton.Current.BoundingRectangle.Width -gt 145) {
     throw 'Send button is not the .NET-matched action width.'
   }
-  if ($scheduleButton.Current.BoundingRectangle.Width -gt 70 -or $reviewButton.Current.BoundingRectangle.Width -gt 70) {
-    throw 'Schedule or scheduled-review action is still stretched.'
+  if ($scheduleButton.Current.BoundingRectangle.Width -gt 70) {
+    throw 'Schedule action is still stretched.'
   }
-  Click-Audit 'Review scheduled messages'
-  $null=Await-Audit { Find-Audit 'Pending messages for this conversation' } 'pending job view'
-  # The composer is the tall multiline edit. The delay is the last single-line edit.
+  # The composer is the tall multiline edit; scheduling is configured in a dialog.
   $editCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit)
   $inputs=@($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,$editCondition) | Sort-Object { $_.Current.BoundingRectangle.Top },{ $_.Current.BoundingRectangle.Left })
   $composer=($inputs | Sort-Object { $_.Current.BoundingRectangle.Height } -Descending | Select-Object -First 1).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-  $delay=($inputs | Where-Object { $_.Current.BoundingRectangle.Height -lt 80 } | Sort-Object { $_.Current.BoundingRectangle.Top },{ $_.Current.BoundingRectangle.Left } | Select-Object -Last 1).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   $composer.SetValue('queued fixture text')
-  $delay.SetValue('bad')
   Click-Audit 'Schedule message'
-  $null=Await-Audit { Find-Audit 'Codex error:*Schedule delay must be seconds*' } 'rejected schedule'
+  $null=Await-Audit { Find-Audit 'Schedule message' } 'schedule dialog'
+  $null=Await-Audit { Find-Audit 'In 1 hour' } 'schedule choices'
   if ($composer.Current.Value -ne 'queued fixture text') {
-    $editInfo = ($inputs | ForEach-Object { "$($_.Current.Name)=$($_.Current.Value) h=$($_.Current.BoundingRectangle.Height)" }) -join ', '
-    throw "Rejected schedule lost its draft: '$($composer.Current.Value)'. Edits: $editInfo"
+    throw "Opening schedule dialog lost its draft: '$($composer.Current.Value)'."
   }
-  $delay.SetValue('1800')
-  Click-Audit 'Schedule message'
+  Click-Audit 'In 1 hour'
+  Click-Audit 'Confirm schedule'
   $null=Await-Audit { Find-Audit 'Cancel scheduled message' } 'queued message'
   if ($composer.Current.Value) { throw 'Persisted schedule did not clear the draft' }
   Click-Audit 'Cancel scheduled message'
@@ -104,7 +99,7 @@ try {
   if ($turns.Count -ne 1 -or $turns[0].status -ne 'interrupted' -or $turns[0].items.Count -ne 2) {
     throw 'Send, steer, and Stop must operate on one provider turn.'
   }
-  'Release fixture UI passed: browse, create, pin, queue, rejected schedule draft, cancel, send, steer, and stop.'
+  'Release fixture UI passed: browse, create, pin, schedule dialog, cancel, send, steer, and stop.'
 } finally {
     if ($p -and !$p.HasExited) {
         $p.CloseMainWindow() | Out-Null

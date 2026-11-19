@@ -115,7 +115,7 @@ The server pill is functional: turning it off gracefully stops the local HTTP ho
 
 Session actions are compact icon buttons beside the conversation tabs and use the same semantic vector shapes as the WPF toolbar (access, edit, robot/model, pin, archive/unarchive). Rename and model/reasoning edits open modal dialogs; their drafts apply only when confirmed, and the session smoke test verifies both dialogs are reachable.
 
-The composer keeps the multiline prompt on the left and uses a fixed-width action column on the right: Send is 104px wide, while Schedule and scheduled-message review remain 38px icon actions. The session smoke test checks these bounds so the actions cannot stretch into the composer.
+The composer keeps the multiline prompt on the left and uses a fixed-width action column on the right: Send is 104px wide and has no decorative arrow glyph, while Schedule is a 38px icon action. Scheduling opens a modal with explicit quick choices (15 minutes or one hour), preserves the draft until confirmation, and exposes pending jobs with cancellation. The session smoke test checks these bounds and the modal flow so controls cannot stretch into the composer or silently discard a draft.
 
 The Rust desktop relay panel now exposes the persisted enrollment bundle and shared application-session key needed to provision one attached host/device pair. Native Android/WPF relay clients and multi-enrollment management remain open.
 
