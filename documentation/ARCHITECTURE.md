@@ -112,7 +112,7 @@ Conversation metadata is stored locally, but transcript history is owned by the 
 
 The Rust desktop header keeps the app identity, machine/directory location, usage summary, and top-level navigation on one horizontal row. Navigation uses fixed .NET-matched button proportions, while server state uses the compact 64x26 pill switch. The supported minimum and preferred window sizes are covered by the desktop smoke layout check.
 
-Session actions are compact icon buttons beside the conversation tabs. Rename and model/reasoning edits open modal dialogs; their drafts apply only when confirmed, and the session smoke test verifies both dialogs are reachable.
+Session actions are compact icon buttons beside the conversation tabs and use the same semantic vector shapes as the WPF toolbar (access, edit, robot/model, pin, archive/unarchive). Rename and model/reasoning edits open modal dialogs; their drafts apply only when confirmed, and the session smoke test verifies both dialogs are reachable.
 
 The Rust desktop relay panel now exposes the persisted enrollment bundle and shared application-session key needed to provision one attached host/device pair. Native Android/WPF relay clients and multi-enrollment management remain open.
 

@@ -47,7 +47,7 @@ try {
   $null=Await-Audit { Find-Audit 'New conversation ready' } 'new fixture conversation'
   Click-Audit 'Pin conversation'
   $null=Await-Audit { Find-Audit 'Pinned*PocketAgent' } 'pinned tab'
-  foreach ($actionName in @('New conversation', 'Rename conversation', 'Model and reasoning', 'Pin conversation', 'Archive conversation', 'Show archived conversations')) {
+  foreach ($actionName in @('New conversation', 'Rename conversation', 'Model and reasoning', 'Manage conversation access', 'Pin conversation', 'Archive conversation', 'Show archived conversations')) {
     $action = Await-Audit { Find-Audit $actionName } $actionName
     if ($action.Current.BoundingRectangle.Width -gt 70) {
       throw "Session action '$actionName' is still oversized."
