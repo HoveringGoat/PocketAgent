@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.23 - 2026-11-20
+
+- Preserve sanitized Codex stderr diagnostics, including provider status and request/project context, without logging credentials.
+
 ## 0.3.22 - 2026-11-20
 
 - Restore the plain transcript background for selectable user messages while retaining native copy support.

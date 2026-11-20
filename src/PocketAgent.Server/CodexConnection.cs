@@ -220,11 +220,11 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
 
     private async Task DrainErrors()
     {
-        // Provider stderr can contain sensitive context. Record only that output was received, never its contents.
+        // Preserve provider diagnostics for troubleshooting, while ServerDiagnostics redacts credential-like values.
         try
         {
             while (await process!.StandardError.ReadLineAsync(lifetime.Token) is { } line)
-                ServerDiagnostics.Log("codex-stderr", Microsoft.Extensions.Logging.LogLevel.Warning, $"line_received length={line.Length}");
+                ServerDiagnostics.Log("codex-stderr", Microsoft.Extensions.Logging.LogLevel.Warning, $"line={line}");
         }
         catch (OperationCanceledException) { }
     }
