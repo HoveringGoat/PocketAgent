@@ -36,8 +36,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, List<DisplayItem>> optimisticItems = [];
     private readonly Dictionary<string, List<DisplayItem>> olderHistory = [];
     private readonly Dictionary<string, string?> historyCursors = [];
-    private readonly Dictionary<string, TextBlock> renderedRows = [];
-    private readonly Dictionary<string, (string Type, string Text, string Detail, string Status)> renderedRowState = [];
+    private readonly Dictionary<string, FrameworkElement> renderedRows = [];
+    private readonly Dictionary<string, DisplayItem> renderedRowState = [];
     private readonly HashSet<string> expandedWorkItems = [];
     private readonly HashSet<string> viewedImages = [];
     private ConversationSnapshot? conversation;
@@ -50,6 +50,8 @@ public partial class MainWindow : Window
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
     private string? providerModel;
+    private string? renderedConversation;
+    private bool followingLatest = true;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
 
     public MainWindow()
@@ -426,7 +428,7 @@ public partial class MainWindow : Window
             try { await running.StopAsync(); }
             finally { await running.DisposeAsync(); }
         }
-        selected = null; conversation = null; rendered = ""; SessionList.ItemsSource = null;
+        selected = null; conversation = null; rendered = ""; renderedConversation = null; JumpToLatestButton.Visibility = Visibility.Collapsed; SessionList.ItemsSource = null;
         providerModel = null;
         ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
@@ -472,7 +474,7 @@ public partial class MainWindow : Window
             var signature = JsonSerializer.Serialize(sessions);
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
-                selected = null; conversation = null; rendered = "";
+                selected = null; conversation = null; rendered = ""; renderedConversation = null; JumpToLatestButton.Visibility = Visibility.Collapsed;
                 ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
             }
@@ -523,9 +525,6 @@ public partial class MainWindow : Window
             var modelLabel = effectiveModel is null ? "Codex settings" : effectiveModel;
             var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
             ModelButton.ToolTip = $"Model: {modelLabel}\nReasoning: {reasoningLabel}";
-            PinButton.Content = snapshot.Pinned ? "★" : "☆";
-            PinButton.ToolTip = snapshot.Pinned ? "Unpin conversation" : "Pin conversation";
-            AutomationProperties.SetName(PinButton, snapshot.Pinned ? "Unpin conversation" : "Pin conversation");
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             ConversationMeta.Text = FormatConversationMeta(snapshot);
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
@@ -569,46 +568,25 @@ public partial class MainWindow : Window
     private void UpdateElapsedDisplay()
     {
         if (conversation is null) return;
-        var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
-            conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
         ConversationMeta.Text = FormatConversationMeta(conversation);
-    }
-
-    private void UpdateElapsedDisplayLegacy()
-    {
-        if (conversation is null) return;
-        var work = conversation.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" : conversation.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-        var policy = conversation.SandboxMode is null ? $"{CodexPermissions.Label(conversation.PermissionMode)} selected · provider policy checked on start/resume" : $"Provider: {conversation.SandboxMode} · approvals: {conversation.ApprovalPolicy ?? "not reported"}";
-            var effectiveModel = conversation.Model ?? providerModel;
-            var modelLabel = effectiveModel is null ? "Codex settings" : effectiveModel;
-            var reasoningLabel = conversation.ReasoningEffort ?? "model default";
-            ConversationMeta.Text = $"{conversation.Status}{work} · model {modelLabel} · reasoning {reasoningLabel} · {policy}";
     }
 
     private string FormatConversationMeta(ConversationSnapshot snapshot)
     {
-        var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
-            snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
+        var work = snapshot.ActiveTurnStartedAt is { } start ? $" - {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
+            snapshot.LastWorkDurationMs is { } duration ? $" - worked {Elapsed(duration)}" : "";
         var status = string.IsNullOrWhiteSpace(snapshot.Status) ? "idle" : snapshot.Status;
-        return $"{status}{work}";
+        var modelLabel = snapshot.Model ?? "Codex";
+        var reasoningLabel = snapshot.ReasoningEffort ?? "default";
+        return $"{status}{work} - {modelLabel} {reasoningLabel}";
     }
 
-    private string FormatConversationMetaLegacy(ConversationSnapshot snapshot)
-    {
-        var work = snapshot.ActiveTurnStartedAt is { } start ? $" · {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
-            snapshot.LastWorkDurationMs is { } duration ? $" · worked {Elapsed(duration)}" : "";
-        var policy = snapshot.SandboxMode is null ? $"{CodexPermissions.Label(snapshot.PermissionMode)} selected · provider policy checked on start/resume" :
-            $"Provider: {snapshot.SandboxMode} · approvals: {snapshot.ApprovalPolicy ?? "not reported"}";
-        var modelLabel = snapshot.Model ?? providerModel ?? "Codex settings";
-        var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
-        return $"{snapshot.Status}{work} · model {modelLabel} · reasoning {reasoningLabel} · {policy}";
-    }
 
     private void RenderDevices()
     {
         DeviceList.Children.Clear();
         var store = relay!.Services.GetRequiredService<LocalStore>();
-        DeviceAccessStatus.Text = "Manage conversation access from the Access action beside the selected session. Revoke device removes the device entirely.";
+        DeviceAccessStatus.Text = "Open Edit conversation to manage device access. Revoke device removes the device entirely.";
         foreach (var device in store.Devices())
         {
             var row = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
@@ -618,12 +596,7 @@ public partial class MainWindow : Window
             DeviceList.Children.Add(row);
         }
     }
-    private async void ManageSelectedAccess(object sender, RoutedEventArgs e)
-    {
-        if (selected is null || conversation is null || relay is null) return;
-        await Act(() => ShowConversationAccess(selected, conversation.Title));
-    }
-    private async Task ShowConversationAccess(string conversationId, string title)
+    private Task ShowConversationAccess(string conversationId, string title, Window owner)
     {
         var store = relay!.Services.GetRequiredService<LocalStore>();
         var devices = store.Devices();
@@ -646,7 +619,7 @@ public partial class MainWindow : Window
             panel.Children.Add(new TextBlock { Text = "No paired devices yet. Pair a device from the Devices page first.", Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A7BAA7")), TextWrapping = TextWrapping.Wrap });
         var save = new Button { Content = "Done", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
         panel.Children.Add(save);
-        var dialog = new Window { Title = $"Conversation access - {title}", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 520, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var dialog = new Window { Title = $"Conversation access - {title}", Owner = owner, Content = new ScrollViewer { Content = panel }, Width = 520, MaxHeight = owner.Owner?.ActualHeight ?? ActualHeight, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         save.Click += async (_, _) =>
         {
             foreach (var (device, check) in checks)
@@ -661,6 +634,7 @@ public partial class MainWindow : Window
             dialog.DialogResult = true;
         };
         dialog.ShowDialog();
+        return Task.CompletedTask;
     }
     private async void SessionSelected(object sender, SelectionChangedEventArgs e)
     {
@@ -672,21 +646,45 @@ public partial class MainWindow : Window
 
     private async void TranscriptScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (loadingHistory || selected is null || conversation?.HistoryBefore is null || TranscriptScroll.ScrollableHeight <= 0 || e.VerticalChange >= 0 || TranscriptScroll.VerticalOffset > 24) return;
+        if (!ReferenceEquals(e.OriginalSource, TranscriptScroll)) return;
+        if (e.ViewportHeightChange != 0)
+            foreach (var row in Transcript.Children.OfType<Button>())
+                if (row.Tag is TextBlock && row.Content is StackPanel panel && panel.Children[0] is Image preview)
+                    preview.MaxHeight = PreviewHeight;
+        var nearLatest = TranscriptScroll.ScrollableHeight - TranscriptScroll.VerticalOffset <= 40;
+        if (e.VerticalChange < 0 || e.VerticalChange > 0 && nearLatest)
+            followingLatest = nearLatest;
+        if (followingLatest && !nearLatest) TranscriptScroll.ScrollToEnd();
+        JumpToLatestButton.Visibility = renderedConversation is not null && !followingLatest && !nearLatest ? Visibility.Visible : Visibility.Collapsed;
+        if (loadingHistory || selected is not { } id || conversation?.HistoryBefore is not { } before ||
+            relay is not { } host || TranscriptScroll.ScrollableHeight <= 0 || e.VerticalChange >= 0 || TranscriptScroll.VerticalOffset > 24) return;
         loadingHistory = true;
         var previousExtent = TranscriptScroll.ExtentHeight;
         var previousOffset = TranscriptScroll.VerticalOffset;
         try
         {
-            var page = await Conversations.History(selected, conversation.HistoryBefore, 50);
-            if (!olderHistory.TryGetValue(selected, out var items)) olderHistory[selected] = items = [];
+            var page = await Conversations.History(id, before, 50);
+            if (selected != id || relay != host || conversation is null) return;
+            if (!olderHistory.TryGetValue(id, out var items)) olderHistory[id] = items = [];
             var known = items.Select(item => item.Id).Concat(conversation.Items.Select(item => item.Id)).ToHashSet(StringComparer.Ordinal);
             items.InsertRange(0, page.Items.Where(item => known.Add(item.Id)));
-            historyCursors[selected] = page.Before;
+            historyCursors[id] = page.Before;
             await Refresh();
-            _ = Dispatcher.BeginInvoke(() => TranscriptScroll.ScrollToVerticalOffset(previousOffset + (TranscriptScroll.ExtentHeight - previousExtent)), DispatcherPriority.Loaded);
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (selected == id && !followingLatest)
+                    TranscriptScroll.ScrollToVerticalOffset(Math.Max(0, previousOffset + TranscriptScroll.ExtentHeight - previousExtent));
+            }, DispatcherPriority.Loaded);
         }
+        catch (Exception) { ErrorDisplay.Text = "Earlier messages could not be loaded. Scroll up again to retry."; }
         finally { loadingHistory = false; }
+    }
+
+    private void JumpToLatest(object sender, RoutedEventArgs e)
+    {
+        followingLatest = true;
+        TranscriptScroll.ScrollToEnd();
+        JumpToLatestButton.Visibility = Visibility.Collapsed;
     }
     private async void NewConversation(object sender, RoutedEventArgs e) => await Act(async () =>
     {
@@ -783,12 +781,6 @@ public partial class MainWindow : Window
         if (AppDialogs.Show(this, "Archive this conversation and cancel its pending scheduled messages? You can restore it from Archived.", "Archive conversation", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         await Conversations.Archive(id, true); await Refresh();
     });
-    private async void TogglePinned(object sender, RoutedEventArgs e) => await Act(async () =>
-    {
-        if (conversation is null) return;
-        await Conversations.SetPinned(conversation.Id, !conversation.Pinned);
-        await Refresh();
-    });
     private async void ShowArchived(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is null) throw new InvalidOperationException("Start the server first.");
@@ -848,22 +840,53 @@ public partial class MainWindow : Window
         if (relay is not null && selected is not null) await Conversations.Interrupt(selected);
         await Refresh();
     });
-    private async void RenameConversation(object sender, RoutedEventArgs e)
+    private async void EditConversation(object sender, RoutedEventArgs e)
     {
-        if (conversation is null) return;
-        var id = conversation.Id;
-        var input = new TextBox { Text = conversation.Title, MaxLength = 100, Margin = new Thickness(16) };
-        var save = new Button { Content = "Save name", Margin = new Thickness(16) };
-        var panel = new StackPanel(); panel.Children.Add(input); panel.Children.Add(save);
-        var dialog = new Window { Title = "Rename conversation", Owner = this, Content = panel, Width = 440, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        if (conversation is not { } current || relay is null) return;
+        var (dialog, input, pinned) = CreateConversationEditor(current);
+        if (dialog.ShowDialog() == true) await Act(async () =>
+        {
+            if (input.Text.Trim() != current.Title) await Conversations.Rename(current.Id, input.Text);
+            if ((pinned.IsChecked == true) != current.Pinned) await Conversations.SetPinned(current.Id, pinned.IsChecked == true);
+            await Refresh();
+        });
+    }
+
+    private (Window Dialog, TextBox Name, CheckBox Pinned) CreateConversationEditor(ConversationSnapshot current)
+    {
+        var input = new TextBox { Text = current.Title, MaxLength = 100 };
+        AutomationProperties.SetName(input, "Conversation name");
+        var pinned = new CheckBox { Content = "Pin conversation", IsChecked = current.Pinned, Margin = new Thickness(0, 0, 0, 12) };
+        var access = new Button { Content = "Manage device access", HorizontalAlignment = HorizontalAlignment.Left };
+        var save = new Button { Content = "Save", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right };
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = "Conversation name" });
+        panel.Children.Add(input);
+        panel.Children.Add(pinned);
+        panel.Children.Add(access);
+        panel.Children.Add(save);
+        var dialog = new Window { Title = "Edit conversation", Owner = this, Content = panel, Width = 440, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        access.Click += async (_, _) => await Act(() => ShowConversationAccess(current.Id, current.Title, dialog));
         save.Click += (_, _) => dialog.DialogResult = true;
-        if (dialog.ShowDialog() == true) await Act(async () => { await Conversations.Rename(id, input.Text); await Refresh(); });
+        return (dialog, input, pinned);
     }
 
     private void RenderTranscript(ConversationSnapshot snapshot)
     {
-        if (TryPatchRenderedRows(snapshot)) return;
-        var atBottom = TranscriptScroll.ScrollableHeight - TranscriptScroll.VerticalOffset < 60;
+        if (renderedConversation != snapshot.Id)
+        {
+            renderedConversation = snapshot.Id;
+            followingLatest = true;
+            JumpToLatestButton.Visibility = Visibility.Collapsed;
+            expandedWorkItems.Clear();
+            imagePreviews.Clear();
+            renderedRowState.Clear();
+        }
+        if (TryPatchRenderedRows(snapshot))
+        {
+            if (followingLatest) TranscriptScroll.ScrollToEnd();
+            return;
+        }
         Transcript.Children.Clear();
         renderedRows.Clear();
         renderedRowState.Clear();
@@ -879,124 +902,227 @@ public partial class MainWindow : Window
             Transcript.Children.Add(new TextBlock { Text = "Earlier messages are hidden in this view to keep the desktop responsive. They remain in the conversation history.", Foreground = Brushes.DarkSeaGreen, Margin = new Thickness(12, 8, 12, 12) });
 
         string? lastMinute = null;
-        foreach (var item in snapshot.Items.Skip(start))
+        for (var index = start; index < snapshot.Items.Length; index++)
         {
+            var item = snapshot.Items[index];
             if (item.Type is "userMessage" or "agentMessage" && item.Timestamp is { } timestamp)
             {
                 var minute = timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
                 if (minute != lastMinute) Transcript.Children.Add(new TextBlock { Text = timestamp.LocalDateTime.ToString("t"), FontSize = 11, Foreground = Brushes.DarkSeaGreen, Margin = new Thickness(8, 5, 0, 5) });
                 lastMinute = minute;
             }
-            var content = new TextBlock { Text = item.Type is "userMessage" or "agentMessage" ? item.Text : $"{item.Type} · {item.Status}\n{item.Detail}", Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
             if (item.Type is not "userMessage" and not "agentMessage")
             {
-                renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
-                RenderWorkItem(item);
+                renderedRowState[item.Id] = item;
+                if (item.Images is { Length: > 0 } images)
+                {
+                    foreach (var image in images) RenderImage(item, image, snapshot);
+                }
+                else if (item.Type.Contains("image", StringComparison.OrdinalIgnoreCase) || item.Type.Contains("screenshot", StringComparison.OrdinalIgnoreCase))
+                    Transcript.Children.Add(new TextBlock { Text = "Image unavailable. The agent did not provide an image source.", Margin = new Thickness(8, 4, 8, 8) });
+                else if (RoutineActivity(item) is { } action)
+                {
+                    var end = index + 1;
+                    while (end < snapshot.Items.Length && RoutineActivity(snapshot.Items[end]) == action) end++;
+                    var group = snapshot.Items[index..end];
+                    foreach (var member in group) renderedRowState[member.Id] = member;
+                    RenderActivityGroup(group, action);
+                    index = end - 1;
+                }
+                else RenderWorkItem(item, Transcript);
                 continue;
             }
-            renderedRows[item.Id] = content;
-            renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
-            if (item.Type == "agentMessage") { content.Margin = new Thickness(8, 8, 8, 18); Transcript.Children.Add(content); }
-            else Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Type == "userMessage" ? "#2A3B2D" : "#19271F")), CornerRadius = new CornerRadius(8), HorizontalAlignment = item.Type == "userMessage" ? HorizontalAlignment.Right : HorizontalAlignment.Stretch, MaxWidth = item.Type == "userMessage" ? 760 : double.PositiveInfinity, Margin = new Thickness(0, 0, 0, 10) });
-            foreach (var image in item.Images ?? []) RenderImage(item, image);
+            renderedRowState[item.Id] = item;
+            if (item.Type == "agentMessage")
+            {
+                var content = new StackPanel { Margin = new Thickness(8, 8, 8, 12) };
+                TranscriptMarkdown.Render(content, item.Text);
+                renderedRows[item.Id] = content;
+                Transcript.Children.Add(content);
+            }
+            else
+            {
+                var content = new TextBlock { Text = item.Text, Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
+                renderedRows[item.Id] = content;
+                Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2A3B2D")), CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
+            }
+            foreach (var image in item.Images ?? []) RenderImage(item, image, snapshot);
         }
-        if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Foreground = Brushes.Salmon, Margin = new Thickness(12) });
+        if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Tag = "transcript-notice", Foreground = Brushes.Salmon, Margin = new Thickness(12) });
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
-        if (atBottom) TranscriptScroll.ScrollToEnd();
+        if (followingLatest) TranscriptScroll.ScrollToEnd();
     }
 
     private bool TryPatchRenderedRows(ConversationSnapshot snapshot)
     {
-        if (renderedRowState.Count == 0 || snapshot.Requests.Length > 0) return false;
-        if (snapshot.Items.Any(item => item.Images is { Length: > 0 })) return false;
+        if (renderedRowState.Count == 0 || snapshot.Requests.Length > 0 || snapshot.Error is not null ||
+            Transcript.Children.OfType<FrameworkElement>().Any(element => Equals(element.Tag, "transcript-notice"))) return false;
         var visible = snapshot.Items.Length > MaxRenderedItems ? snapshot.Items[^MaxRenderedItems..] : snapshot.Items;
-        if (visible.Length != renderedRowState.Count || visible.Any(item => !renderedRowState.ContainsKey(item.Id))) return false;
+        if (!visible.Select(item => item.Id).SequenceEqual(renderedRowState.Keys) ||
+            visible.Sum(item => (long)item.Text.Length + item.Detail.Length) > MaxRenderedCharacters) return false;
         foreach (var item in visible)
         {
+            var previous = renderedRowState[item.Id];
+            if (previous.Type != item.Type || previous.Timestamp != item.Timestamp ||
+                !(previous.Images ?? []).SequenceEqual(item.Images ?? [])) return false;
             if (item.Type is not ("userMessage" or "agentMessage"))
             {
-                var previous = renderedRowState[item.Id];
                 if (previous.Detail != item.Detail || previous.Status != item.Status || previous.Text != item.Text) return false;
                 continue;
             }
-            renderedRows[item.Id].Text = item.Text;
-            renderedRowState[item.Id] = (item.Type, item.Text, item.Detail, item.Status);
+            if (previous.Text != item.Text)
+            {
+                if (renderedRows[item.Id] is TextBlock text) text.Text = item.Text;
+                else TranscriptMarkdown.Render((StackPanel)renderedRows[item.Id], item.Text);
+            }
+            renderedRowState[item.Id] = item;
         }
         return true;
     }
 
-    private void RenderImage(DisplayItem item, DisplayImage image)
+    private readonly Dictionary<string, Task<BitmapImage>> imagePreviews = [];
+    private readonly SemaphoreSlim previewSlots = new(2);
+    private double PreviewHeight => Math.Clamp(TranscriptScroll.ViewportHeight - 44, 24, 152);
+
+    private void RenderImage(DisplayItem item, DisplayImage image, ConversationSnapshot snapshot)
     {
-        var label = string.IsNullOrWhiteSpace(image.AltText) ? image.Source : image.AltText;
+        var label = ImageLabel(image);
         var imageKey = $"{item.Id}:{image.Source}";
+        var caption = new TextBlock { Text = viewedImages.Contains(imageKey) ? $"Viewed image: {label}" : label, TextWrapping = TextWrapping.Wrap };
+        var thumbnail = new Image { MaxWidth = 240, MaxHeight = PreviewHeight, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        var content = new StackPanel();
+        content.Children.Add(thumbnail);
+        content.Children.Add(caption);
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkSeaGreen, Margin = new Thickness(12, 0, 8, 8), Visibility = Visibility.Collapsed };
         var button = new Button
         {
-            Content = viewedImages.Contains(imageKey) ? $"Viewed image: {label}" : $"View image: {label}",
-            ToolTip = image.Source,
+            Content = content,
+            Tag = caption,
+            ToolTip = "Open full image",
             HorizontalAlignment = HorizontalAlignment.Left,
             Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#C1DAA6")),
-            Margin = new Thickness(8, 0, 8, 10)
+            Margin = new Thickness(8, 0, 8, 4)
         };
-        button.Click += async (_, _) => await ShowImage(item, image, imageKey, button, label);
+        AutomationProperties.SetName(button, $"Open image: {label}");
+        button.Click += async (_, _) =>
+        {
+            if (renderedConversation == snapshot.Id) await ShowImage(item, image, imageKey, button, label);
+        };
+        button.Loaded += async (_, _) =>
+        {
+            if (thumbnail.Source is not null || status.Text.Length > 0) return;
+            status.Text = "Loading preview…";
+            status.Visibility = Visibility.Visible;
+            try
+            {
+                if (!imagePreviews.TryGetValue(image.Source, out var pending))
+                {
+                    if (imagePreviews.Count >= 32) imagePreviews.Remove(imagePreviews.Keys.First());
+                    pending = LoadPreview(snapshot, image.Source);
+                    imagePreviews.Add(image.Source, pending);
+                }
+                thumbnail.Source = await pending;
+                thumbnail.Visibility = Visibility.Visible;
+                status.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception exception) { status.Text = $"Preview unavailable. {exception.Message}"; }
+        };
         Transcript.Children.Add(button);
+        Transcript.Children.Add(status);
+    }
+
+    private static string ImageLabel(DisplayImage image)
+    {
+        if (!string.IsNullOrWhiteSpace(image.AltText)) return image.AltText;
+        if (image.Source.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return "Image";
+        var path = Uri.TryCreate(image.Source, UriKind.Absolute, out var uri) ? uri.LocalPath : image.Source;
+        var name = Path.GetFileName(Uri.UnescapeDataString(path));
+        return string.IsNullOrWhiteSpace(name) ? "Image" : name;
+    }
+
+    private async Task<BitmapImage> LoadPreview(ConversationSnapshot snapshot, string source)
+    {
+        var host = relay;
+        await previewSlots.WaitAsync();
+        try
+        {
+            if (renderedConversation != snapshot.Id) throw new InvalidOperationException("Open the image from its conversation.");
+            var bytes = await LoadImageBytes(source, snapshot, host);
+            return await Task.Run(() => DecodeBitmap(bytes, 320));
+        }
+        finally { previewSlots.Release(); }
     }
 
     private async Task ShowImage(DisplayItem item, DisplayImage image, string imageKey, Button trigger, string label)
     {
         try
         {
-            var bytes = await LoadImageBytes(image.Source);
+            var bytes = await LoadImageBytes(image.Source, conversation, relay);
             BitmapImage? bitmap;
-            try { bitmap = DecodeImage(bytes); }
-            catch (InvalidOperationException)
+            try { bitmap = await Task.Run(() => DecodeImage(bytes)); }
+            catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException or FileFormatException or ArgumentException)
             {
                 ShowUnsupportedImage(image, imageKey, trigger, label, bytes);
                 return;
             }
             viewedImages.Add(imageKey);
-            trigger.Content = $"Viewed image: {label}";
-            var panel = new StackPanel { Margin = new Thickness(16) };
-            panel.Children.Add(new TextBlock { Text = $"Viewed image: {label}", Foreground = Brushes.LightGreen, Margin = new Thickness(0, 0, 0, 10) });
-            var viewer = new Image { Source = bitmap, Stretch = Stretch.Uniform, MaxWidth = 1000, MaxHeight = 700 };
-            var dialog = new Window { Title = "Image", Owner = this, Width = 900, Height = 760, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+            SetViewedImageLabel(trigger, label);
+            var panel = new Grid { Margin = new Thickness(16) };
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition());
+            panel.Children.Add(new TextBlock { Text = $"{label} · {bitmap.PixelWidth} × {bitmap.PixelHeight} px", Foreground = Brushes.LightGreen, Margin = new Thickness(0, 0, 0, 10), MaxHeight = 80, TextTrimming = TextTrimming.CharacterEllipsis });
+            var viewer = new Image { Source = bitmap, Stretch = Stretch.Uniform };
+            var dialog = new Window
+            {
+                Title = "Image", Owner = this, Width = Math.Min(900, SystemParameters.WorkArea.Width),
+                Height = Math.Min(760, SystemParameters.WorkArea.Height), MinWidth = 360, MinHeight = 260,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = panel
+            };
             var expand = new Button { Content = "Expand", Margin = new Thickness(0, 0, 8, 10), Padding = new Thickness(12, 5, 12, 5) };
             expand.Click += (_, _) =>
             {
                 var expanded = dialog.WindowState == WindowState.Maximized;
                 dialog.WindowState = expanded ? WindowState.Normal : WindowState.Maximized;
                 expand.Content = expanded ? "Expand" : "Restore";
-                viewer.MaxWidth = expanded ? 1000 : double.PositiveInfinity;
-                viewer.MaxHeight = expanded ? 700 : double.PositiveInfinity;
             };
             var external = new Button { Content = "Open in external viewer", Margin = new Thickness(0, 0, 8, 10), Padding = new Thickness(12, 5, 12, 5) };
             external.Click += (_, _) => { OpenExternalImage(image, bytes); external.Content = "Opened externally"; };
-            var actions = new StackPanel { Orientation = Orientation.Horizontal };
+            var actions = new WrapPanel();
             actions.Children.Add(expand);
             actions.Children.Add(external);
+            Grid.SetRow(actions, 1);
             panel.Children.Add(actions);
-            panel.Children.Add(new ScrollViewer { Content = viewer, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-            dialog.Content = new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(viewer, 2);
+            panel.Children.Add(viewer);
             dialog.ShowDialog();
         }
         catch (Exception exception) { ErrorDisplay.Text = $"Image could not be viewed: {exception.Message}"; }
     }
 
-    private async Task<byte[]> LoadImageBytes(string source)
+    private async Task<byte[]> LoadImageBytes(string source, ConversationSnapshot? snapshot, WebApplication? host)
     {
+        var directory = snapshot?.WorkingDirectory ?? settings.Host.RepositoryPath;
         if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            return await Task.Run(() => ReadImageBytes(source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
-        if (relay is not null && conversation is not null)
+            return await Task.Run(() => ReadImageBytes(source, directory));
+        if (host is not null && snapshot is not null)
         {
-            var image = await Conversations.ReadImage(conversation.Id, source);
+            var image = await host.Services.GetRequiredService<Conversations>().ReadImage(snapshot.Id, source);
             return image.Bytes;
         }
-        return await Task.Run(() => ReadImageBytes(source, conversation?.WorkingDirectory ?? settings.Host.RepositoryPath));
+        return await Task.Run(() => ReadImageBytes(source, directory));
+    }
+
+    private static void SetViewedImageLabel(Button trigger, string label)
+    {
+        if (trigger.Tag is TextBlock caption) caption.Text = $"Viewed image: {label}";
+        else trigger.Content = $"Viewed image: {label}";
     }
 
     private void ShowUnsupportedImage(DisplayImage image, string imageKey, Button trigger, string label, byte[] bytes)
     {
         viewedImages.Add(imageKey);
-        trigger.Content = $"Viewed image: {label}";
+        SetViewedImageLabel(trigger, label);
         var open = new Button { Content = "Open in external viewer", Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(12, 5, 12, 5) };
         var dialog = new Window { Title = "Image", Owner = this, Width = 520, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         open.Click += (_, _) => { OpenExternalImage(image, bytes); open.Content = "Opened externally"; };
@@ -1044,12 +1170,15 @@ public partial class MainWindow : Window
         return File.ReadAllBytes(full);
     }
 
-    private static BitmapImage DecodeImage(byte[] bytes)
+    private static BitmapImage DecodeImage(byte[] bytes) => DecodeBitmap(bytes, 0);
+
+    private static BitmapImage DecodeBitmap(byte[] bytes, int width)
     {
         using var stream = new MemoryStream(bytes, writable: false);
         var bitmap = new BitmapImage();
         bitmap.BeginInit();
         bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.DecodePixelWidth = width;
         bitmap.StreamSource = stream;
         bitmap.EndInit();
         bitmap.Freeze();
@@ -1068,10 +1197,13 @@ public partial class MainWindow : Window
             "image/webp" => ".webp",
             "image/bmp" => ".bmp",
             "image/svg+xml" => ".svg",
-            _ => Path.GetExtension(image.Source).ToLowerInvariant() is { Length: > 0 } extension ? extension : ".png"
+            _ => SafeImageExtension(Path.GetExtension(image.Source).ToLowerInvariant())
         };
     }
-    private void RenderWorkItem(DisplayItem item)
+
+    private static string SafeImageExtension(string extension) =>
+        extension is ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".svg" or ".tif" or ".tiff" or ".ico" ? extension : ".png";
+    private void RenderWorkItem(DisplayItem item, Panel target)
     {
         var expanded = expandedWorkItems.Contains(item.Id);
         var summary = item.Detail.Replace("\r", "").Split('\n').FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? "No details";
@@ -1119,7 +1251,7 @@ public partial class MainWindow : Window
                 header.Content = $"[+] {item.Type} · {item.Status} · {summary}";
             }
         };
-        Transcript.Children.Add(card);
+        target.Children.Add(card);
     }
     private void RenderRequest(string id, PendingRequest request)
     {
@@ -1154,7 +1286,7 @@ public partial class MainWindow : Window
                 button.Click += async (_, _) => await Act(async () => { await Conversations.Answer(id, request.Id, new(decision, null)); await Refresh(); });
                 panel.Children.Add(button);
             }
-        Transcript.Children.Add(new Border { Child = panel, BorderBrush = Brushes.DarkKhaki, BorderThickness = new Thickness(1), Margin = new Thickness(0, 5, 0, 10) });
+        Transcript.Children.Add(new Border { Child = panel, Tag = "transcript-notice", BorderBrush = Brushes.DarkKhaki, BorderThickness = new Thickness(1), Margin = new Thickness(0, 5, 0, 10) });
     }
 
     private void RenewPairing(object sender, RoutedEventArgs e) { relay?.Services.GetRequiredService<PairingCode>().Renew(); _ = Refresh(); }

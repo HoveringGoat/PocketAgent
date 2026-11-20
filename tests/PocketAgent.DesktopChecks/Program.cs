@@ -45,10 +45,13 @@ internal static class Program
             var settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
             settings.StartServerOnLaunch = false;
             settings.CheckUpdatesOnStartup = false;
+            if (Environment.GetCommandLineArgs().Contains("--conversation-ui", StringComparer.OrdinalIgnoreCase))
+            {
+                ConversationUiChecks.Run(window, root);
+                return 0;
+            }
             if (window.FindName("StartButton") is not null || window.FindName("StopButton") is not null || window.FindName("Menu") is not null)
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
-            if (window.FindName("PinButton") is null)
-                throw new InvalidOperationException("Desktop conversation actions must include pin/unpin.");
             if (window.FindResource("ModelOptionTemplate") is not DataTemplate)
                 throw new InvalidOperationException("The model picker must render human-readable names with a technical ID template.");
             var reasoningLabel = typeof(MainWindow).GetMethod("ReasoningLabel", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -61,7 +64,8 @@ internal static class Program
             if (Environment.GetCommandLineArgs().Contains("--access-preview", StringComparer.OrdinalIgnoreCase))
                 return RunAccessPreview(window, root);
             RelaySetupChecks.Run(root);
-            foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
+            ConversationUiChecks.Run(new MainWindow(), root);
+            foreach (var name in new[] { "EditConversationButton", "ModelButton", "ArchiveButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
             var serverToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ServerToggle")!;
@@ -144,9 +148,9 @@ internal static class Program
                 "Error sample", "PocketAgent", root, "fixture", "inherit", null, null, null, null, null, false);
             typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
             window.Show();
-            var accessButton = (Button)window.FindName("AccessButton")!;
-            if (System.Windows.Automation.AutomationProperties.GetName(accessButton) != "Manage conversation access" || !Equals(accessButton.Content, "Access"))
-                throw new InvalidOperationException("The selected conversation action group must expose a direct access action.");
+            var editButton = (Button)window.FindName("EditConversationButton")!;
+            if (System.Windows.Automation.AutomationProperties.GetName(editButton) != "Edit conversation")
+                throw new InvalidOperationException("The selected conversation must expose its edit action.");
             var initialMeta = (TextBlock)window.FindName("ConversationMeta")!;
             if (string.IsNullOrWhiteSpace(initialMeta.Text))
                 throw new InvalidOperationException("The conversation status bar must identify the idle/no-selection state.");
@@ -157,7 +161,7 @@ internal static class Program
             var imageItem = new DisplayItem("image-item", "agentMessage", "Image output", "", "completed", now, null, [new DisplayImage("image", imageSource, "fixture image", "image/png")]);
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot with { Items = [imageItem] }]);
             window.UpdateLayout();
-            var imageButton = Descendants(transcript).OfType<Button>().Single(button => button.Content?.ToString()?.StartsWith("View image:", StringComparison.Ordinal) == true);
+            var imageButton = Descendants(transcript).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Open image: fixture image");
             var closeImageTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
             closeImageTimer.Tick += (_, _) =>
             {
@@ -177,7 +181,7 @@ internal static class Program
                 throw new InvalidOperationException($"Desktop image viewing did not complete. Status={showImageTask.Status}");
             if (showImageTask.IsFaulted)
                 throw new InvalidOperationException($"Desktop image viewing faulted: {showImageTask.Exception}");
-            if (!Equals(imageButton.Content, "Viewed image: fixture image"))
+            if (imageButton.Tag is not TextBlock { Text: "Viewed image: fixture image" })
                 throw new InvalidOperationException($"Desktop image viewing must open a decoded image dialog and retain viewed state. Content={imageButton.Content}; error={(window.FindName("ErrorDisplay") as TextBlock)?.Text}");
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [snapshot]);
             window.UpdateLayout();
@@ -187,14 +191,16 @@ internal static class Program
             var idleMetaHeight = metaSurface.ActualHeight;
             var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
-            if (!conversationMeta.Contains("completed", StringComparison.Ordinal) || conversationMeta.Contains("model", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("selected", StringComparison.OrdinalIgnoreCase) || conversationMeta.Contains("provider policy", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The conversation context must stay to status and elapsed work only.");
+            if (!conversationMeta.Contains("completed", StringComparison.Ordinal) || !conversationMeta.Contains("fixture", StringComparison.Ordinal) || !conversationMeta.Contains("default", StringComparison.Ordinal))
+                throw new InvalidOperationException("The conversation context must show status, model and reasoning like Android.");
             var sendButton = (Button)window.FindName("SendButton")!;
             if (!Equals(sendButton.Content, "Send"))
                 throw new InvalidOperationException("The send action label must remain Send.");
             var interruptButton = (Button)window.FindName("InterruptButton")!;
             if (interruptButton.ContentTemplate is null || interruptButton.Visibility != Visibility.Hidden)
                 throw new InvalidOperationException("The interruption action must use a hidden-when-idle vector icon.");
+            if (interruptButton.Height > 26 || interruptButton.Margin.Top != 0 || interruptButton.Margin.Bottom != 0)
+                throw new InvalidOperationException("The Stop action must fit inside the fixed-height conversation context bar without clipping.");
             interruptButton.Visibility = Visibility.Visible; window.UpdateLayout();
             var runningMetaHeight = metaSurface.ActualHeight;
             interruptButton.Visibility = Visibility.Hidden;
@@ -212,6 +218,10 @@ internal static class Program
             window.UpdateLayout();
             if (Environment.GetCommandLineArgs().Contains("--toggle-preview"))
                 CaptureSwitch(serverToggle, root, "on");
+            var activity = transcript.Children.OfType<Expander>().Single();
+            if (activity.IsExpanded) throw new InvalidOperationException("Activity groups must start collapsed.");
+            activity.IsExpanded = true;
+            window.UpdateLayout();
             var texts = Descendants(transcript).OfType<TextBlock>().ToArray();
             foreach (var sample in new[] { "User sample", "Assistant sample", "Approval reason", "Your input is needed" })
                 ColorIs(texts.Single(text => text.Text == sample).Foreground, "#C1DAA6", sample);
@@ -290,7 +300,7 @@ internal static class Program
     {
         var now = DateTimeOffset.Now;
         var snapshot = new ConversationSnapshot("interactive-pin", "Pin icon preview", "completed", null,
-            [new DisplayItem("pin-preview", "agentMessage", "The pin button is shown in the conversation action row.", "", "completed", now)],
+            [new DisplayItem("pin-preview", "agentMessage", "Pinning is available under Edit conversation.", "", "completed", now)],
             [], null, "PocketAgent", root, Environment.MachineName, "fixture", "inherit", null, null, null, null, false);
         typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
         ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
@@ -304,7 +314,7 @@ internal static class Program
         window.UpdateLayout();
         CaptureWindow(window, Path.Combine(root, ".local", "previews", "desktop", "pin-preview.png"));
         window.Activate();
-        Console.WriteLine("Interactive pin preview is open. Inspect the pushpin icon in the action row; close the window when finished.");
+        Console.WriteLine("Interactive conversation preview is open. Close the window when finished.");
         System.Windows.Threading.Dispatcher.Run();
         return 0;
     }

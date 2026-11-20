@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.16 - 2026-11-20
+
+- Add Jump to latest, keep the Stop icon fully visible, and match Android's model and reasoning status.
+- Put rename, pinning, and device access together under Edit conversation.
+- Group routine agent activity, render Markdown replies, and show image thumbnails with a full-size viewer.
+
 ## 0.3.15 - 2026-11-20
 
 - Enable the relay node, copy enrollment and client setup, connect upstream, and issue a device pairing ticket from desktop Settings.

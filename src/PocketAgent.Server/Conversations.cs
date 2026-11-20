@@ -670,6 +670,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         if (item.Field("content") is { ValueKind: JsonValueKind.Array } content)
             foreach (var part in content.EnumerateArray())
                 if (IsImageType(part.Text("type"))) AddStructuredImage(images, part, "image-" + item.Text("id") + "-" + images.Count);
+        if (item.Field("result").Field("content") is { ValueKind: JsonValueKind.Array } resultContent)
+            foreach (var part in resultContent.EnumerateArray())
+                if (IsImageType(part.Text("type"))) AddStructuredImage(images, part, "image-" + item.Text("id") + "-" + images.Count);
         foreach (Match match in Regex.Matches(text, @"!\[([^\]]*)\]\(([^)]+)\)"))
         {
             var source = MarkdownImageSource(match.Groups[2].Value);
@@ -694,9 +697,15 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         var source = ImageSource(value, "path");
         if (source.Length == 0) source = ImageSource(value, "url");
         if (source.Length == 0) source = ImageSource(value, "image_url");
-        if (source.Length == 0) source = ImageSource(value, "data");
-        if (source.Length == 0) return;
         var mime = ImageSource(value, "mimeType");
+        if (source.Length == 0)
+        {
+            source = ImageSource(value, "data");
+            if (source.Length > 0 && mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+                !source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                source = $"data:{mime};base64,{source}";
+        }
+        if (source.Length == 0) return;
         var alt = value.Text("alt");
         if (alt.Length == 0) alt = value.Text("caption");
         images.Add(new(id, source, alt, mime.Length == 0 ? null : mime));

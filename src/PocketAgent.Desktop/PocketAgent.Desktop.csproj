@@ -8,6 +8,7 @@
     <ApplicationIcon>Assets/PocketAgent.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Markdig" Version="0.41.3" />
     <Resource Include="Assets/PocketAgent.ico" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <ProjectReference Include="../PocketAgent.Server/PocketAgent.Server.csproj" />

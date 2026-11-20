@@ -2,6 +2,11 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
+      "Markdig": {
+        "type": "Transitive",
+        "resolved": "0.41.3",
+        "contentHash": "i3vSTyGpBGWbJB04aJ3cPJs0T3BV2e1nduW3EUHK/i+xUupYbym75iZPss/XjqhS5JlBErwQYnx7ofK3Zcsozg=="
+      },
       "Microsoft.Data.Sqlite": {
         "type": "Transitive",
         "resolved": "10.0.15",
@@ -55,7 +60,8 @@
       "pocketagent.desktop": {
         "type": "Project",
         "dependencies": {
-          "PocketAgent.Server": "[0.1.9, )",
+          "Markdig": "[0.41.3, )",
+          "PocketAgent.Server": "[0.3.16, )",
           "QRCoder": "[1.8.0, )"
         }
       },

@@ -20,6 +20,7 @@
   - [QR or pairing-string enrollment](SETUP.md#pair-by-qr-or-pairing-string)
   - [Relay mode](SETUP.md#relay-mode)
   - [Android servers and conversations](SETUP.md#android-servers-and-conversations)
+  - [Desktop conversations](SETUP.md#desktop-conversations)
   - [Usage and scheduled messages](SETUP.md#usage-and-scheduled-messages)
   - [Build from source](SETUP.md#build-from-source)
   - [Android visual preview](SETUP.md#android-visual-preview)

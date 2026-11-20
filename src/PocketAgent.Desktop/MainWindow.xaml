@@ -68,10 +68,8 @@
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
               <Button Content="+" AutomationProperties.Name="New conversation" ToolTip="New conversation" Click="NewConversation"/>
               <StackPanel x:Name="ConversationActions" Orientation="Horizontal" IsEnabled="False">
-                <Button x:Name="AccessButton" Content="Access" ToolTip="Manage conversation access" AutomationProperties.Name="Manage conversation access" Click="ManageSelectedAccess" MinWidth="70" Height="32" Padding="8,2" Foreground="#C1DAA6"/>
-                <Button x:Name="RenameButton" Content="" ContentTemplate="{StaticResource EditIconTemplate}" ToolTip="Rename conversation" AutomationProperties.Name="Rename conversation" Click="RenameConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="EditConversationButton" Content="" ContentTemplate="{StaticResource EditIconTemplate}" ToolTip="Edit conversation" AutomationProperties.Name="Edit conversation" Click="EditConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ModelButton" Content="" ContentTemplate="{StaticResource RobotIconTemplate}" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
-                <Button x:Name="PinButton" Content="" ContentTemplate="{StaticResource PinIconTemplate}" ToolTip="Pin conversation" AutomationProperties.Name="Pin conversation" Click="TogglePinned" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ArchiveButton" Content="" ContentTemplate="{StaticResource ArchiveIconTemplate}" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ArchivedButton" Content="" ContentTemplate="{StaticResource UnarchiveIconTemplate}" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
               </StackPanel>
@@ -83,13 +81,17 @@
           </DockPanel>
           <Grid Grid.Row="1" x:Name="ConversationPanel" IsEnabled="False">
             <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <ScrollViewer x:Name="TranscriptScroll" Grid.Row="0" Margin="0,12" ScrollChanged="TranscriptScrollChanged"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
+            <Grid Grid.Row="0">
+              <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <ScrollViewer x:Name="TranscriptScroll" Margin="0,8" ScrollChanged="TranscriptScrollChanged"><StackPanel x:Name="Transcript" TextElement.Foreground="#C1DAA6"/></ScrollViewer>
+              <Button Grid.Row="1" x:Name="JumpToLatestButton" Content="Jump to latest ↓" AutomationProperties.Name="Jump to latest messages" Click="JumpToLatest" Visibility="Collapsed" HorizontalAlignment="Right" FontSize="12" Padding="8,4" Margin="0,0,14,4"/>
+            </Grid>
             <!-- Native equivalent of conversation-meta: outside the transcript, immediately above input. -->
             <Border Grid.Row="1" x:Name="ConversationMetaSurface" Height="38" MinHeight="38" Background="#1D2C23" BorderBrush="#47604B" BorderThickness="1" Padding="8,5" Margin="0,0,0,4">
-              <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="" ContentTemplate="{StaticResource StopIconTemplate}" ToolTip="Stop work" AutomationProperties.Name="Stop" Click="InterruptWork" Visibility="Hidden" MinWidth="30" Width="30" Height="28" Padding="4" Background="Transparent" Foreground="#C1DAA6"/><TextBlock x:Name="ConversationMeta" Text="No active conversation" FontSize="12" VerticalAlignment="Center" Foreground="#C1DAA6"/></DockPanel>
+              <DockPanel><Button DockPanel.Dock="Right" x:Name="InterruptButton" Content="" ContentTemplate="{StaticResource StopIconTemplate}" ToolTip="Stop work" AutomationProperties.Name="Stop" Click="InterruptWork" Visibility="Hidden" MinWidth="30" Width="30" Height="26" Padding="3" Margin="0" VerticalAlignment="Center" Background="Transparent" Foreground="#C1DAA6"/><TextBlock x:Name="ConversationMeta" Text="No active conversation" FontSize="12" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Foreground="#C1DAA6"/></DockPanel>
             </Border>
             <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="88" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
+              <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="72" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
               <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12">
                 <Button x:Name="SendButton" Content="Send" Click="SendMessage" Background="#C1DAA6" Foreground="#111B17" MinWidth="104"><Button.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="NoWrap" Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"/></DataTemplate></Button.ContentTemplate></Button>
                 <Button x:Name="ScheduleButton" Content="&#x23F1;&#xFE0E;" ToolTip="Schedule message" AutomationProperties.Name="Schedule message" Click="ScheduleMessage" Foreground="#C1DAA6" FontFamily="Segoe UI Symbol" Width="38" MinWidth="38" Height="38" Padding="4" FontSize="18"/>
@@ -109,7 +111,7 @@
           <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
           <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
           <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
-           <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><TextBlock x:Name="DeviceAccessStatus" Text="Manage conversation access from the Access action beside the selected session." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,8"/><StackPanel x:Name="DeviceList"/>
+           <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><TextBlock x:Name="DeviceAccessStatus" Text="Open Edit conversation to manage device access." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,8"/><StackPanel x:Name="DeviceList"/>
         </StackPanel></ScrollViewer>
       </TabItem>
       <TabItem Header="Settings">

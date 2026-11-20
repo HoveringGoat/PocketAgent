@@ -53,6 +53,18 @@ Android stores each server's origin, pin and bearer token in its encrypted vault
 
 Messages preserve user, assistant and activity roles. Commands and provider activity remain collapsed. History is bounded and cursor-paginated; refreshing does not replay a prompt. Images are fetched through the authenticated conversation image endpoint.
 
+## Desktop conversations
+
+Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
+
+Scroll up to read earlier messages while work continues and select **Jump to latest** to follow new output again. Expand an activity group to see the individual actions. Agent replies use Markdown. Select an image thumbnail to open the image at a larger size.
+
+The focused desktop conversation check uses the native WPF window and captures layouts at 800×580 and 1150×820 with Large scaling.
+
+```powershell
+dotnet run --project tests/PocketAgent.DesktopChecks -c Release -- --conversation-ui
+```
+
 ## Usage and scheduled messages
 
 Usage shows the provider's five-hour and weekly windows with local reset times. If a known window is exhausted, Send queues the prompt for the reset instead of knowingly submitting a quota failure. Scheduled messages survive desktop restarts, but the desktop must be awake and running. Unknown delivery is never automatically replayed.
