@@ -8,6 +8,7 @@ This file covers the Android companion application.
 
 - Prevent model/reasoning and new-conversation folder flows from crashing when a desktop response is empty or does not match the expected JSON schema.
 - Validate directory and model payloads before opening selection dialogs and refresh safely when a mutation response cannot include a snapshot.
+- Guard the shared asynchronous response callback so an unexpected remote payload is shown as a recoverable error instead of terminating the app.
 
 ## 0.4.4 - 2026-11-16
 

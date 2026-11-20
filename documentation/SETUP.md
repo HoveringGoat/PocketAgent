@@ -200,6 +200,10 @@ To produce a portable preview directory and ZIP, run:
 .\scripts\Build-RustDesktop.ps1
 ```
 
+The build script treats a running `pocketagent-desktop` executable at the canonical release path as a test process: it stops that exact process before rebuilding. It never redirects a locked build into an invented target directory or changes the versioned artifact name to work around a file lock.
+
+The Rust desktop displays its package version beside the PocketAgent branding, so a running test build can be matched to its artifact without inspecting the executable path.
+
 The build first runs the Rust workspace test, warnings-as-errors clippy, and authenticated relay process-demo gates; a failure stops before packaging. It then runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-<version>/`, with the matching `rust-desktop-<version>.zip` beside it. Rebuilding without changing the package version replaces that exact directory, ZIP, and checksum; bumping the version creates a new immutable artifact name. To also build and install-test the per-user Rust Windows installer, run:
 
 ```powershell

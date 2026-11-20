@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.18
+
+- Make the Rust release script stop the exact running test executable before rebuilding the canonical release output instead of creating alternate build directories.
+- Show the running Rust desktop version beside the PocketAgent branding so test builds can be identified in the UI.
+
 ### Rust desktop preview 0.1.17
 
 - Return the updated conversation snapshot from model and reasoning changes so Android clients do not receive an empty response while rendering the selection.

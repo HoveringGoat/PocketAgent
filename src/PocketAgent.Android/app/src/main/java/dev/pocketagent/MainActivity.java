@@ -1298,7 +1298,14 @@ public final class MainActivity extends Activity {
                   if (epoch != generation || api != client) return;
                   submitting = false;
                   if (delivery) store.uncertain(client.origin, id, false);
-                  done.accept(result);
+                  try {
+                    done.accept(result);
+                  } catch (RuntimeException exception) {
+                    // A remote client must never be able to crash the app with a
+                    // malformed or incomplete response. Keep the connection alive
+                    // and surface a recoverable error instead.
+                    problem("The desktop returned an invalid response. Refresh and try again.");
+                  }
                   updateSend();
                                refresh();
                 });

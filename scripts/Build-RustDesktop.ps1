@@ -14,6 +14,24 @@ $artifactRoot = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'artifac
 $output = Join-Path $artifactRoot "rust-desktop-$version"
 $archive = Join-Path $artifactRoot "rust-desktop-$version.zip"
 $installerOutput = Join-Path $artifactRoot "rust-desktop-$version-setup.exe"
+$executableName = if ($env:OS -eq 'Windows_NT') { 'pocketagent-desktop.exe' } else { 'pocketagent-desktop' }
+$releaseDirectory = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'rust/target/release'))
+$releaseExecutable = Join-Path $releaseDirectory $executableName
+
+# The Rust desktop is routinely left open while it is being tested. Stop only
+# the process running the canonical release binary; never invent another target
+# directory or artifact name to work around its file lock.
+if (Test-Path -LiteralPath $releaseExecutable) {
+    $runningReleaseProcesses = Get-Process -Name 'pocketagent-desktop' -ErrorAction SilentlyContinue |
+        Where-Object {
+            try { [System.IO.Path]::GetFullPath($_.Path) -ieq $releaseExecutable }
+            catch { $false }
+        }
+    foreach ($process in $runningReleaseProcesses) {
+        Write-Host "Stopping running test process $($process.Id): $releaseExecutable"
+        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+    }
+}
 
 # A rebuild of the same version replaces the exact version directory and artifacts.
 if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
@@ -32,8 +50,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Rust relay process smoke gate failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop build failed.' }
 
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-$executableName = if ($env:OS -eq 'Windows_NT') { 'pocketagent-desktop.exe' } else { 'pocketagent-desktop' }
-$executable = Join-Path (Join-Path (Get-Location) 'rust/target/release') $executableName
+$executable = $releaseExecutable
 if (!(Test-Path -LiteralPath $executable)) { throw "Rust desktop executable was not produced: $executable" }
 Copy-Item -LiteralPath $executable -Destination (Join-Path $output $executableName) -Force
 Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md -Destination $output -Force

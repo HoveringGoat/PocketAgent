@@ -69,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .renderer_name("software".into())
         .select()?;
     let window = AppWindow::new()?;
+    window.set_app_version(env!("CARGO_PKG_VERSION").into());
     {
         let drafts = std::cell::RefCell::new(std::collections::HashMap::new());
         let weak = window.as_weak();

@@ -268,6 +268,7 @@ export component AppWindow inherits Window {
     min-height: 580px;
 
     in-out property <string> server-name: "Desktop";
+    in-out property <string> app-version: "";
     in-out property <string> repository-path: "";
     in-out property <string> codex-executable: "codex";
     in-out property <string> current-page: "sessions";
@@ -363,7 +364,7 @@ export component AppWindow inherits Window {
             spacing: 12px;
             Text {
                 width: 170px;
-                text: "PocketAgent";
+                text: app-version == "" ? "PocketAgent" : "PocketAgent v" + app-version;
                 color: #c1daa6;
                 font-size: 22px;
                 font-weight: 700;
