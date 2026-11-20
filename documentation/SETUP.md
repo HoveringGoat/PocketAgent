@@ -109,4 +109,4 @@ The relay checks verify encrypted routing, managed certificate trust, and Androi
 
 ## Diagnostics
 
-Desktop diagnostics are under `%LOCALAPPDATA%/PocketAgent/logs/desktop.log`; the embedded server writes `%LOCALAPPDATA%/PocketAgent/logs/server.log`. Logs record lifecycle, authentication outcomes, API failures, provider timing and access transitions while redacting tokens and omitting message bodies, request parameters and provider stderr. Updater handoff failures are recorded in `%TEMP%/PocketAgent-update.log`.
+Desktop diagnostics are under `%LOCALAPPDATA%/PocketAgent/logs/desktop.log`; the embedded server writes `%LOCALAPPDATA%/PocketAgent/logs/server.log`. Logs record lifecycle, authentication outcomes, API failures, provider timing and access transitions. In desktop/server 0.3.24, diagnostic output is not a credential boundary: do not place tokens or other secrets in provider messages. Updater handoff failures are recorded in `%TEMP%/PocketAgent-update.log`.

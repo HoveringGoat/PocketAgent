@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.24 - 2026-11-20
+
+- Update desktop/server diagnostic event formatting for the current build.
+
 ## 0.3.23 - 2026-11-20
 
 - Preserve sanitized Codex stderr diagnostics, including provider status and request/project context, without logging credentials.
