@@ -175,6 +175,7 @@ pub struct HostHttpState {
     pub last_work_duration_ms: Arc<RwLock<HashMap<String, i64>>>,
     pub actions: tokio::sync::mpsc::UnboundedSender<HostAction>,
     pub session: Arc<SessionProvider>,
+    request_log: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl HostHttpState {
@@ -197,7 +198,15 @@ impl HostHttpState {
             last_work_duration_ms: Arc::new(RwLock::new(HashMap::new())),
             actions,
             session: Arc::new(session),
+            request_log: Arc::new(|_| {}),
         }
+    }
+
+    /// Installs a host request diagnostic sink without coupling the host crate to
+    /// the desktop application's logging implementation.
+    pub fn with_request_log(mut self, callback: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.request_log = Arc::new(callback);
+        self
     }
 }
 
@@ -786,13 +795,16 @@ async fn list_conversations(
     Query(query): Query<ArchivedQuery>,
 ) -> impl IntoResponse {
     let Some(identity) = require_identity(&state.registry, &headers) else {
+        (state.request_log)("request conversations unauthorized");
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let archived = query.archived.unwrap_or(false);
-    let items = state
+    let conversations = state
         .conversations
         .read()
-        .expect("conversation lock should not be poisoned")
+        .expect("conversation lock should not be poisoned");
+    let authorized = state.registry.authorized_conversations(identity.id);
+    let mut items = conversations
         .iter()
         .filter(|conversation| {
             conversation.archived == archived
@@ -800,6 +812,33 @@ async fn list_conversations(
         })
         .cloned()
         .collect::<Vec<_>>();
+    // A grant can be written while the Codex worker is still refreshing its
+    // local snapshot. Keep the access contract responsive by exposing the
+    // explicitly authorized id immediately; the detail endpoint will then
+    // fetch the provider-backed conversation. The worker replaces this
+    // placeholder with the saved title on its next sync.
+    if !archived {
+        for id in &authorized {
+            if !items.iter().any(|conversation| conversation.id == *id) {
+                items.push(HostConversation {
+                    id: id.clone(),
+                    title: "Conversation".into(),
+                    archived: false,
+                    pinned: false,
+                    working_directory: String::new(),
+                });
+            }
+        }
+    }
+    let host_count = conversations.len();
+    (state.request_log)(&format!(
+        "request conversations device={} archived={} host_count={} authorized_count={} visible_count={}",
+        identity.id,
+        archived,
+        host_count,
+        authorized.len(),
+        items.len()
+    ));
     Json(items).into_response()
 }
 
@@ -1597,6 +1636,37 @@ mod tests {
         );
         assert!(restored.can_access("thread-1", paired.identity.id));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn authorized_conversation_is_listed_before_worker_snapshot_sync() {
+        let registry = DeviceRegistry::new();
+        let display = registry.pairing_display();
+        let paired = registry.pair("phone", &display.code).unwrap();
+        registry
+            .grant_conversation("thread-awaiting-sync", paired.identity.id)
+            .unwrap();
+        let (actions, _received) = tokio::sync::mpsc::unbounded_channel();
+        let state = HostHttpState::new(registry, actions, |_| SessionInfo {
+            authenticated: true,
+            device_name: Some("phone".into()),
+            repository: None,
+            host_name: "test-host".into(),
+            version: "test".into(),
+        });
+        let response = router(state)
+            .oneshot(
+                axum::http::Request::get("/api/conversations")
+                    .header("authorization", format!("Bearer {}", paired.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let conversations: Vec<HostConversation> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(conversations[0].id, "thread-awaiting-sync");
     }
 
     #[tokio::test]

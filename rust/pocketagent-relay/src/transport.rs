@@ -518,6 +518,10 @@ mod tests {
 
     #[tokio::test]
     async fn authenticates_and_routes_over_native_tls_websocket() {
+        // Several workspace dependencies expose both rustls crypto providers;
+        // select the provider used by this test explicitly instead of relying
+        // on rustls' ambiguous process-wide auto-detection.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let node = RelayNode::new();
         let auth = RelayAuthRegistry::default();
         let host_id = Uuid::new_v4();

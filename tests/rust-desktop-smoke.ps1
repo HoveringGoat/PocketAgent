@@ -236,6 +236,7 @@ try {
     if ($null -eq $showPairing) {
         throw 'Devices page did not expose pairing controls.'
     }
+    $hostEndpoint = $texts | Where-Object { $_ -like 'https://*' } | Select-Object -First 1
     $showPairing.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 250
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
@@ -250,7 +251,6 @@ try {
     if ($null -eq ($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -eq 'New device pairing QR code' })) {
         throw 'Expanded pairing section did not expose the QR image.'
     }
-    $hostEndpoint = $texts | Where-Object { $_ -like 'https://*' } | Select-Object -First 1
     if ($null -eq $hostEndpoint) { throw 'Desktop host endpoint was not exposed.' }
     $hostBody = & curl.exe -ks --fail $hostEndpoint
     if ($LASTEXITCODE -ne 0 -or $hostBody -notlike '*PocketAgent Rust Host*') {

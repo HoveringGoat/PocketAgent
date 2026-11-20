@@ -173,7 +173,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             host_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into()),
             version: env!("CARGO_PKG_VERSION").into(),
         }
-    });
+    })
+    .with_request_log(|event| diagnostics::record("host_request", event));
     let host_models = host_state.models.clone();
     let host_usage = host_state.usage.clone();
     let host_provider_status = host_state.provider_status.clone();
@@ -392,12 +393,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = window.as_weak();
         window.on_set_device_access(move |conversation_id, device_id, authorized| {
             let Ok(device_id) = uuid::Uuid::parse_str(device_id.as_str()) else {
+                diagnostics::record("device", "access_change_invalid_device_id");
                 return;
             };
-            if authorized {
-                let _ = registry.grant_conversation(conversation_id.to_string(), device_id);
+            let result = if authorized {
+                registry.grant_conversation(conversation_id.to_string(), device_id)
             } else {
-                let _ = registry.revoke_conversation(conversation_id.as_str(), device_id);
+                registry.revoke_conversation(conversation_id.as_str(), device_id);
+                Ok(())
+            };
+            match result {
+                Ok(()) => diagnostics::record(
+                    "device",
+                    &format!(
+                        "access_{}_conversation={conversation_id} device={device_id}",
+                        if authorized { "granted" } else { "revoked" }
+                    ),
+                ),
+                Err(error) => {
+                    diagnostics::record("device", &format!("access_change_failed_{error}"));
+                    let _ = weak.upgrade_in_event_loop(move |window| {
+                        window.set_host_status(format!("Device access failed: {error}").into());
+                    });
+                    return;
+                }
             }
             set_host_devices(&weak, &registry, conversation_id.as_str());
         });
@@ -911,6 +930,7 @@ fn start_codex_worker(
                                     Ok(sessions) => {
                                         store.refresh_registered_threads(sessions);
                                         let _ = store.save();
+                                        sync_host_conversations(&host_conversations, &store);
                                         set_sessions(&weak, store.display_sessions());
                                     }
                                     Err(error) => set_codex_error(&weak, error.to_string()),

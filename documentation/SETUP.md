@@ -155,6 +155,8 @@ pairing, provider credentials, and conversation state are not used.
 
 ### Rust desktop MVP preview
 
+Rust 0.1.15 keeps a newly granted conversation visible during the short interval before the Codex worker finishes its metadata refresh. The Android client can therefore begin its authenticated read immediately; the placeholder title is replaced by the saved desktop title on the next host sync. Rust diagnostics now include device grant/revoke outcomes and authenticated `/api/conversations` counts (host snapshot, authorized grants, and visible results), without logging bearer tokens or message contents.
+
 Rust desktop diagnostics are appended to `%LOCALAPPDATA%/PocketAgent-rust/desktop.log` (or the XDG data equivalent). Entries record lifecycle and failure categories without message bodies, tokens, or provider stderr.
 
 On startup and every ten minutes while the worker is running, the Rust local store applies the same seven-day idle archive rule as the server: unpinned conversations with no recent activity are moved to Archived; pinned conversations and recent activity are preserved. This is local metadata only and never deletes Codex history.

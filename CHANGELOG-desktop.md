@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.15
+
+- Keep an explicitly granted conversation visible to Android while the desktop worker refreshes its local conversation snapshot, then replace the temporary entry with the saved metadata on the next sync.
+- Sync the host conversation list immediately after Codex connects and log device-access changes plus authenticated conversation-list counts to the Rust diagnostic log.
+
 ### Rust desktop preview 0.1.14
 
 - Match Android's structured usage, model, and local-folder API contracts.
