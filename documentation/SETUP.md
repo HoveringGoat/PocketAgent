@@ -206,6 +206,8 @@ The build script treats a running `pocketagent-desktop` executable at the canoni
 
 The Rust desktop displays its package version beside the PocketAgent branding, so a running test build can be matched to its artifact without inspecting the executable path.
 
+The Rust Codex provider process is assigned to a Windows kill-on-close Job Object. Closing or crashing the desktop therefore terminates the wrapper and its provider descendants together, preventing an orphaned app-server from retaining a thread writer lease. A live provider owned by another desktop remains a read-only mirror and is never terminated automatically.
+
 The build first runs the Rust workspace test, warnings-as-errors clippy, and authenticated relay process-demo gates; a failure stops before packaging. It then runs `tests/rust-desktop-smoke.ps1` against the packaged executable before writing the ZIP. The output is under `artifacts/rust-desktop-<version>/`, with the matching `rust-desktop-<version>.zip` beside it. Rebuilding without changing the package version replaces that exact directory, ZIP, and checksum; bumping the version creates a new immutable artifact name. To also build and install-test the per-user Rust Windows installer, run:
 
 ```powershell

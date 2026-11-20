@@ -7,6 +7,16 @@ use tokio::{
     sync::{Notify, mpsc, watch},
 };
 
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE},
+    System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    },
+};
+
 const INITIAL_HISTORY_TURNS: u64 = 40;
 
 #[derive(Clone, Debug)]
@@ -91,6 +101,8 @@ pub struct CodexSession {
     repository: String,
     next_id: u64,
     thread_id: Option<String>,
+    #[cfg(windows)]
+    process_job: HANDLE,
 }
 
 impl CodexSession {
@@ -145,6 +157,14 @@ impl CodexSession {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()?;
+        #[cfg(windows)]
+        let process_job = match create_process_job(&child) {
+            Ok(job) => job,
+            Err(error) => {
+                let _ = child.start_kill();
+                return Err(error);
+            }
+        };
         let stdin = child
             .stdin
             .take()
@@ -160,6 +180,8 @@ impl CodexSession {
             repository: repository.to_owned(),
             next_id: 0,
             thread_id: None,
+            #[cfg(windows)]
+            process_job,
         };
         session.request("initialize", json!({
             "clientInfo": { "name": "pocketagent-rust-desktop", "title": "PocketAgent Rust Desktop", "version": "0.1.0" }
@@ -689,7 +711,56 @@ impl Drop for CodexSession {
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.child.start_kill();
         }
+        #[cfg(windows)]
+        if !self.process_job.is_null() && self.process_job != INVALID_HANDLE_VALUE {
+            // Closing a kill-on-close job terminates the wrapper and every
+            // provider descendant it spawned. This prevents an orphaned
+            // app-server from retaining a thread writer lease after a crash.
+            unsafe { CloseHandle(self.process_job) };
+            self.process_job = std::ptr::null_mut();
+        }
     }
+}
+
+#[cfg(windows)]
+fn create_process_job(child: &Child) -> Result<HANDLE, Box<dyn std::error::Error + Send + Sync>> {
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() || job == INVALID_HANDLE_VALUE {
+        return Err(io::Error::from_raw_os_error(unsafe { GetLastError() } as i32).into());
+    }
+
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        BasicLimitInformation:
+            windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..unsafe { std::mem::zeroed() }
+            },
+        ..unsafe { std::mem::zeroed() }
+    };
+    let set_ok = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut limits as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if set_ok == 0 {
+        let error = io::Error::from_raw_os_error(unsafe { GetLastError() } as i32);
+        unsafe { CloseHandle(job) };
+        return Err(error.into());
+    }
+
+    let process = child
+        .raw_handle()
+        .ok_or_else(|| io::Error::other("Codex process handle was unavailable"))?
+        as HANDLE;
+    if unsafe { AssignProcessToJobObject(job, process) } == 0 {
+        let error = io::Error::from_raw_os_error(unsafe { GetLastError() } as i32);
+        unsafe { CloseHandle(job) };
+        return Err(error.into());
+    }
+    Ok(job)
 }
 
 fn thread_text(result: &Value) -> String {
@@ -1039,6 +1110,40 @@ fn prompt_request(message: &Value, method: &str) -> PromptRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn provider_job_terminates_process_when_owner_closes() {
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping", "127.0.0.1", "-n", "30"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("Windows should provide cmd.exe for the process-lifetime test");
+        let job = create_process_job(&child).expect("provider job should be created");
+        unsafe { CloseHandle(job) };
+
+        let mut terminated = false;
+        for _ in 0..20 {
+            if child
+                .try_wait()
+                .expect("child status should be readable")
+                .is_some()
+            {
+                terminated = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if !terminated {
+            let _ = child.start_kill();
+        }
+        assert!(
+            terminated,
+            "closing the provider job must terminate its process"
+        );
+    }
 
     #[cfg(windows)]
     #[test]
