@@ -24,6 +24,17 @@ public sealed class HostSettings
     public string Origin => $"{(UseHttps ? "https" : "http")}://{ListenAddress}:{Port}";
     public string ClientOrigin => DirectOrigin.Length > 0 ? DirectOrigin : PublicOrigin.Length > 0 ? PublicOrigin : Origin;
 
+    public HostSettings WithLoopbackHttpListener()
+    {
+        var local = (HostSettings)MemberwiseClone();
+        local.ListenAddress = IPAddress.Loopback.ToString();
+        local.CertificatePath = "";
+        local.PinnedCertificate = false;
+        local.PublicOrigin = "";
+        local.DirectOrigin = "";
+        return local;
+    }
+
     public void Validate(bool requireRepository = true, bool creatingCertificate = false)
     {
         if (PermissionMode is not ("inherit" or "ask" or "full-access"))

@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.18 - 2026-11-20
+
+- Start relay clients on loopback without an inbound firewall prompt, including desktops with saved LAN or direct internet settings.
+
 ## 0.3.17 - 2026-11-20
 
 - Show relay setup for the selected mode, explain the server-off requirement, and add clear enrollment, replacement, and unenrollment actions.

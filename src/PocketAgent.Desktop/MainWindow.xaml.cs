@@ -177,7 +177,7 @@ public partial class MainWindow : Window
                 Relay = ReadRelaySettings(removeRelayEnrollment)
             }
         };
-        candidate.Host.Validate();
+        RuntimeHostSettings(candidate.Host).Validate();
         candidate.Save(); settings = candidate;
         replacingRelayEnrollment = false;
         RelayEnrollmentSetting.Clear();
@@ -325,18 +325,20 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             SaveConfiguration();
-            if (IPAddress.TryParse(settings.Host.ListenAddress, out var listenAddress) && !IPAddress.IsLoopback(listenAddress) && !WindowsFirewall.IsConfigured(settings.Host.Port))
+            var host = RuntimeHostSettings(settings.Host);
+            if (IPAddress.TryParse(host.ListenAddress, out var listenAddress) && !IPAddress.IsLoopback(listenAddress) && !WindowsFirewall.IsConfigured(host.Port))
             {
-                var choice = AppDialogs.Show(this, $"Allow inbound TCP {settings.Host.Port} through Windows Firewall? PocketAgent will create one port-based rule named '{WindowsFirewall.RuleName(settings.Host.Port)}'. It is tied to the port, not this version's executable path, so future updates will not prompt again. The rule is needed for phone connections and can be removed from Windows Firewall later.", "Windows Firewall", MessageBoxButton.YesNo);
-                if (choice == MessageBoxResult.Yes && !await Task.Run(() => WindowsFirewall.TryConfigure(settings.Host.Port)))
+                var choice = AppDialogs.Show(this, $"Allow inbound TCP {host.Port} through Windows Firewall? PocketAgent will create one port-based rule named '{WindowsFirewall.RuleName(host.Port)}'. It is tied to the port, not this version's executable path, so future updates will not prompt again. The rule is needed for inbound connections and can be removed from Windows Firewall later.", "Windows Firewall", MessageBoxButton.YesNo);
+                if (choice == MessageBoxResult.Yes && !await Task.Run(() => WindowsFirewall.TryConfigure(host.Port)))
                     throw new InvalidOperationException("Windows Firewall rule was not created. The server was not started.");
             }
-            var candidate = RelayHost.Create([], settings.Host);
+            var candidate = RelayHost.Create([], host);
             try { await candidate.StartAsync(); }
             catch { await candidate.DisposeAsync(); throw; }
             relay = candidate;
             sessionSignature = "";
-            ConnectionAddress.Text = settings.Host.ClientOrigin;
+            ConnectionAddress.Text = host.ClientOrigin;
+            SetDevicesRelayClientMode(host.Relay.ConnectsUpstream);
             SetServerToggle(true, "Starting...", false); SaveButton.IsEnabled = false;
             PermissionModeSetting.IsEnabled = false;
             try
@@ -434,6 +436,7 @@ public partial class MainWindow : Window
         providerModel = null;
         ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
+        SetDevicesRelayClientMode(false);
         PairingDisplay.Text = ""; DeviceList.Children.Clear(); ConnectionAddress.Text = "";
         SetServerToggle(false); SaveButton.IsEnabled = true;
         PermissionModeSetting.IsEnabled = true;
@@ -444,6 +447,13 @@ public partial class MainWindow : Window
         ServerToggle.Content = label ?? (running ? "ON" : "OFF");
         ServerToggle.IsEnabled = enabled;
         UpdateRelaySetup();
+    }
+
+    private void SetDevicesRelayClientMode(bool client)
+    {
+        DevicesHeading.Text = client ? "Relay client" : "Connect your phone";
+        DirectPairingPanel.Visibility = DirectPairingHelp.Visibility = client ? Visibility.Collapsed : Visibility.Visible;
+        if (!client) CertificateStatus.Text = "";
     }
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
@@ -466,7 +476,10 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             var running = relay;
-            CertificateStatus.Text = running.Services.GetRequiredService<PeerCertificates>().Status;
+            var host = running.Services.GetRequiredService<HostSettings>();
+            CertificateStatus.Text = host.Relay.ConnectsUpstream
+                ? "This desktop listens on loopback. Direct phone pairing requires a mode with an HTTPS listener."
+                : running.Services.GetRequiredService<PeerCertificates>().Status;
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
@@ -487,13 +500,13 @@ public partial class MainWindow : Window
                 changingList = false; sessionSignature = signature;
             }
             var code = running.Services.GetRequiredService<PairingCode>().Current;
-            PairingDisplay.Text = code.Consumed ? "Pairing used — generate a new QR" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Pairing expired — generate a new QR" : settings.Host.UseHttps ? "Scan or copy to pair" : "Set up HTTPS to pair a phone";
+            PairingDisplay.Text = code.Consumed ? "Pairing used — generate a new QR" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Pairing expired — generate a new QR" : host.UseHttps ? "Scan or copy to pair" : "Set up HTTPS to pair a phone";
             PairingExpiry.Text = $"Single use · expires {code.ExpiresAt.LocalDateTime:t}";
             var pairing = running.Services.GetRequiredService<PairingCode>();
             if (code.Consumed || code.ExpiresAt <= DateTimeOffset.UtcNow) { PairingQr.Source = null; qrRendered = ""; }
-            else if (settings.Host.UseHttps)
+            else if (host.UseHttps)
             {
-                var payload = PeerCertificates.PairingPayload(settings.Host, pairing.Ticket);
+                var payload = PeerCertificates.PairingPayload(host, pairing.Ticket);
                 if (payload != qrRendered)
                 {
                     using var data = QRCoder.QRCodeGenerator.GenerateQrCode(payload, QRCoder.QRCodeGenerator.ECCLevel.M);

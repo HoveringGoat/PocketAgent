@@ -103,14 +103,16 @@
       </TabItem>
       <TabItem Header="Devices">
         <ScrollViewer><StackPanel Margin="20" MaxWidth="730" HorizontalAlignment="Left">
-          <TextBlock Text="Connect your phone" FontSize="24"/><TextBlock Text="Scan this QR or copy its full pairing string into the phone app. Either method verifies this desktop and pairs the phone in one step. Treat an unused QR or pairing string like a temporary password." Margin="0,10"/>
+          <TextBlock x:Name="DevicesHeading" Text="Connect your phone" FontSize="24"/><TextBlock x:Name="DirectPairingHelp" Text="Scan this QR or copy its full pairing string into the phone app. Either method verifies this desktop and pairs the phone in one step. Treat an unused QR or pairing string like a temporary password." Margin="0,10"/>
           <TextBlock x:Name="CertificateStatus" TextWrapping="Wrap" Foreground="#C1DAA6"/>
           <TextBox x:Name="ConnectionAddress" IsReadOnly="True"/><Button Content="Copy address" Click="CopyAddress" HorizontalAlignment="Left"/>
           <Button Content="Connection diagnostics" Click="CheckConnectivity" HorizontalAlignment="Left"/>
           <Button Content="Locate Android installer APK" Click="LocateAndroid" HorizontalAlignment="Left"/>
-          <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
-          <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
-          <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
+          <StackPanel x:Name="DirectPairingPanel">
+            <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
+            <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
+            <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
+          </StackPanel>
            <TextBlock Text="Paired devices" FontSize="21" Margin="0,24,0,10"/><TextBlock x:Name="DeviceAccessStatus" Text="Open Edit conversation to manage device access." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,8"/><StackPanel x:Name="DeviceList"/>
         </StackPanel></ScrollViewer>
       </TabItem>
@@ -178,6 +180,7 @@
             </StackPanel>
             <StackPanel x:Name="RelayClientPanel" Visibility="Collapsed" Margin="0,10,0,0">
               <TextBlock x:Name="RelayUpstreamStatus" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock Text="This desktop connects outbound. Client mode needs no inbound firewall rule." Foreground="#A7BAA7" Margin="0,4,0,0"/>
               <StackPanel x:Name="RelayEnrollmentPanel" Margin="0,4,0,0">
                 <TextBlock Text="Client enrollment"/>
                 <PasswordBox x:Name="RelayEnrollmentSetting" AutomationProperties.Name="Client enrollment" PasswordChanged="RelayEnrollmentChanged" Margin="0,5,0,6"/>

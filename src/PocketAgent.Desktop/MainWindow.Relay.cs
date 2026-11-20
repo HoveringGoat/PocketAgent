@@ -10,6 +10,9 @@ public partial class MainWindow
     private bool CanEditRelaySettings => relay is null && ServerToggle.IsEnabled;
     private bool replacingRelayEnrollment;
 
+    private static HostSettings RuntimeHostSettings(HostSettings host) =>
+        host.Relay.ConnectsUpstream && !host.Relay.Enabled ? host.WithLoopbackHttpListener() : host;
+
     private void LoadRelaySetup()
     {
         var saved = settings.Host.Relay;

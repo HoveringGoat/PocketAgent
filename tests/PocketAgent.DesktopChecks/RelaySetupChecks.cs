@@ -19,6 +19,9 @@ using PocketAgent.Desktop;
 
 internal static class RelaySetupChecks
 {
+    private const string SavedLanAddress = "192.168.254.253";
+    private const string SavedPublicOrigin = "https://198.51.100.77:9443";
+
     public static void Run(string repository)
     {
         var previousDirectory = Environment.GetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA");
@@ -72,6 +75,8 @@ internal static class RelaySetupChecks
             await CheckLayout(node, output, "host", cancellation);
 
             remote = OpenDesktop(repository, remoteDirectory);
+            Control<TextBox>(remote, "AddressSetting").Text = SavedLanAddress;
+            Control<TextBox>(remote, "DirectOriginSetting").Text = SavedPublicOrigin;
             Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "client";
             CheckMode(remote, "client");
             var input = Control<PasswordBox>(remote, "RelayEnrollmentSetting");
@@ -95,13 +100,37 @@ internal static class RelaySetupChecks
             Click(remote, "ReplaceRelayEnrollmentButton");
             if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("Cancel replacement must return to the saved enrollment view.");
-            Click(remote, "ServerToggle");
-            await WaitForServer(remote, running: true, cancellation);
+            remote.ShowActivated = false;
+            remote.Show();
+            var firewallPrompt = false;
+            var watchFirewall = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
+            watchFirewall.Tick += (_, _) =>
+            {
+                var dialog = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.Title == "Windows Firewall");
+                if (dialog is null) return;
+                firewallPrompt = true;
+                dialog.Close();
+            };
+            watchFirewall.Start();
+            try
+            {
+                Click(remote, "ServerToggle");
+                if (firewallPrompt) throw new InvalidOperationException("Relay client startup prompted for an inbound Windows Firewall rule.");
+                await WaitForServer(remote, running: true, cancellation);
+            }
+            finally { watchFirewall.Stop(); }
+            var clientSettings = ((WebApplication)typeof(MainWindow).GetField("relay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(remote)!)
+                .Services.GetRequiredService<HostSettings>();
+            var savedNetwork = DesktopSettings.Load().Host;
+            if (clientSettings.ListenAddress != "127.0.0.1" || clientSettings.ClientOrigin != $"http://127.0.0.1:{clientSettings.Port}" ||
+                savedNetwork.ListenAddress != SavedLanAddress || savedNetwork.DirectOrigin != SavedPublicOrigin || !savedNetwork.PinnedCertificate)
+                throw new InvalidOperationException("Relay client startup must use loopback without discarding the saved LAN and direct settings.");
             await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Connected to relay.", cancellation);
             if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed ||
                 Control<Button>(remote, "UnenrollRelayButton").IsEnabled)
                 throw new InvalidOperationException("A running client must show its status and explain how to unlock unenrollment.");
             await CheckRequests(remote, enrollment, clientId, savedNode.ClientToken, cancellation);
+            CheckClientDevices(remote, output, clientSettings.Origin);
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
             Click(node, "ServerToggle");
@@ -122,6 +151,8 @@ internal static class RelaySetupChecks
             var inactive = DesktopSettings.Load().Host.Relay;
             if (inactive.ConnectsUpstream || inactive.UpstreamUrl.Length == 0)
                 throw new InvalidOperationException("Off must disable the upstream connection while retaining the saved enrollment.");
+            Control<TextBox>(remote, "AddressSetting").Text = "127.0.0.1";
+            Control<TextBox>(remote, "DirectOriginSetting").Clear();
             Click(remote, "ServerToggle");
             await WaitForServer(remote, running: true, cancellation);
             var running = (WebApplication)typeof(MainWindow).GetField("relay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(remote)!;
@@ -289,13 +320,50 @@ internal static class RelaySetupChecks
                 throw new InvalidOperationException("A long relay endpoint must wrap in Settings.");
             scroller.ScrollToVerticalOffset(scroller.VerticalOffset + section.TransformToAncestor(scroller).Transform(new Point()).Y - 8);
             window.UpdateLayout();
-            var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render(window);
-            var png = new PngBitmapEncoder();
-            png.Frames.Add(BitmapFrame.Create(bitmap));
-            using var file = File.Create(Path.Combine(output, $"relay-{state}-{width}-{height}.png"));
-            png.Save(file);
+            Capture(window, Path.Combine(output, $"relay-{state}-{width}-{height}.png"));
         }
+    }
+
+    private static void CheckClientDevices(MainWindow window, string output, string origin)
+    {
+        var navigation = Control<TabControl>(window, "Navigation");
+        navigation.SelectedIndex = 1;
+        Control<ComboBox>(window, "UiScaleSetting").SelectedValue = "large";
+        var address = Control<TextBox>(window, "ConnectionAddress");
+        var status = Control<TextBlock>(window, "CertificateStatus");
+        var heading = Control<TextBlock>(window, "DevicesHeading");
+        if (address.Text != origin || !status.Text.Contains("loopback", StringComparison.Ordinal) ||
+            !status.Text.Contains("Direct phone pairing", StringComparison.Ordinal) ||
+            Control<FrameworkElement>(window, "DirectPairingPanel").Visibility != Visibility.Collapsed ||
+            Control<Image>(window, "PairingQr").Source is not null)
+            throw new InvalidOperationException("Devices must show the actual loopback address and avoid offering a direct pairing QR in client mode.");
+        foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
+        {
+            window.Width = width;
+            window.Height = height;
+            window.UpdateLayout();
+            var scroller = (ScrollViewer)((TabItem)navigation.SelectedItem).Content;
+            var viewport = (ScrollContentPresenter)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
+            foreach (var element in new FrameworkElement[] { heading, status, address })
+            {
+                element.BringIntoView();
+                window.UpdateLayout();
+                var bounds = element.TransformToAncestor(viewport).TransformBounds(new Rect(element.RenderSize));
+                if (bounds.Top < -0.5 || bounds.Bottom > viewport.ActualHeight + 0.5 || bounds.Right > viewport.ActualWidth + 0.5)
+                    throw new InvalidOperationException($"Devices clips {element.Name} at {width} × {height}.");
+            }
+            Capture(window, Path.Combine(output, $"relay-client-devices-{width}-{height}.png"));
+        }
+    }
+
+    private static void Capture(Window window, string path)
+    {
+        var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(window);
+        var png = new PngBitmapEncoder();
+        png.Frames.Add(BitmapFrame.Create(bitmap));
+        using var file = File.Create(path);
+        png.Save(file);
     }
 
     private static T Control<T>(MainWindow window, string name) where T : FrameworkElement =>
