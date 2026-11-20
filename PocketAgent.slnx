@@ -3,5 +3,6 @@
     <Project Path="src/PocketAgent.Server/PocketAgent.Server.csproj" />
     <Project Path="src/PocketAgent.Desktop/PocketAgent.Desktop.csproj" />
     <Project Path="src/PocketAgent.Updater/PocketAgent.Updater.csproj" />
+    <Project Path="tests/PocketAgent.RelayChecks/PocketAgent.RelayChecks.csproj" />
   </Folder>
 </Solution>

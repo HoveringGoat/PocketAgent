@@ -48,7 +48,7 @@ Public-IP changes require setup again and a new phone origin; the desktop key is
 
 ### Relay mode status
 
-The planned relay mode uses an unlocked PocketAgent server as a relay node. A locked-down remote desktop connects outbound to that relay; the phone connects to the relay and selects the attached remote host. This removes the inbound firewall requirement from the remote desktop, but the relay node itself must remain reachable. The Rust workspace now has authenticated WebSocket transport, including a native Rustls `wss://` loopback round trip. The Rust desktop persists one relay host/client enrollment bundle and shared application-session key under `%LOCALAPPDATA%/PocketAgent-rust/relay.json`, and displays that bundle while the relay is running so another host can be provisioned without opening the secrets file. Native Android/WPF relay clients and multi-enrollment management are not available in the current release.
+Relay mode uses an unlocked PocketAgent server as a relay node. A locked-down remote desktop enrolls with a one-time host identity/token and shared session key, then opens an outbound WebSocket to the relay. The relay node routes encrypted request/response envelopes; it never sees conversation content or provider credentials. The remote desktop does not need an inbound firewall rule, but the relay node itself must remain reachable. The two-server loopback prototype is verified by `dotnet run --project tests/PocketAgent.RelayChecks`.
 
 ## Connect over Wi-Fi
 

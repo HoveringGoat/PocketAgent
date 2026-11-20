@@ -59,6 +59,19 @@ public static class RelayHost
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ScheduledMessages>());
         builder.Services.AddHostedService<ConversationMaintenance>();
         builder.Services.AddHostedService<HeartbeatService>();
+        builder.Services.AddHostedService<RelayRemoteHostService>();
+        builder.Services.AddSingleton<RelayNode>();
+        builder.Services.AddSingleton<RelayAuthRegistry>();
+        builder.Services.AddSingleton<RelayGateway>();
+        if (settings.Relay.Enabled)
+        {
+            if (!Guid.TryParse(settings.Relay.HostId, out var relayHostId) || string.IsNullOrWhiteSpace(settings.Relay.HostToken))
+                throw new InvalidOperationException("Relay.HostId and Relay.HostToken are required when relay mode is enabled.");
+            builder.Services.AddSingleton(new RelayIdentity(relayHostId, settings.Relay.HostToken,
+                Guid.TryParse(settings.Relay.ClientId, out var relayClientId) && !string.IsNullOrWhiteSpace(settings.Relay.ClientToken)
+                    ? new RelayClientIdentity(relayClientId, settings.Relay.ClientToken)
+                    : null));
+        }
         builder.Services.AddSignalR(options => options.MaximumReceiveMessageSize = 16 * 1024);
         builder.Services.AddAuthentication(DeviceAuthentication.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, DeviceAuthentication>(DeviceAuthentication.SchemeName, _ => { });
@@ -72,6 +85,7 @@ public static class RelayHost
         });
 
         var app = builder.Build();
+        app.UseWebSockets();
         app.Use(async (context, next) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";
@@ -222,10 +236,24 @@ public static class RelayHost
             return Results.Accepted();
         });
         app.MapHub<ProgressHub>("/events").RequireAuthorization();
+        if (settings.Relay.Enabled)
+            app.Map("/relay", async context => await context.RequestServices.GetRequiredService<RelayGateway>().HandleAsync(context));
         app.MapGet("/", () => Results.Json(new { application = "PocketAgent", version = BuildInfo.Version, client = "Native Android app" }));
+
+        if (settings.Relay.Enabled)
+        {
+            var identity = app.Services.GetRequiredService<RelayIdentity>();
+            var auth = app.Services.GetRequiredService<RelayAuthRegistry>();
+            auth.RegisterHost(identity.HostId, identity.HostToken);
+            if (identity.Client is not null) auth.RegisterClient(identity.Client.Id, identity.Client.Token);
+            ServerDiagnostics.Log("relay", LogLevel.Information, $"relay_node_enabled host_id={identity.HostId} client_configured={identity.Client is not null}");
+        }
         return app;
     }
 }
+
+public sealed record RelayIdentity(Guid HostId, string HostToken, RelayClientIdentity? Client);
+public sealed record RelayClientIdentity(Guid Id, string Token);
 
 public sealed record PairInput(string? Code, string? DeviceName);
 public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null, string? ReasoningEffort = null);

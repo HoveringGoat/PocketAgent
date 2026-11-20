@@ -19,6 +19,7 @@ public sealed class HostSettings
     public bool EnableHeartbeats { get; set; } = true;
     public string PermissionMode { get; set; } = "inherit";
     public string[] CodexArguments { get; set; } = [];
+    public RelaySettings Relay { get; set; } = new();
     public bool UseHttps => CertificatePath.Length > 0;
     public string Origin => $"{(UseHttps ? "https" : "http")}://{ListenAddress}:{Port}";
     public string ClientOrigin => DirectOrigin.Length > 0 ? DirectOrigin : PublicOrigin.Length > 0 ? PublicOrigin : Origin;
@@ -63,6 +64,15 @@ public sealed class HostSettings
             RepositoryPath = Path.GetFullPath(RepositoryPath);
         if (CodexArguments.Length == 0)
             CodexArguments = ["app-server", "--listen", "stdio://"];
+        if (Relay.Enabled && (!Guid.TryParse(Relay.HostId, out _) || string.IsNullOrWhiteSpace(Relay.HostToken)))
+            throw new InvalidOperationException("Relay.HostId and Relay.HostToken are required when relay mode is enabled.");
+        if (!string.IsNullOrWhiteSpace(Relay.UpstreamUrl))
+        {
+            if (!Uri.TryCreate(Relay.UpstreamUrl, UriKind.Absolute, out var relayUri) || relayUri.Scheme is not ("ws" or "wss") || relayUri.AbsolutePath is not ("" or "/" or "/relay") || !Guid.TryParse(Relay.RemoteHostId, out _) || string.IsNullOrWhiteSpace(Relay.RemoteHostToken))
+                throw new InvalidOperationException("Relay.UpstreamUrl, Relay.RemoteHostId and Relay.RemoteHostToken must describe a valid relay enrollment.");
+            _ = RelaySessionKey.Parse(Relay.SessionKey);
+            Relay.UpstreamUrl = new UriBuilder(relayUri) { Path = "/relay" }.Uri.ToString().TrimEnd('/');
+        }
     }
 
     public static bool IsPublicIPv4(IPAddress address)
@@ -78,6 +88,19 @@ public sealed class HostSettings
         var bytes = address.GetAddressBytes();
         return bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) || (bytes[0] == 192 && bytes[1] == 168);
     }
+}
+
+public sealed class RelaySettings
+{
+    public bool Enabled { get; set; }
+    public string HostId { get; set; } = "";
+    public string HostToken { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public string ClientToken { get; set; } = "";
+    public string UpstreamUrl { get; set; } = "";
+    public string RemoteHostId { get; set; } = "";
+    public string RemoteHostToken { get; set; } = "";
+    public string SessionKey { get; set; } = "";
 }
 
 public static class CertificateSetup
