@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using Markdig;
-using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using MarkdownTable = Markdig.Extensions.Tables.Table;
@@ -18,15 +18,61 @@ internal static class TranscriptMarkdown
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UsePipeTables().DisableHtml().Build();
     private static readonly Brush CodeBackground = MakeBrush("#25382C");
     private static readonly Brush BorderColor = MakeBrush("#47604B");
+    private static readonly Brush TranscriptColor = MakeBrush("#C1DAA6");
     private static readonly FontFamily CodeFont = new("Consolas");
 
     public static void Render(Panel target, string markdown)
     {
-        target.Children.Clear();
-        RenderBlocks(target, Markdown.Parse(markdown, Pipeline));
+        var document = new FlowDocument { PagePadding = new Thickness(0), Foreground = TranscriptColor };
+        RenderBlocks(document.Blocks, Markdown.Parse(markdown, Pipeline));
+        if (target.Children.Count > 0 && target.Children[0] is RichTextBox current)
+        {
+            var previous = current.Document.ContentStart;
+            var start = previous.GetOffsetToPosition(current.Selection.Start);
+            var end = previous.GetOffsetToPosition(current.Selection.End);
+            current.Document = document;
+            if (start != end)
+                current.Selection.Select(document.ContentStart.GetPositionAtOffset(start) ?? document.ContentEnd,
+                    document.ContentStart.GetPositionAtOffset(end) ?? document.ContentEnd);
+            return;
+        }
+        var viewer = new RichTextBox(document)
+        {
+            IsReadOnly = true,
+            IsDocumentEnabled = true,
+            Background = Brushes.Transparent,
+            Foreground = TranscriptColor,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        PassWheelToTranscript(viewer);
+        target.Children.Add(viewer);
     }
 
-    private static void RenderBlocks(Panel target, ContainerBlock blocks)
+    public static TextBox ReadOnlyText(string text, Brush? foreground = null)
+    {
+        var viewer = new TextBox
+        {
+            Text = text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+            Foreground = foreground ?? TranscriptColor, Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0), Padding = new Thickness(0)
+        };
+        PassWheelToTranscript(viewer);
+        return viewer;
+    }
+
+    private static void PassWheelToTranscript(Control viewer)
+    {
+        viewer.PreviewMouseWheel += (_, e) =>
+        {
+            e.Handled = true;
+            viewer.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta) { RoutedEvent = Mouse.MouseWheelEvent });
+        };
+    }
+
+    private static void RenderBlocks(BlockCollection target, ContainerBlock blocks)
     {
         foreach (var block in blocks)
         {
@@ -36,33 +82,32 @@ internal static class TranscriptMarkdown
                     var title = Text(heading.Inline);
                     title.FontSize = Math.Max(14, 23 - heading.Level * 2);
                     title.FontWeight = FontWeights.SemiBold;
-                    target.Children.Add(title);
+                    target.Add(title);
                     break;
                 case ParagraphBlock paragraph:
-                    target.Children.Add(Text(paragraph.Inline));
+                    target.Add(Text(paragraph.Inline));
                     break;
                 case CodeBlock code:
-                    var output = new TextBox
+                    var output = new Paragraph(new Run(code.Lines.ToString()))
                     {
-                        Text = code.Lines.ToString(), IsReadOnly = true, FontFamily = CodeFont,
-                        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, TextWrapping = TextWrapping.Wrap,
-                        Background = CodeBackground
+                        FontFamily = CodeFont, Background = CodeBackground, Padding = new Thickness(8),
+                        Margin = new Thickness(0, 2, 0, 8)
                     };
-                    target.Children.Add(output);
+                    target.Add(output);
                     break;
                 case QuoteBlock quote:
-                    var quoted = new StackPanel();
-                    RenderBlocks(quoted, quote);
-                    target.Children.Add(new Border { Child = quoted, BorderBrush = BorderColor, BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(10, 0, 0, 0) });
+                    var quoted = new Section { BorderBrush = BorderColor, BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(10, 0, 0, 0) };
+                    RenderBlocks(quoted.Blocks, quote);
+                    target.Add(quoted);
                     break;
                 case ListBlock list:
                     RenderList(target, list);
                     break;
                 case MarkdownTable table:
-                    target.Children.Add(RenderTable(table));
+                    target.Add(RenderTable(table));
                     break;
                 case ThematicBreakBlock:
-                    target.Children.Add(new Border { Height = 1, Background = BorderColor, Margin = new Thickness(0, 7, 0, 7) });
+                    target.Add(new Paragraph { FontSize = 1, BorderBrush = BorderColor, BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 7, 0, 7) });
                     break;
                 case ContainerBlock nested:
                     RenderBlocks(target, nested);
@@ -71,52 +116,48 @@ internal static class TranscriptMarkdown
         }
     }
 
-    private static void RenderList(Panel target, ListBlock list)
+    private static void RenderList(BlockCollection target, ListBlock list)
     {
-        var number = int.TryParse(list.OrderedStart, out var start) ? start : 1;
+        var rendered = new List
+        {
+            MarkerStyle = list.IsOrdered ? TextMarkerStyle.Decimal : TextMarkerStyle.Disc,
+            StartIndex = int.TryParse(list.OrderedStart, out var start) ? Math.Max(1, start) : 1,
+            Margin = new Thickness(16, 0, 0, 6)
+        };
         foreach (var item in list.OfType<ListItemBlock>())
         {
-            var row = new DockPanel { Margin = new Thickness(12, 0, 0, 0) };
-            var marker = new TextBlock { Text = list.IsOrdered ? $"{number++}." : "•", Margin = new Thickness(0, 0, 8, 0) };
-            DockPanel.SetDock(marker, Dock.Left);
-            row.Children.Add(marker);
-            var body = new StackPanel();
-            RenderBlocks(body, item);
-            row.Children.Add(body);
-            target.Children.Add(row);
+            var entry = new ListItem();
+            RenderBlocks(entry.Blocks, item);
+            rendered.ListItems.Add(entry);
         }
+        target.Add(rendered);
     }
 
-    private static Grid RenderTable(MarkdownTable table)
+    private static Table RenderTable(MarkdownTable table)
     {
-        var grid = new Grid { Margin = new Thickness(0, 2, 0, 8) };
+        var grid = new Table { Margin = new Thickness(0, 2, 0, 8), CellSpacing = 0 };
+        var rows = new TableRowGroup();
+        grid.RowGroups.Add(rows);
         foreach (var row in table.OfType<MarkdownTableRow>())
         {
-            var index = grid.RowDefinitions.Count;
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var column = 0;
+            var rendered = new TableRow();
+            if (row.IsHeader) rendered.FontWeight = FontWeights.SemiBold;
             foreach (var cell in row.OfType<MarkdownTableCell>())
             {
-                if (column >= grid.ColumnDefinitions.Count) grid.ColumnDefinitions.Add(new ColumnDefinition());
-                var content = new StackPanel();
-                if (row.IsHeader) TextElement.SetFontWeight(content, FontWeights.SemiBold);
-                RenderBlocks(content, cell);
-                var border = new Border { Child = content, BorderBrush = BorderColor, BorderThickness = new Thickness(0.5), Padding = new Thickness(6, 2, 6, 2) };
-                Grid.SetRow(border, index);
-                Grid.SetColumn(border, column++);
-                grid.Children.Add(border);
+                if (rendered.Cells.Count >= grid.Columns.Count) grid.Columns.Add(new TableColumn());
+                var content = new TableCell { BorderBrush = BorderColor, BorderThickness = new Thickness(0.5), Padding = new Thickness(6, 2, 6, 2) };
+                RenderBlocks(content.Blocks, cell);
+                rendered.Cells.Add(content);
             }
+            rows.Rows.Add(rendered);
         }
         return grid;
     }
 
-    private static TextBlock Text(ContainerInline? content)
+    private static Paragraph Text(ContainerInline? content)
     {
-        var text = new TextBlock { Margin = new Thickness(0, 1, 0, 6), TextWrapping = TextWrapping.Wrap };
-        if (content?.FirstChild is LiteralInline literal && literal.NextSibling is null)
-            text.Text = literal.Content.ToString();
-        else if (content is not null)
-            RenderInlines(text.Inlines, content);
+        var text = new Paragraph { Margin = new Thickness(0, 1, 0, 6) };
+        if (content is not null) RenderInlines(text.Inlines, content);
         return text;
     }
 

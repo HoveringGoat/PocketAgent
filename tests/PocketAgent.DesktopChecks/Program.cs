@@ -224,10 +224,19 @@ internal static class Program
             activity.IsExpanded = true;
             window.UpdateLayout();
             var texts = Descendants(transcript).OfType<TextBlock>().ToArray();
-            foreach (var sample in new[] { "User sample", "Assistant sample", "Approval reason", "Your input is needed" })
+            foreach (var sample in new[] { "Approval reason", "Your input is needed" })
                 ColorIs(texts.Single(text => text.Text == sample).Foreground, "#C1DAA6", sample);
+            var transcriptText = Descendants(transcript).OfType<TextBox>().ToArray();
+            ColorIs(transcriptText.Single(text => text.Text == "User sample" && text.IsReadOnly).Foreground, "#C1DAA6", "User sample");
+            var agentOutput = Descendants(transcript).OfType<RichTextBox>().Single(text =>
+                new TextRange(text.Document.ContentStart, text.Document.ContentEnd).Text.Trim() == "Assistant sample" && text.IsReadOnly);
+            ColorIs(agentOutput.Foreground, "#C1DAA6", "Assistant sample");
             ColorIs(texts.First(text => text.Text.Contains("Tool sample", StringComparison.Ordinal)).Foreground, "#C1DAA6", "Tool output");
-            ColorIs(texts.Single(text => text.Text == "Error sample").Foreground, "#FA8072", "Error text");
+            var errorOutput = transcriptText.Single(text => text.Text == "Error sample" && text.IsReadOnly);
+            ColorIs(errorOutput.Foreground, "#FA8072", "Error text");
+            errorOutput.SelectAll();
+            if (!System.Windows.Input.ApplicationCommands.Copy.CanExecute(null, errorOutput))
+                throw new InvalidOperationException("Conversation errors must support native copy.");
             ColorIs(texts.Single(text => text.FontSize == 11).Foreground, "#8FBC8F", "Timestamp");
             ColorIs(Descendants(transcript).OfType<Button>().Single(button => Equals(button.Content, "Deny")).Foreground, "#C1DAA6", "Button text");
             var workCard = Descendants(transcript).OfType<Button>().First(button => button.Content?.ToString()?.Contains("commandExecution", StringComparison.Ordinal) == true);
@@ -264,7 +273,8 @@ internal static class Program
                 .ToArray();
             var largeSnapshot = snapshot with { Items = largeItems, Requests = [], Error = null };
             typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [largeSnapshot]);
-            var renderedLarge = Descendants(transcript).OfType<TextBlock>().Count(text => text.Text.Contains(new string('x', 1_000), StringComparison.Ordinal));
+            var renderedLarge = Descendants(transcript).OfType<RichTextBox>().Count(text =>
+                new TextRange(text.Document.ContentStart, text.Document.ContentEnd).Text.Contains(new string('x', 1_000), StringComparison.Ordinal));
             if (renderedLarge > 300) throw new InvalidOperationException($"Large transcript rendered {renderedLarge} full items instead of staying within the desktop rendering budget.");
             Console.WriteLine("PASS readable native screens/dropdown, dark scrollbar tracks and rendered surfaces, themed confirmation Yes/dismiss, removed legacy controls and bounded transcript.");
             return 0;

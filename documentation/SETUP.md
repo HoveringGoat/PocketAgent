@@ -65,7 +65,7 @@ Messages preserve user, assistant and activity roles. Commands and provider acti
 
 Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
 
-Scroll up to read earlier messages while work continues and select **Jump to latest** to follow new output again. Expand an activity group to see the individual actions. Agent replies use Markdown. Select an image thumbnail to open the image at a larger size.
+Scroll up to read earlier messages while work continues and select **Jump to latest** to follow new output again. Expand an activity group to see the individual actions. Select text in messages, formatted agent replies, activity details, or conversation errors and press **Ctrl+C** to copy it. Select an image thumbnail to open the image at a larger size.
 
 The focused desktop conversation check uses the native WPF window and captures layouts at 800×580 and 1150×820 with Large scaling.
 

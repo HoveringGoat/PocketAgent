@@ -96,7 +96,7 @@ internal static class ConversationUiChecks
         if (commandsPanel.Children.Count != 10) throw new InvalidOperationException("Expanding the activity group must reveal all ten commands.");
         var first = Descendants(commandsPanel).OfType<Button>().First();
         first.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        if (!Descendants(commandsPanel).OfType<TextBlock>().Any(label => label.IsVisible && label.Text.Contains("output 1")))
+        if (!Descendants(commandsPanel).OfType<TextBox>().Any(label => label.IsVisible && label.IsReadOnly && label.Text.Contains("output 1")))
             throw new InvalidOperationException("Each command in a group must independently reveal its output.");
         WaitFor(() => NearBottom(scroll), "live edge after expanding activity");
         scroll.ScrollToVerticalOffset(80);
@@ -109,17 +109,30 @@ internal static class ConversationUiChecks
             throw new InvalidOperationException("Streaming should preserve the scroll position while reading history.");
         if (!transcript.Children.Contains(existingThumbnail) || !group.IsExpanded)
             throw new InvalidOperationException("Streaming text must preserve existing previews and expanded activity.");
-        var labels = Descendants(transcript).OfType<TextBlock>().ToArray();
+        var selectable = Descendants(transcript).OfType<RichTextBox>().FirstOrDefault(text =>
+            new TextRange(text.Document.ContentStart, text.Document.ContentEnd).Text.Contains("Agent heading"));
+        if (selectable is not { IsReadOnly: true })
+            throw new InvalidOperationException("Agent responses must support native selection and copy.");
+        selectable.SelectAll();
+        if (!selectable.Selection.Text.Contains("Agent heading") || !selectable.Selection.Text.Contains("command output") ||
+            !System.Windows.Input.ApplicationCommands.Copy.CanExecute(null, selectable))
+            throw new InvalidOperationException("Native Copy must accept a selection spanning Markdown paragraphs and code.");
+        var selectedText = selectable.Selection.Text;
+        render.Invoke(window, [snapshot with { Items = [.. snapshot.Items[..^2], response with { Text = response.Text + "\n\nStreamed **update**.\n\nMore output." }, image] }]);
+        if (!selectable.Selection.Text.StartsWith(selectedText.TrimEnd(), StringComparison.Ordinal))
+            throw new InvalidOperationException("Streaming updates must preserve the user's existing response selection.");
+        selectable.Selection.Select(selectable.Document.ContentStart, selectable.Document.ContentStart);
+        var blocks = selectable.Document.Blocks.ToArray();
+        static string Contents(TextElement element) => new TextRange(element.ContentStart, element.ContentEnd).Text.Trim();
         var markup = new Dictionary<string, bool>
         {
-            ["heading"] = labels.Any(label => label.Text == "Agent heading" && label.FontSize > 15),
-            ["emphasis"] = labels.Any(label => label.Inlines.OfType<Bold>().Any() &&
-                new TextRange(label.ContentStart, label.ContentEnd).Text.Contains("Streamed update.")),
-            ["link"] = labels.Any(label => label.Inlines.OfType<Hyperlink>().Any()),
-            ["nested list"] = labels.Any(label => label.Text == "Nested step"),
-            ["quote"] = labels.Any(label => label.Text == "Quoted text"),
-            ["table"] = labels.Any(label => label.Text.Trim() == "B" && label.Parent is StackPanel { Parent: Border { Parent: Grid } }),
-            ["code block"] = Descendants(transcript).OfType<TextBox>().Any(code => code.IsReadOnly && code.Text.Contains("command output"))
+            ["heading"] = blocks.Any(block => block.FontSize > 15 && Contents(block) == "Agent heading"),
+            ["emphasis"] = blocks.OfType<Paragraph>().Any(paragraph => paragraph.Inlines.OfType<Bold>().Any() && Contents(paragraph).Contains("Streamed update.")),
+            ["link"] = blocks.OfType<Paragraph>().Any(paragraph => paragraph.Inlines.OfType<Hyperlink>().Any()),
+            ["nested list"] = blocks.OfType<List>().Any(list => list.ListItems.Any(item => item.Blocks.OfType<List>().Any())),
+            ["quote"] = blocks.OfType<Section>().Any(quote => Contents(quote) == "Quoted text"),
+            ["table"] = blocks.OfType<Table>().Any(table => table.RowGroups[0].Rows[1].Cells.Count == 2 && Contents(table.RowGroups[0].Rows[1].Cells[1]) == "B"),
+            ["code block"] = blocks.OfType<Paragraph>().Any(code => code.FontFamily.Source == "Consolas" && Contents(code) == "command output")
         };
         if (markup.Values.Contains(false))
             throw new InvalidOperationException($"Missing rendered Markdown features: {string.Join(", ", markup.Where(pair => !pair.Value).Select(pair => pair.Key))}.");

@@ -964,13 +964,20 @@ public partial class MainWindow : Window
             }
             else
             {
-                var content = new TextBlock { Text = item.Text, Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
+                var content = TranscriptMarkdown.ReadOnlyText(item.Text);
+                content.Margin = new Thickness(12);
                 renderedRows[item.Id] = content;
                 Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2A3B2D")), CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
             }
             foreach (var image in item.Images ?? []) RenderImage(item, image, snapshot);
         }
-        if (snapshot.Error is not null) Transcript.Children.Add(new TextBlock { Text = snapshot.Error, Tag = "transcript-notice", Foreground = Brushes.Salmon, Margin = new Thickness(12) });
+        if (snapshot.Error is not null)
+        {
+            var error = TranscriptMarkdown.ReadOnlyText(snapshot.Error, Brushes.Salmon);
+            error.Tag = "transcript-notice";
+            error.Margin = new Thickness(12);
+            Transcript.Children.Add(error);
+        }
         foreach (var request in snapshot.Requests) RenderRequest(snapshot.Id, request);
         if (followingLatest) TranscriptScroll.ScrollToEnd();
     }
@@ -994,7 +1001,7 @@ public partial class MainWindow : Window
             }
             if (previous.Text != item.Text)
             {
-                if (renderedRows[item.Id] is TextBlock text) text.Text = item.Text;
+                if (renderedRows[item.Id] is TextBox text) text.Text = item.Text;
                 else TranscriptMarkdown.Render((StackPanel)renderedRows[item.Id], item.Text);
             }
             renderedRowState[item.Id] = item;
@@ -1241,14 +1248,9 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1),
             ToolTip = "Expand or collapse work details"
         };
-        var details = new TextBlock
-        {
-            Text = string.IsNullOrWhiteSpace(item.Detail) ? "No additional details." : item.Detail,
-            Margin = new Thickness(12, 4, 12, 12),
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = Brushes.LightGreen,
-            Visibility = expanded ? Visibility.Visible : Visibility.Collapsed
-        };
+        var details = TranscriptMarkdown.ReadOnlyText(string.IsNullOrWhiteSpace(item.Detail) ? "No additional details." : item.Detail, Brushes.LightGreen);
+        details.Margin = new Thickness(12, 4, 12, 12);
+        details.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
         var panel = new StackPanel(); panel.Children.Add(header); panel.Children.Add(details);
         var card = new Border
         {
