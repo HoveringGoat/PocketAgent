@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.14 - 2026-11-20
+
+- Port the encrypted relay transport, enrollment payloads and outbound remote-host connection into the maintained .NET server.
+- Add a two-server loopback relay verification project covering sequential encrypted requests.
+- Remove the retired Rust desktop/relay workspace and packaging tooling.
+
 ### .NET relay prototype
 
 - Port the encrypted relay transport, enrollment payloads and outbound remote-host connection into the maintained .NET server.
