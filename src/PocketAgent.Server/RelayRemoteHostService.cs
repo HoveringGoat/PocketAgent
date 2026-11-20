@@ -17,7 +17,7 @@ public sealed class RelayRemoteHostService(HostSettings settings, PeerCertificat
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var relay = settings.Relay;
-        if (string.IsNullOrWhiteSpace(relay.UpstreamUrl)) return;
+        if (!relay.ConnectsUpstream || string.IsNullOrWhiteSpace(relay.UpstreamUrl)) return;
         var hostId = Guid.Parse(relay.RemoteHostId);
         var key = RelaySessionKey.Parse(relay.SessionKey);
         var uri = new Uri(relay.UpstreamUrl, UriKind.Absolute);

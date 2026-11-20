@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.17 - 2026-11-20
+
+- Show relay setup for the selected mode, explain the server-off requirement, and add clear enrollment, replacement, and unenrollment actions.
+- Match the conversation activity chevron to the desktop theme.
+
 ## 0.3.16 - 2026-11-20
 
 - Add Jump to latest, keep the Stop icon fully visible, and match Android's model and reasoning status.

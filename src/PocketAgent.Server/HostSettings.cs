@@ -66,7 +66,7 @@ public sealed class HostSettings
             CodexArguments = ["app-server", "--listen", "stdio://"];
         if (Relay.Enabled && (!Guid.TryParse(Relay.HostId, out var relayHostId) || relayHostId == Guid.Empty || string.IsNullOrWhiteSpace(Relay.HostToken)))
             throw new InvalidOperationException("Relay.HostId and Relay.HostToken are required when relay mode is enabled.");
-        if (!string.IsNullOrWhiteSpace(Relay.UpstreamUrl))
+        if (Relay.ConnectsUpstream && !string.IsNullOrWhiteSpace(Relay.UpstreamUrl))
         {
             if (!Guid.TryParse(Relay.RemoteHostId, out var remoteHostId) || remoteHostId == Guid.Empty || string.IsNullOrWhiteSpace(Relay.RemoteHostToken))
                 throw new InvalidOperationException("Relay.UpstreamUrl, Relay.RemoteHostId and Relay.RemoteHostToken must describe a valid relay enrollment.");
@@ -93,6 +93,9 @@ public sealed class HostSettings
 public sealed class RelaySettings
 {
     public bool Enabled { get; set; }
+    public bool? UpstreamEnabled { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ConnectsUpstream => UpstreamEnabled ?? !string.IsNullOrWhiteSpace(UpstreamUrl);
     public string HostId { get; set; } = "";
     public string HostToken { get; set; } = "";
     public string ClientId { get; set; } = "";

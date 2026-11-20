@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -83,7 +85,12 @@ internal static class ConversationUiChecks
             throw new InvalidOperationException("Ten routine commands should form one collapsed activity group.");
         if (!Descendants(transcript).OfType<Button>().Any(button => button.Content?.ToString()?.Contains("failed command") == true))
             throw new InvalidOperationException("A failed command must remain visible outside the routine activity group.");
-        group.IsExpanded = true;
+        var header = (ToggleButton)group.Template.FindName("HeaderSite", group);
+        var chevron = (System.Windows.Shapes.Path)header.Template.FindName("Chevron", header);
+        var collapsedChevron = chevron.Data.ToString();
+        var toggle = (IToggleProvider)new ToggleButtonAutomationPeer(header).GetPattern(PatternInterface.Toggle);
+        toggle.Toggle();
+        WaitFor(() => group.IsExpanded && chevron.Data.ToString() != collapsedChevron, "themed activity disclosure");
         window.UpdateLayout();
         var commandsPanel = (StackPanel)group.Content;
         if (commandsPanel.Children.Count != 10) throw new InvalidOperationException("Expanding the activity group must reveal all ten commands.");
@@ -142,10 +149,21 @@ internal static class ConversationUiChecks
         group.IsExpanded = false;
         window.UpdateLayout();
         WaitFor(() => NearBottom(scroll), "live edge after collapsing activity");
-        var activityOffset = scroll.VerticalOffset + group.TransformToAncestor(scroll).Transform(new Point()).Y;
-        scroll.ScrollToVerticalOffset(activityOffset);
-        WaitFor(() => jump.IsVisible, "activity scroll position");
-        Capture(window, Path.Combine(variant, "grouped-activity.png"));
+        foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
+        {
+            window.Width = width;
+            window.Height = height;
+            window.UpdateLayout();
+            var viewport = (ScrollContentPresenter)scroll.Template.FindName("PART_ScrollContentPresenter", scroll);
+            var activityOffset = scroll.VerticalOffset + group.TransformToAncestor(viewport).Transform(new Point()).Y;
+            scroll.ScrollToVerticalOffset(activityOffset);
+            WaitFor(() => Math.Abs(scroll.VerticalOffset - activityOffset) < 1 && jump.IsVisible, "activity scroll position");
+            var headerBounds = header.TransformToAncestor(viewport).TransformBounds(new Rect(header.RenderSize));
+            if (headerBounds.Top < -0.5 || headerBounds.Bottom > viewport.ActualHeight + 0.5 ||
+                chevron.ActualWidth < 9 || chevron.ActualHeight < 9)
+                throw new InvalidOperationException($"The activity disclosure clips at {width} × {height}.");
+            Capture(window, Path.Combine(variant, $"grouped-activity-{width}-{height}.png"));
+        }
 
         var createEditor = typeof(MainWindow).GetMethod("CreateConversationEditor", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var (editor, name, pinned) = ((Window, TextBox, CheckBox))createEditor.Invoke(window, [snapshot with { Pinned = true }])!;

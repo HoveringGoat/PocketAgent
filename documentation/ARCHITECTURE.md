@@ -50,7 +50,9 @@ On Windows, the desktop can create one explicitly approved inbound TCP port rule
 
 ## Relay mode
 
-The Windows desktop supports two independent relay roles in Settings. Enabling the node mounts `/relay` on the existing PocketAgent listener when the server starts. Pasting a host enrollment configures `RelayRemoteHostService` to authenticate to an upstream node over an outbound WebSocket. Only the node needs inbound reachability for relay traffic. The server switch owns both roles. The remote service retries with a five-second delay and exposes connecting, connected, and retrying states to Settings.
+The Windows desktop exposes one relay mode at a time in Settings. **Off** hides the setup panels, **Host relay node** mounts `/relay` on the existing listener at startup, and **Connect to relay** uses `RelayRemoteHostService` to authenticate to an upstream node over an outbound WebSocket. Only the node needs inbound reachability for relay traffic. Users stop the server to change modes or enrollment. The remote service retries with a five-second delay and exposes connecting, connected, and retrying states to Settings.
+
+Desktop Settings retains node identities and upstream enrollment when changing modes. The persisted `Relay.UpstreamEnabled` flag determines whether a saved upstream enrollment is active. Older settings without the flag infer upstream behavior from the URL. The desktop selects the host mode when migrating a configuration with both roles and retains the upstream enrollment for a future mode change. **Unenroll** clears upstream fields while keeping the client mode selected.
 
 The desktop persists one node host/client enrollment in its local `desktop.json`. This file contains the node's provisioning secrets and any imported upstream enrollment. The host and each relay client authenticate with different credentials. Share the host enrollment and client setup privately. Network connections use WSS with platform certificate validation or the key pin, hostname, and certificate validity from the enrollment flow. Loopback also supports plain WebSockets.
 

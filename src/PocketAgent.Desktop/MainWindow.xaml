@@ -156,20 +156,45 @@
             </StackPanel>
           </Expander>
           <StackPanel x:Name="RelaySetupSection" Margin="0,10,0,12">
-            <TextBlock Text="Relay" FontSize="20" Margin="0,0,0,6"/>
-            <StackPanel x:Name="RelaySetupInputs">
-              <CheckBox x:Name="RelayNodeSetting" Content="Enable relay node on this desktop" Margin="0,0,0,8"/>
-              <TextBlock Text="Upstream relay enrollment"/>
-              <PasswordBox x:Name="RelayEnrollmentSetting" AutomationProperties.Name="Upstream relay enrollment" Margin="0,5,0,6"/>
-              <TextBlock Text="Paste a host enrollment from another desktop. Clear this field and save to disconnect on the next start." Foreground="#A7BAA7" Margin="0,0,0,8"/>
+            <TextBlock Text="Relay mode"/>
+            <ComboBox x:Name="RelayModeSetting" SelectedValuePath="Tag" SelectionChanged="RelayModeChanged" AutomationProperties.Name="Relay mode" Margin="0,5,0,6">
+              <ComboBoxItem Content="Off" Tag="off"/>
+              <ComboBoxItem Content="Host relay node" Tag="host"/>
+              <ComboBoxItem Content="Connect to relay" Tag="client"/>
+            </ComboBox>
+            <TextBlock x:Name="RelayServerOffNotice" Text="Turn the server OFF to enable a relay mode or change relay settings." Foreground="#A7BAA7" TextWrapping="Wrap"/>
+            <StackPanel x:Name="RelayHostPanel" Visibility="Collapsed" Margin="0,10,0,0">
+              <TextBlock x:Name="RelayNodeStatus" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="RelayNodeAddressHint" Visibility="Collapsed" Foreground="#A7BAA7" Margin="0,4,0,0"
+                         Text="This address works on this computer only. Set up Wi-Fi or direct internet on this desktop to connect from another machine."/>
+              <TextBlock Text="On the other desktop, choose Connect to relay and paste the client enrollment. Share it privately." Foreground="#A7BAA7" Margin="0,4,0,0"/>
+              <Button x:Name="CopyRelayEnrollmentButton" Content="Copy client enrollment" Click="CopyRelayEnrollment" HorizontalAlignment="Left"/>
+              <Expander Header="Advanced .NET client setup" Margin="0,4,0,0">
+                <StackPanel>
+                  <TextBlock Text="A custom .NET client uses these credentials and a device pairing ticket from the connected desktop. The Android app uses direct pairing." Foreground="#A7BAA7"/>
+                  <Button x:Name="CopyRelayClientButton" Content="Copy .NET client credentials" Click="CopyRelayClientSetup" HorizontalAlignment="Left"/>
+                </StackPanel>
+              </Expander>
             </StackPanel>
-            <TextBlock x:Name="RelayNodeStatus" AutomationProperties.LiveSetting="Polite"/>
-            <TextBlock x:Name="RelayUpstreamStatus" AutomationProperties.LiveSetting="Polite" Margin="0,4,0,0"/>
-            <WrapPanel>
-              <Button x:Name="CopyRelayEnrollmentButton" Content="Copy host enrollment" Click="CopyRelayEnrollment"/>
-              <Button x:Name="CopyRelayClientButton" Content="Copy client setup" Click="CopyRelayClientSetup"/>
-              <Button x:Name="CopyRelayDeviceTicketButton" Content="Copy device pairing ticket" Click="CopyRelayDeviceTicket"/>
-            </WrapPanel>
+            <StackPanel x:Name="RelayClientPanel" Visibility="Collapsed" Margin="0,10,0,0">
+              <TextBlock x:Name="RelayUpstreamStatus" AutomationProperties.LiveSetting="Polite"/>
+              <StackPanel x:Name="RelayEnrollmentPanel" Margin="0,4,0,0">
+                <TextBlock Text="Client enrollment"/>
+                <PasswordBox x:Name="RelayEnrollmentSetting" AutomationProperties.Name="Client enrollment" PasswordChanged="RelayEnrollmentChanged" Margin="0,5,0,6"/>
+                <TextBlock Text="On the relay node, select Copy client enrollment. Paste the full string here." Foreground="#A7BAA7"/>
+              </StackPanel>
+              <WrapPanel>
+                <Button x:Name="SaveRelayEnrollmentButton" Content="Save enrollment" Click="SaveRelayEnrollment"/>
+                <Button x:Name="ReplaceRelayEnrollmentButton" Content="Replace enrollment" Click="ReplaceRelayEnrollment"/>
+                <Button x:Name="UnenrollRelayButton" Content="Unenroll" Click="UnenrollRelay"/>
+              </WrapPanel>
+              <Expander x:Name="RelayClientAdvanced" Header="Advanced .NET client pairing" Visibility="Collapsed" Margin="0,4,0,0">
+                <StackPanel>
+                  <TextBlock Text="A custom .NET client uses a one-time device pairing ticket to access this desktop through the relay." Foreground="#A7BAA7"/>
+                  <Button x:Name="CopyRelayDeviceTicketButton" Content="Copy device pairing ticket" Click="CopyRelayDeviceTicket" HorizontalAlignment="Left"/>
+                </StackPanel>
+              </Expander>
+            </StackPanel>
           </StackPanel>
           <WrapPanel><Button x:Name="SaveButton" Content="Save settings" Click="SaveSettings"/><Button Content="Check Codex sign-in" Click="CheckProvider"/><Button Content="Open setup guide" Click="OpenGuide"/></WrapPanel>
           <TextBlock x:Name="ProviderDisplay" Margin="0,12" Foreground="#C1DAA6"/>

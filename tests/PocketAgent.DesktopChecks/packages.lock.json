@@ -61,7 +61,7 @@
         "type": "Project",
         "dependencies": {
           "Markdig": "[0.41.3, )",
-          "PocketAgent.Server": "[0.3.16, )",
+          "PocketAgent.Server": "[0.3.17, )",
           "QRCoder": "[1.8.0, )"
         }
       },

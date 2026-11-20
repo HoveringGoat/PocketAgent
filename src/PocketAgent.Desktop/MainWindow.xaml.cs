@@ -148,7 +148,7 @@ public partial class MainWindow : Window
         catch (Exception) { ErrorDisplay.Text = "The operation failed. Check the local configuration and restart if needed."; }
     }
 
-    private void SaveConfiguration()
+    private void SaveConfiguration(bool removeRelayEnrollment = false)
     {
         if (relay is not null) throw new InvalidOperationException("Stop the server before changing settings.");
         var candidate = new DesktopSettings
@@ -174,11 +174,13 @@ public partial class MainWindow : Window
                 EnableHeartbeats = HeartbeatSetting.IsChecked == true,
                 PermissionMode = PermissionModeSetting.SelectedValue as string ?? "inherit",
                 DataDirectory = DesktopSettings.DirectoryPath,
-                Relay = ReadRelaySettings()
+                Relay = ReadRelaySettings(removeRelayEnrollment)
             }
         };
         candidate.Host.Validate();
         candidate.Save(); settings = candidate;
+        replacingRelayEnrollment = false;
+        RelayEnrollmentSetting.Clear();
         UpdateRelaySetup();
         StartupRegistration.SetEnabled(candidate.LaunchOnWindowsStartup);
         updateTimer.IsEnabled = candidate.CheckUpdatesPeriodically;
@@ -441,7 +443,6 @@ public partial class MainWindow : Window
         ServerToggle.IsChecked = running;
         ServerToggle.Content = label ?? (running ? "ON" : "OFF");
         ServerToggle.IsEnabled = enabled;
-        RelaySetupInputs.IsEnabled = !running && enabled;
         UpdateRelaySetup();
     }
     private async void WindowClosing(object? sender, CancelEventArgs e)

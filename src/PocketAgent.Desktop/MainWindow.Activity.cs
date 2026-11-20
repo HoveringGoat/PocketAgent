@@ -32,6 +32,7 @@ public partial class MainWindow
         var details = new StackPanel { Margin = new Thickness(12, 3, 0, 0) };
         var group = new Expander
         {
+            Style = (Style)FindResource("ActivityExpanderStyle"),
             Header = running && count > 1 ? $"{name} ({count})" : name,
             Content = details, IsExpanded = expandedWorkItems.Contains(key),
             Margin = new Thickness(8, 3, 8, 5)

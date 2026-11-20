@@ -11,6 +11,8 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using PocketAgent;
 using PocketAgent.Desktop;
@@ -49,8 +51,10 @@ internal static class RelaySetupChecks
         MainWindow? remote = null;
         try
         {
-            var enable = Control<CheckBox>(node, "RelayNodeSetting");
-            enable.IsChecked = true;
+            var nodeMode = Control<ComboBox>(node, "RelayModeSetting");
+            CheckMode(node, "off");
+            nodeMode.SelectedValue = "host";
+            CheckMode(node, "host");
             Click(node, "SaveButton");
             var savedNode = DesktopSettings.Load().Host.Relay;
             if (!savedNode.Enabled || !Guid.TryParse(savedNode.HostId, out _) || !Guid.TryParse(savedNode.ClientId, out var clientId) ||
@@ -58,29 +62,45 @@ internal static class RelaySetupChecks
                 throw new InvalidOperationException("Saving Relay settings must persist an authenticated node enrollment.");
             Click(node, "ServerToggle");
             await WaitForServer(node, running: true, cancellation);
-            if (enable.IsEnabled || !Control<Button>(node, "CopyRelayEnrollmentButton").IsEnabled || !Control<Button>(node, "CopyRelayClientButton").IsEnabled)
+            if (nodeMode.IsEnabled || !Control<Button>(node, "CopyRelayEnrollmentButton").IsEnabled || !Control<Button>(node, "CopyRelayClientButton").IsEnabled ||
+                Control<TextBlock>(node, "RelayServerOffNotice").Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Running relay controls must allow copying and lock configuration edits.");
             var enrollment = (RelayEnrollment)typeof(MainWindow).GetMethod("GetNodeEnrollment", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(node, null)!;
             if (!enrollment.RelayUrl.StartsWith("wss://", StringComparison.Ordinal) || enrollment.CertificatePin.Length != 64 ||
                 savedNode.HostId != enrollment.HostId.ToString() || savedNode.NodeSessionKey != enrollment.SessionKey)
                 throw new InvalidOperationException("Starting the node must preserve the saved credentials and export its managed WSS pin.");
+            await CheckLayout(node, output, "host", cancellation);
 
             remote = OpenDesktop(repository, remoteDirectory);
+            Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "client";
+            CheckMode(remote, "client");
             var input = Control<PasswordBox>(remote, "RelayEnrollmentSetting");
             input.Password = "invalid enrollment";
-            Click(remote, "SaveButton");
+            Click(remote, "SaveRelayEnrollmentButton");
             if (DesktopSettings.Load().Host.Relay.UpstreamUrl.Length > 0 || !Control<TextBlock>(remote, "ErrorDisplay").Text.Contains("pairing string", StringComparison.Ordinal))
                 throw new InvalidOperationException("An invalid enrollment must show a validation error and leave the saved settings intact.");
             input.Password = enrollment.ToPairingString();
-            Control<CheckBox>(remote, "RelayNodeSetting").IsChecked = true;
-            Click(remote, "SaveButton");
+            Click(remote, "SaveRelayEnrollmentButton");
             remote.Close();
             remote = new MainWindow();
-            if (Control<PasswordBox>(remote, "RelayEnrollmentSetting").Password != enrollment.ToPairingString())
-                throw new InvalidOperationException("The upstream enrollment must survive reopening the desktop.");
+            CheckMode(remote, "client");
+            var restored = DesktopSettings.Load().Host.Relay;
+            if (restored.UpstreamUrl != enrollment.RelayUrl || restored.RemoteHostToken != enrollment.HostToken ||
+                Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Reopening the desktop must retain the enrollment and show its saved status.");
+            Click(remote, "ReplaceRelayEnrollmentButton");
+            if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Replacing an enrollment must show a fresh paste field.");
+            Control<PasswordBox>(remote, "RelayEnrollmentSetting").Password = "cancelled replacement";
+            Click(remote, "ReplaceRelayEnrollmentButton");
+            if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Cancel replacement must return to the saved enrollment view.");
             Click(remote, "ServerToggle");
             await WaitForServer(remote, running: true, cancellation);
-            await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Upstream relay connected.", cancellation);
+            await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Connected to relay.", cancellation);
+            if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed ||
+                Control<Button>(remote, "UnenrollRelayButton").IsEnabled)
+                throw new InvalidOperationException("A running client must show its status and explain how to unlock unenrollment.");
             await CheckRequests(remote, enrollment, clientId, savedNode.ClientToken, cancellation);
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
@@ -89,27 +109,53 @@ internal static class RelaySetupChecks
             await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text.Contains("Retrying", StringComparison.Ordinal), cancellation);
             Click(node, "ServerToggle");
             await WaitForServer(node, running: true, cancellation);
-            await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Upstream relay connected.", cancellation);
+            await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Connected to relay.", cancellation);
             await CheckRequests(remote, enrollment, clientId, savedNode.ClientToken, cancellation);
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", remoteDirectory);
-            await CheckLayout(remote, output, cancellation);
+            await CheckLayout(remote, output, "connected", cancellation);
             Click(remote, "ServerToggle");
             await WaitForServer(remote, running: false, cancellation);
-            Control<PasswordBox>(remote, "RelayEnrollmentSetting").Clear();
+            await CheckLayout(remote, output, "saved", cancellation);
+            Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "off";
             Click(remote, "SaveButton");
-            if (DesktopSettings.Load().Host.Relay.UpstreamUrl.Length != 0)
-                throw new InvalidOperationException("Clearing the enrollment must disable the outbound connection on restart.");
+            var inactive = DesktopSettings.Load().Host.Relay;
+            if (inactive.ConnectsUpstream || inactive.UpstreamUrl.Length == 0)
+                throw new InvalidOperationException("Off must disable the upstream connection while retaining the saved enrollment.");
+            Click(remote, "ServerToggle");
+            await WaitForServer(remote, running: true, cancellation);
+            var running = (WebApplication)typeof(MainWindow).GetField("relay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(remote)!;
+            var upstream = running.Services.GetRequiredService<RelayRemoteHostService>();
+            if (!upstream.ExecuteTask!.IsCompletedSuccessfully || upstream.Status != RelayConnectionStatus.Stopped)
+                throw new InvalidOperationException("An inactive saved enrollment must leave the outbound service stopped.");
+            Click(remote, "ServerToggle");
+            await WaitForServer(remote, running: false, cancellation);
+            Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "client";
+            if (!Control<Button>(remote, "UnenrollRelayButton").IsEnabled)
+                throw new InvalidOperationException("A stopped client must allow unenrollment.");
+            Click(remote, "UnenrollRelayButton");
+            var unenrolled = DesktopSettings.Load().Host.Relay;
+            using var enrollmentField = Control<PasswordBox>(remote, "RelayEnrollmentSetting").SecurePassword;
+            if (!unenrolled.ConnectsUpstream || unenrolled.UpstreamUrl.Length != 0 || unenrolled.RemoteHostToken.Length != 0 ||
+                unenrolled.SessionKey.Length != 0 || enrollmentField.Length != 0)
+                throw new InvalidOperationException("Unenroll must remove stored credentials while leaving Connect to relay selected.");
+            CheckMode(remote, "client");
+            await CheckLayout(remote, output, "unenrolled", cancellation);
+            remote.Close();
+            remote = new MainWindow();
+            CheckMode(remote, "client");
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
             Click(node, "ServerToggle");
             await WaitForServer(node, running: false, cancellation);
-            enable.IsChecked = false;
+            nodeMode.SelectedValue = "off";
+            CheckMode(node, "off");
             Click(node, "SaveButton");
             if (DesktopSettings.Load().Host.Relay.Enabled)
                 throw new InvalidOperationException("Unchecking the relay node must disable it on restart.");
             Click(node, "ServerToggle");
             await WaitForServer(node, running: true, cancellation);
+            await CheckLayout(node, output, "off", cancellation);
             using var probe = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler
             {
                 ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
@@ -127,6 +173,14 @@ internal static class RelaySetupChecks
             await shutdown;
             node.Close();
         }
+    }
+
+    private static void CheckMode(MainWindow window, string expected)
+    {
+        if (Control<ComboBox>(window, "RelayModeSetting").SelectedValue as string != expected ||
+            Control<FrameworkElement>(window, "RelayHostPanel").Visibility != (expected == "host" ? Visibility.Visible : Visibility.Collapsed) ||
+            Control<FrameworkElement>(window, "RelayClientPanel").Visibility != (expected == "client" ? Visibility.Visible : Visibility.Collapsed))
+            throw new InvalidOperationException($"Relay mode {expected} must show only the selected role.");
     }
 
     private static MainWindow OpenDesktop(string repository, string dataDirectory)
@@ -183,16 +237,17 @@ internal static class RelaySetupChecks
         throw new InvalidOperationException("The live relay accepted an invalid TLS pin or client credential.");
     }
 
-    private static async Task CheckLayout(MainWindow window, string output, CancellationToken cancellation)
+    private static async Task CheckLayout(MainWindow window, string output, string state, CancellationToken cancellation)
     {
         window.ShowActivated = false;
         Control<TabControl>(window, "Navigation").SelectedIndex = 2;
         Control<ComboBox>(window, "UiScaleSetting").SelectedValue = "large";
-        window.Show();
+        if (!window.IsVisible) window.Show();
         await Task.Delay(200, cancellation);
         var section = Control<FrameworkElement>(window, "RelaySetupSection");
         var status = Control<TextBlock>(window, "RelayNodeStatus");
-        status.Text = "Relay node listening at wss://" + string.Join(".", Enumerable.Repeat(new string('w', 59), 4)) + "/relay";
+        if (state == "host")
+            status.Text = "Relay node listening at wss://" + string.Join(".", Enumerable.Repeat(new string('w', 59), 4)) + "/relay";
         ((Run)window.FindName("ConversationLocation")!).Text = @"C:\GitHub\" + new string('W', 180);
         foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
         {
@@ -204,9 +259,18 @@ internal static class RelaySetupChecks
             scroller.ScrollToVerticalOffset(scroller.VerticalOffset + sectionTop - 8);
             window.UpdateLayout();
             var viewport = (ScrollContentPresenter)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
-            foreach (var name in new[] { "RelaySetupSection", "RelayNodeSetting", "RelayEnrollmentSetting", "RelayNodeStatus", "RelayUpstreamStatus", "CopyRelayEnrollmentButton", "CopyRelayClientButton", "CopyRelayDeviceTicketButton" })
+            var primaryControls = new[] { "RelayModeSetting", "RelayServerOffNotice", "RelayEnrollmentSetting", "RelayNodeStatus", "RelayUpstreamStatus",
+                "CopyRelayEnrollmentButton", "UnenrollRelayButton", "SaveRelayEnrollmentButton", "ReplaceRelayEnrollmentButton" };
+            foreach (var name in primaryControls)
             {
                 var control = Control<FrameworkElement>(window, name);
+                if (!control.IsVisible) continue;
+                var top = control.TransformToAncestor(viewport).Transform(new Point()).Y;
+                if (top < 0 || top + control.ActualHeight > viewport.ActualHeight)
+                {
+                    control.BringIntoView();
+                    window.UpdateLayout();
+                }
                 var bounds = control.TransformToAncestor(viewport).TransformBounds(new Rect(control.RenderSize));
                 if (!control.IsVisible || bounds.Width <= 0 || bounds.Height <= 0 || bounds.Left < 0 || bounds.Top < 0 ||
                     bounds.Right > viewport.ActualWidth + 0.5 || bounds.Bottom > viewport.ActualHeight + 0.5)
@@ -221,13 +285,15 @@ internal static class RelaySetupChecks
                     !new Rect(root.RenderSize).Contains(control.TransformToAncestor(root).TransformBounds(new Rect(control.RenderSize))))
                     throw new InvalidOperationException($"The Settings header clips {name} at {width} × {height}, large scale.");
             }
-            if (status.ActualHeight <= status.FontSize * 2)
+            if (state == "host" && status.ActualHeight <= status.FontSize * 2)
                 throw new InvalidOperationException("A long relay endpoint must wrap in Settings.");
+            scroller.ScrollToVerticalOffset(scroller.VerticalOffset + section.TransformToAncestor(scroller).Transform(new Point()).Y - 8);
+            window.UpdateLayout();
             var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(window);
             var png = new PngBitmapEncoder();
             png.Frames.Add(BitmapFrame.Create(bitmap));
-            using var file = File.Create(Path.Combine(output, $"relay-settings-{width}-{height}.png"));
+            using var file = File.Create(Path.Combine(output, $"relay-{state}-{width}-{height}.png"));
             png.Save(file);
         }
     }
