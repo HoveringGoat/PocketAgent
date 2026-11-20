@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### .NET relay prototype
+
+- Port the encrypted relay transport, enrollment payloads and outbound remote-host connection into the maintained .NET server.
+- Add a two-server loopback relay verification project covering sequential encrypted requests.
+- Retire the Rust desktop/relay preview and its build artifacts.
+
 ### Rust desktop preview 0.1.23
 
 - Keep loaded conversation transcripts in the visible end of the Slint scroll view instead of positioning them above the viewport.

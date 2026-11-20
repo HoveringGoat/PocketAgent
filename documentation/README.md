@@ -18,8 +18,6 @@ versioned artifacts to another repository.
 
 [Code and flow audit](AUDIT.md) records the 2026-11-11 review, reproduced updater/release defects, flow boundaries, and remaining verification work. Its findings qualify earlier release verification claims.
 
-[Rust desktop parity audit](DESKTOP-AUDIT-2026-11-18.md) compares the preview against fixed .NET 0.3.13 by workflow, links live page captures, and records gaps, verification limits, and acceptance priorities.
-
 [Desktop/server changelog](../CHANGELOG-desktop.md) and [Android changelog](../CHANGELOG-android.md) are maintained separately. Release notes are assembled from both files and shown by packaged clients when a newer GitHub release is available.
 
 [Use the native apps](SETUP.md#use-the-packaged-native-apps), [desktop permissions](SETUP.md#desktop-setup-and-permissions), [direct internet](SETUP.md#direct-internet-ip-and-port), [Wi-Fi](SETUP.md#connect-over-wi-fi) and [scan/paste pairing](SETUP.md#pair-by-qr-or-pairing-string) are the current setup paths.

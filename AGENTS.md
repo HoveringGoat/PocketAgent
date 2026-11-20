@@ -56,7 +56,6 @@
 - For every UI change, verify the supported minimum window size and at least one larger/resized layout; no control, label, tab, icon, or status surface may be clipped, overlap another element, or become unreachable. Exercise long labels and overflow paths, inspect screenshots or equivalent visual evidence for each touched page, and treat any visible clipping or overlap as a release blocker.
 - Keep linting, formatting, and warnings clean on touched files before handoff.
 - Record validation commands that were run and call out environment limitations that affect verification.
-- A running PocketAgent Rust desktop executable is a test process, not a reason to invent an alternate target directory or artifact name. Before rebuilding the canonical `rust/target/release` output, stop only the exact PocketAgent executable that resolves to that output path; if the lock remains, fail with the locking process/path instead of silently redirecting the build.
 - Increment the patch once per completed change set after the initial 0.1.0 milestone.
 - When a change may warrant a minor or major version bump, suggest that classification to the user, but do not choose or apply a minor/major bump without explicit user approval. Apply the user-selected version consistently across version files, changelogs, release notes, and artifacts.
 
