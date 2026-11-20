@@ -70,7 +70,16 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
             }
             foreach (var argument in settings.CodexArguments)
                 info.ArgumentList.Add(argument);
-            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Information, $"process_start executable={Path.GetFileName(Executable.Path)} arguments={settings.CodexArguments.Length} working_directory_name={Path.GetFileName(Path.TrimEndingDirectorySeparator(settings.RepositoryPath))}");
+            var credentialVariable = settings.CodexApiKeyEnvironmentVariable;
+            var hasEffectiveCredential = info.Environment.TryGetValue(credentialVariable, out var effectiveCredential) && !string.IsNullOrWhiteSpace(effectiveCredential);
+            var codexHome = info.Environment.TryGetValue("CODEX_HOME", out var configuredCodexHome) && !string.IsNullOrWhiteSpace(configuredCodexHome)
+                ? configuredCodexHome
+                : null;
+            var credentialSource = settings.CodexApiKeyOverride
+                ? hasEffectiveCredential ? "pocketagent_protected_store" : "pocketagent_override_empty"
+                : hasEffectiveCredential ? "inherited_environment" : "not_detected";
+            ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Information,
+                $"process_start executable_source={LogValue(Executable.Source)} executable_path={LogValue(Executable.Path)} arguments={settings.CodexArguments.Length} working_directory_name={LogValue(Path.GetFileName(Path.TrimEndingDirectorySeparator(settings.RepositoryPath)))} codex_home_source={(codexHome is null ? "default" : "environment")} codex_home_path={LogValue(codexHome ?? "not_set")} codex_home_exists={(codexHome is not null && Directory.Exists(codexHome)).ToString().ToLowerInvariant()} credential_source={credentialSource} credential_present={hasEffectiveCredential.ToString().ToLowerInvariant()} credential_environment_variable={credentialVariable} credential_fingerprint={LogValue(hasEffectiveCredential ? Fingerprint(effectiveCredential!) : "unavailable")}");
             process = Process.Start(info) ?? throw new InvalidOperationException("Unable to launch Codex.");
             reader = ReadLoop();
             stderr = DrainErrors();
@@ -218,9 +227,11 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
 
     private static string Fingerprint(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
 
+    private static string LogValue(string value) => value.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
+
     private async Task DrainErrors()
     {
-        // Preserve provider diagnostics for troubleshooting, while ServerDiagnostics redacts credential-like values.
+        // Preserve provider diagnostics for troubleshooting. Provider output must not contain secrets.
         try
         {
             while (await process!.StandardError.ReadLineAsync(lifetime.Token) is { } line)
