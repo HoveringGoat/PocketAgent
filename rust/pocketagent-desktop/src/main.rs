@@ -2386,8 +2386,16 @@ fn set_transcript_blocks(window: &AppWindow, markdown: &str) {
             }
         })
         .collect::<Vec<_>>();
-    window.set_transcript_content_y(-1_000_000.0);
     window.set_transcript_blocks(slint::ModelRc::new(slint::VecModel::from(blocks)));
+    // ScrollView content coordinates increase downward. A large positive
+    // target is clamped to the end after the model has been installed; a
+    // negative target puts every message above the viewport and renders a
+    // blank conversation pane.
+    window.set_transcript_content_y(transcript_scroll_end());
+}
+
+fn transcript_scroll_end() -> f32 {
+    1_000_000.0
 }
 
 fn image_from_markdown_path(path: &str, working_directory: &str) -> Option<slint::Image> {
@@ -3876,6 +3884,11 @@ mod tests {
         assert!(blocks[1].collapsible);
         assert_eq!(blocks[1].summary, "Command: cargo test");
         assert_eq!(blocks[2].role, "assistant");
+    }
+
+    #[test]
+    fn transcript_scroll_target_is_at_the_end_of_content() {
+        assert!(super::transcript_scroll_end() > 0.0);
     }
 
     #[test]

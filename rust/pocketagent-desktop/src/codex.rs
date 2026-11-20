@@ -18,6 +18,7 @@ use windows_sys::Win32::{
 };
 
 const INITIAL_HISTORY_TURNS: u64 = 40;
+const MAX_RENDERED_HISTORY_CHARS: usize = 300_000;
 
 #[derive(Clone, Debug)]
 pub struct PromptRequest {
@@ -440,10 +441,7 @@ impl CodexSession {
         thread_id: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let result = self
-            .request(
-                "thread/read",
-                json!({ "threadId": thread_id, "includeTurns": true }),
-            )
+            .request("thread/read", json!({ "threadId": thread_id }))
             .await?;
         self.thread_history(thread_id, result).await
     }
@@ -455,6 +453,18 @@ impl CodexSession {
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let thread = result.get("thread").cloned().unwrap_or(Value::Null);
         if thread.get("historyMode").and_then(Value::as_str) == Some("paginated") {
+            // Some provider versions return a populated page in thread/read even
+            // for paginated threads. Prefer it when available; this is both
+            // cheaper and more compatible than requiring a second pagination
+            // request from every app-server implementation.
+            let embedded = thread
+                .get("turns")
+                .and_then(Value::as_array)
+                .map(|turns| turns_text(turns))
+                .unwrap_or_default();
+            if !embedded.trim().is_empty() {
+                return Ok(embedded);
+            }
             let page = self
                 .request(
                     "thread/turns/list",
@@ -498,7 +508,18 @@ impl CodexSession {
                 .unwrap_or_default();
             Ok(paginated_items_text(items))
         } else {
-            Ok(thread_text(&result))
+            let history = thread_text(&result);
+            if !history.trim().is_empty() || thread.get("turns").is_some() {
+                return Ok(history);
+            }
+            // Legacy providers may omit turns unless explicitly requested.
+            let detailed = self
+                .request(
+                    "thread/read",
+                    json!({ "threadId": thread_id, "includeTurns": true }),
+                )
+                .await?;
+            Ok(thread_text(&detailed))
         }
     }
 
@@ -510,10 +531,7 @@ impl CodexSession {
             .clone()
             .ok_or_else(|| io::Error::other("No conversation is selected"))?;
         let result = self
-            .request(
-                "thread/read",
-                json!({ "threadId": thread_id, "includeTurns": true }),
-            )
+            .request("thread/read", json!({ "threadId": thread_id }))
             .await?;
         self.thread_history(&thread_id, result).await
     }
@@ -793,11 +811,7 @@ fn thread_text(result: &Value) -> String {
         return String::new();
     };
     if let Some(items) = thread.get("items").and_then(Value::as_array) {
-        return items
-            .iter()
-            .filter_map(render_item)
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        return bounded_history(items.iter().filter_map(render_item).collect());
     }
     thread
         .get("turns")
@@ -849,22 +863,37 @@ fn turn_failure(message: &Value) -> Option<String> {
 }
 
 fn turns_text(turns: &[Value]) -> String {
-    turns
-        .iter()
-        .filter_map(|turn| turn.get("items").and_then(Value::as_array))
-        .flat_map(|items| items.iter().filter_map(render_item))
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    bounded_history(
+        turns
+            .iter()
+            .filter_map(|turn| turn.get("items").and_then(Value::as_array))
+            .flat_map(|items| items.iter().filter_map(render_item))
+            .collect(),
+    )
 }
 
 fn paginated_items_text(entries: &[Value]) -> String {
-    entries
-        .iter()
-        .rev()
-        .filter_map(|entry| entry.get("item"))
-        .filter_map(render_item)
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    bounded_history(
+        entries
+            .iter()
+            .rev()
+            .filter_map(|entry| entry.get("item").or(Some(entry)))
+            .filter_map(render_item)
+            .collect(),
+    )
+}
+
+fn bounded_history(parts: Vec<String>) -> String {
+    let mut total = 0usize;
+    let mut first = 0usize;
+    for (index, part) in parts.iter().enumerate() {
+        total = total.saturating_add(part.len().saturating_add(2));
+        while total > MAX_RENDERED_HISTORY_CHARS && first <= index {
+            total = total.saturating_sub(parts[first].len().saturating_add(2));
+            first += 1;
+        }
+    }
+    parts[first..].join("\n\n")
 }
 
 fn recent_turns_in_display_order(data: &[Value], limit: usize) -> Vec<Value> {
@@ -1561,6 +1590,52 @@ mod tests {
             paginated_items_text(&newest_first),
             "\u{001e}user\nolder prompt\n\n\u{001e}assistant\nnewest reply"
         );
+    }
+
+    #[test]
+    fn paginated_history_prefers_embedded_turns_when_provider_includes_them() {
+        let result = json!({
+            "thread": {
+                "historyMode": "paginated",
+                "turns": [
+                    {
+                        "items": [{
+                            "type": "userMessage",
+                            "content": [{ "type": "text", "text": "prompt" }]
+                        }]
+                    },
+                    {
+                        "items": [{ "type": "agentMessage", "text": "reply" }]
+                    }
+                ]
+            }
+        });
+        let turns = result["thread"]["turns"].as_array().unwrap();
+        assert_eq!(
+            turns_text(turns),
+            "\u{001e}user\nprompt\n\n\u{001e}assistant\nreply"
+        );
+    }
+
+    #[test]
+    fn paginated_item_fallback_accepts_unwrapped_items() {
+        let entries = vec![json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "reply" }]
+        })];
+        assert_eq!(paginated_items_text(&entries), "\u{001e}assistant\nreply");
+    }
+
+    #[test]
+    fn rendered_history_keeps_newest_items_under_the_size_budget() {
+        let history = bounded_history(vec![
+            "old".repeat(MAX_RENDERED_HISTORY_CHARS),
+            "newest".into(),
+        ]);
+        assert!(history.len() <= MAX_RENDERED_HISTORY_CHARS);
+        assert!(history.contains("newest"));
+        assert!(!history.contains("old"));
     }
 
     #[test]

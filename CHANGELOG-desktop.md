@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.23
+
+- Keep loaded conversation transcripts in the visible end of the Slint scroll view instead of positioning them above the viewport.
+- Prefer embedded paginated turns returned by Codex, with focused compatibility fallbacks for paginated item responses.
+
 ### Rust desktop preview 0.1.22
 
 - Fall back to `thread/items/list` when paginated Codex history returns turns without renderable items, so active or externally-owned sessions still show their user and assistant messages.
