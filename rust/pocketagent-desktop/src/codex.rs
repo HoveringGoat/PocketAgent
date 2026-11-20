@@ -1,6 +1,6 @@
 use pocketagent_host::{HostModel, HostUsage, UsageWindow};
 use serde_json::{Value, json};
-use std::{io, path::Path, sync::Arc};
+use std::{collections::HashSet, io, path::Path, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -198,6 +198,7 @@ impl CodexSession {
         (control.on_turn_started)(turn_id.clone());
 
         let mut output = String::new();
+        let mut streamed_agent_items = HashSet::new();
         let mut pending_steers = std::collections::HashMap::new();
         let mut interrupted = false;
         loop {
@@ -264,6 +265,13 @@ impl CodexSession {
             }
             match message.get("method").and_then(Value::as_str) {
                 Some("item/agentMessage/delta") => {
+                    if let Some(item_id) = message
+                        .get("params")
+                        .and_then(|params| params.get("itemId"))
+                        .and_then(Value::as_str)
+                    {
+                        streamed_agent_items.insert(item_id.to_owned());
+                    }
                     if let Some(delta) = message
                         .get("params")
                         .and_then(|params| params.get("delta"))
@@ -271,6 +279,9 @@ impl CodexSession {
                     {
                         output.push_str(delta);
                     }
+                }
+                Some("item/completed") => {
+                    append_completed_agent_item(&mut output, &mut streamed_agent_items, &message);
                 }
                 Some("turn/completed") => {
                     if interrupted {
@@ -486,13 +497,54 @@ impl CodexSession {
     pub async fn list_models(
         &mut self,
     ) -> Result<ModelCatalog, Box<dyn std::error::Error + Send + Sync>> {
-        let result = self
-            .request(
-                "model/list",
-                json!({ "limit": 100, "includeHidden": false }),
-            )
-            .await?;
-        Ok(Self::model_catalog(&result))
+        let mut catalog = ModelCatalog::default();
+        let mut cursor = None::<String>;
+        let mut cursors = HashSet::new();
+        loop {
+            let params = match cursor.as_deref() {
+                Some(cursor) => json!({
+                    "cursor": cursor,
+                    "limit": 100,
+                    "includeHidden": false
+                }),
+                None => json!({ "limit": 100, "includeHidden": false }),
+            };
+            let result = self.request("model/list", params).await?;
+            Self::merge_model_catalog(&mut catalog, Self::model_catalog(&result));
+            let next = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned);
+            let Some(next) = next else { break };
+            if !cursors.insert(next.clone()) {
+                return Err(
+                    io::Error::other("Codex returned a repeated model catalog cursor").into(),
+                );
+            }
+            cursor = Some(next);
+        }
+        if catalog.default_model.is_none() {
+            catalog.default_model = catalog.api.first().map(|model| model.model.clone());
+        }
+        Ok(catalog)
+    }
+
+    fn merge_model_catalog(catalog: &mut ModelCatalog, page: ModelCatalog) {
+        for (entry, model) in page.entries.into_iter().zip(page.api) {
+            if catalog
+                .api
+                .iter()
+                .any(|existing| existing.model == model.model)
+            {
+                continue;
+            }
+            if model.is_default && catalog.default_model.is_none() {
+                catalog.default_model = Some(model.model.clone());
+            }
+            catalog.entries.push(entry);
+            catalog.api.push(model);
+        }
     }
 
     fn model_catalog(result: &Value) -> ModelCatalog {
@@ -550,12 +602,6 @@ impl CodexSession {
             if model.get("isDefault").and_then(Value::as_bool) == Some(true) {
                 catalog.default_model = Some(id.to_owned());
             }
-        }
-        if catalog.default_model.is_none() {
-            catalog.default_model = catalog
-                .entries
-                .first()
-                .and_then(|entry| entry.split_once(" - ").map(|(id, _)| id.to_owned()));
         }
         catalog
     }
@@ -647,18 +693,44 @@ impl Drop for CodexSession {
 }
 
 fn thread_text(result: &Value) -> String {
-    let Some(items) = result
-        .get("thread")
-        .and_then(|thread| thread.get("items"))
-        .and_then(Value::as_array)
-    else {
+    let Some(thread) = result.get("thread") else {
         return String::new();
     };
-    items
-        .iter()
-        .filter_map(render_item)
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    if let Some(items) = thread.get("items").and_then(Value::as_array) {
+        return items
+            .iter()
+            .filter_map(render_item)
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .map(|turns| turns_text(turns))
+        .unwrap_or_default()
+}
+
+fn append_completed_agent_item(
+    output: &mut String,
+    streamed_agent_items: &mut HashSet<String>,
+    message: &Value,
+) {
+    let Some(item) = message.get("params").and_then(|params| params.get("item")) else {
+        return;
+    };
+    if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
+        return;
+    }
+    let item_id = item.get("id").and_then(Value::as_str);
+    if item_id.is_some_and(|id| streamed_agent_items.contains(id)) {
+        return;
+    }
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        output.push_str(text);
+    }
+    if let Some(item_id) = item_id {
+        streamed_agent_items.insert(item_id.to_owned());
+    }
 }
 
 fn turn_failure(message: &Value) -> Option<String> {
@@ -1079,6 +1151,42 @@ mod tests {
     }
 
     #[test]
+    fn thread_text_reads_legacy_turns_when_flat_items_are_absent() {
+        let text = thread_text(&json!({
+            "thread": { "turns": [
+                { "items": [
+                    { "type": "userMessage", "content": [{ "type": "text", "text": "hello" }] },
+                    { "type": "agentMessage", "text": "done" }
+                ] }
+            ] }
+        }));
+        assert!(text.contains("\u{001e}user\nhello"));
+        assert!(text.contains("\u{001e}assistant\ndone"));
+    }
+
+    #[test]
+    fn completed_agent_items_are_rendered_without_duplicate_deltas() {
+        let mut output = String::new();
+        let mut streamed = HashSet::new();
+        append_completed_agent_item(
+            &mut output,
+            &mut streamed,
+            &json!({
+                "params": { "item": { "id": "item-1", "type": "agentMessage", "text": "reply" } }
+            }),
+        );
+        assert_eq!(output, "reply");
+        append_completed_agent_item(
+            &mut output,
+            &mut streamed,
+            &json!({
+                "params": { "item": { "id": "item-1", "type": "agentMessage", "text": "reply" } }
+            }),
+        );
+        assert_eq!(output, "reply");
+    }
+
+    #[test]
     fn model_catalog_preserves_provider_default() {
         let catalog = CodexSession::model_catalog(&json!({
             "data": [
@@ -1088,6 +1196,89 @@ mod tests {
         }));
         assert_eq!(catalog.default_model.as_deref(), Some("account-default"));
         assert_eq!(catalog.entries[0], "unsupported - Unsupported");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fixture_model_catalog_follows_provider_cursor() {
+        let root =
+            std::env::temp_dir().join(format!("pocketagent-models-{}", uuid::Uuid::new_v4()));
+        let fixture = root.join("node_modules/@openai/codex/bin/codex.js");
+        std::fs::create_dir_all(fixture.parent().unwrap()).unwrap();
+        std::fs::write(&fixture, "import('./fixture.mjs');").unwrap();
+        std::fs::write(
+            fixture.with_file_name("fixture.mjs"),
+            include_str!("../../../tests/fixtures/codex.mjs"),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            let mut session = CodexSession::connect(
+                root.join("codex.ps1").to_str().unwrap(),
+                root.to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            session.list_models().await.unwrap()
+        });
+        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(
+            result
+                .api
+                .iter()
+                .map(|model| model.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-6-astra", "gpt-5.6-sol"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fixture_completed_item_reply_reaches_prompt() {
+        let root = std::env::temp_dir().join(format!("pocketagent-reply-{}", uuid::Uuid::new_v4()));
+        let fixture = root.join("node_modules/@openai/codex/bin/codex.js");
+        std::fs::create_dir_all(fixture.parent().unwrap()).unwrap();
+        std::fs::write(&fixture, "import('./fixture.mjs');").unwrap();
+        std::fs::write(
+            fixture.with_file_name("fixture.mjs"),
+            include_str!("../../../tests/fixtures/codex.mjs"),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            let mut session = CodexSession::connect(
+                root.join("codex.ps1").to_str().unwrap(),
+                root.to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            session.new_thread(None).await.unwrap();
+            let (_cancel, mut cancel_rx) = watch::channel(false);
+            let (_steer_tx, mut steer_rx) = mpsc::unbounded_channel();
+            session
+                .send_prompt(
+                    "completed-item",
+                    None,
+                    None,
+                    PromptControl {
+                        cancel: &mut cancel_rx,
+                        steers: &mut steer_rx,
+                        on_turn_started: &|_| {},
+                        on_steer_response: &|_, _| {},
+                    },
+                    InteractionState::shared(),
+                    |_| {},
+                )
+                .await
+        });
+        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(result.unwrap(), "Reply delivered as a completed item.");
     }
 
     #[test]

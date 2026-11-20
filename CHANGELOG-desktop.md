@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.19
+
+- Follow the Codex model catalog cursor so every available non-hidden model is shown, matching the .NET host.
+- Render completed agent-message items and legacy turn histories so provider replies remain visible when Codex sends a completed item without a delta event.
+
 ### Rust desktop preview 0.1.18
 
 - Make the Rust release script stop the exact running test executable before rebuilding the canonical release output instead of creating alternate build directories.

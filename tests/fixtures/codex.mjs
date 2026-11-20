@@ -48,6 +48,15 @@ const complete = (threadId, status = 'completed') => {
   save();
   notify('turn/completed', { threadId, turn });
 };
+const completeWithoutItems = (threadId) => {
+  const thread = threads[threadId];
+  const turn = thread.turns.at(-1);
+  turn.status = 'completed';
+  turn.completedAt = Math.floor(Date.now() / 1000);
+  turn.durationMs = Math.max(0, Date.now() - turn.startedAt * 1000);
+  save();
+  notify('turn/completed', { threadId, turn: { ...turn, items: [] } });
+};
 
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
@@ -269,6 +278,20 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         };
         if (text === 'unicode:focus') setTimeout(deliver, 1200);
         else deliver();
+        break;
+      }
+      if (text === 'completed-item') {
+        const item = {
+          id: randomUUID(),
+          type: 'agentMessage',
+          text: 'Reply delivered as a completed item.',
+        };
+        reply({ turn });
+        setTimeout(() => {
+          turn.items.push(item);
+          notify('item/completed', { threadId, turnId: turn.id, item });
+          completeWithoutItems(threadId);
+        }, 20);
         break;
       }
       if (text === 'image') {
