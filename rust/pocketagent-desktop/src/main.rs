@@ -20,7 +20,7 @@ use pocketagent_relay::config::RelayConfig;
 use pocketagent_relay::transport::{RelayAuthRegistry, RelayTransportServer};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use qrcode::QrCode;
-use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256, generate_simple_self_signed};
+use rcgen::{CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -2718,7 +2718,7 @@ fn load_host_tls_identity_for_host(
                 &PrivatePkcs8KeyDer::from(key_der.as_slice()),
                 &PKCS_ECDSA_P256_SHA256,
             )
-            && let Ok(cert) = CertificateParams::new(names.clone())
+            && let Ok(cert) = server_certificate_params(names.clone())
                 .and_then(|params| params.self_signed(&key_pair))
         {
             let refreshed = cert.der().to_vec();
@@ -2741,10 +2741,15 @@ fn load_host_tls_identity_for_host(
                 .to_owned(),
         });
     }
-    let certified = generate_simple_self_signed(names).map_err(|error| error.to_string())?;
-    let certificate_der = certified.cert.der().to_vec();
-    let key_der = certified.key_pair.serialize_der();
-    let spki_der = certified.key_pair.public_key_der();
+    let key_pair =
+        KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).map_err(|error| error.to_string())?;
+    let certificate = server_certificate_params(names)
+        .map_err(|error| error.to_string())?
+        .self_signed(&key_pair)
+        .map_err(|error| error.to_string())?;
+    let certificate_der = certificate.der().to_vec();
+    let key_der = key_pair.serialize_der();
+    let spki_der = key_pair.public_key_der();
     let spki_hex = bytes_to_hex(&Sha256::digest(spki_der));
     fs::write(&certificate_path, &certificate_der).map_err(|error| error.to_string())?;
     fs::write(&key_path, &key_der).map_err(|error| error.to_string())?;
@@ -2754,6 +2759,13 @@ fn load_host_tls_identity_for_host(
         key_der,
         spki_hex,
     })
+}
+
+fn server_certificate_params(names: Vec<String>) -> Result<CertificateParams, rcgen::Error> {
+    let mut params = CertificateParams::new(names)?;
+    params.is_ca = IsCa::NoCa;
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    Ok(params)
 }
 
 fn host_certificate_names(advertised: Option<&str>, lan_address: Option<&str>) -> Vec<String> {
@@ -3750,6 +3762,7 @@ mod tests {
         firewall_rule_command_line, host_certificate_names, image_from_bytes, is_public_ipv4,
         is_read_only_session, markdown_blocks, normalize_model_selection, parse_session_key,
         resolve_advertised_endpoint, resolve_codex_from_paths, schedule_pending,
+        server_certificate_params,
     };
     use crate::store::{DesktopStore, ScheduledMessage};
     use std::collections::HashSet;
@@ -3764,6 +3777,18 @@ mod tests {
         assert!(arguments.contains("profile=any"));
         assert!(arguments.contains("name=\"PocketAgent inbound TCP 8788\""));
         assert!(!arguments.contains(".exe"));
+    }
+
+    #[test]
+    fn server_certificate_is_a_leaf_with_server_auth_usage() {
+        let params = server_certificate_params(vec!["localhost".into()]).unwrap();
+        assert!(matches!(params.is_ca, rcgen::IsCa::NoCa));
+        assert!(
+            params
+                .extended_key_usages
+                .iter()
+                .any(|usage| matches!(usage, rcgen::ExtendedKeyUsagePurpose::ServerAuth))
+        );
     }
 
     #[test]
