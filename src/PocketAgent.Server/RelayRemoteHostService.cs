@@ -13,6 +13,8 @@ public sealed class RelayRemoteHostService(HostSettings settings, PeerCertificat
 {
     private volatile RelayConnectionStatus status;
     public RelayConnectionStatus Status => status;
+    private volatile bool supportsPhonePairing;
+    public bool SupportsPhonePairing => Status == RelayConnectionStatus.Connected && supportsPhonePairing;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -37,6 +39,7 @@ public sealed class RelayRemoteHostService(HostSettings settings, PeerCertificat
                 await using var host = await RelayApplicationHost.ConnectAsync(uri, hostId, relay.RemoteHostToken, key,
                     request => DispatchAsync(client, request, stoppingToken), handshake.Token, relay.UpstreamCertificatePin);
                 handshake.CancelAfter(Timeout.InfiniteTimeSpan);
+                supportsPhonePairing = host.SupportsPhonePairing;
                 status = RelayConnectionStatus.Connected;
                 ServerDiagnostics.Log("relay", LogLevel.Information, $"remote_host_connected host_id={hostId} upstream={uri.Authority}");
                 await host.ServeAsync(stoppingToken);

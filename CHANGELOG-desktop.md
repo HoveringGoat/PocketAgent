@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.19 - 2026-11-20
+
+- Generate an Android relay pairing QR on the connected Codex desktop and scope each phone's relay credential to that desktop.
+
 ## 0.3.18 - 2026-11-20
 
 - Start relay clients on loopback without an inbound firewall prompt, including desktops with saved LAN or direct internet settings.

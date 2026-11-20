@@ -13,6 +13,8 @@ public static class RelayProtocol
 {
     public const int Version = 1;
     public const int ApplicationVersion = 1;
+    internal const int MaxRequestFrameBytes = 512 * 1024;
+    internal const int MaxResponseFrameBytes = 30 * 1024 * 1024;
 }
 
 public sealed record RelayEnrollment(string RelayUrl, Guid HostId, string HostToken, string SessionKey, string CertificatePin = "")
@@ -29,6 +31,14 @@ public sealed record RelayEnrollment(string RelayUrl, Guid HostId, string HostTo
     public string ToPairingString() =>
         $"pocketagent://relay?v=1&origin={Uri.EscapeDataString(RelayUrl)}&host={HostId}&token={Uri.EscapeDataString(HostToken)}&key={Uri.EscapeDataString(SessionKey)}" +
         (CertificatePin.Length > 0 ? $"&spki={CertificatePin}" : "");
+
+    public string ToPhonePairingString(string ticket)
+    {
+        var clientId = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(ticket)).AsSpan(0, 16));
+        var credential = RelayAuthRegistry.CreatePhoneToken(Encoding.UTF8.GetBytes(HostToken), HostId, clientId);
+        var deviceKey = RelaySessionKey.Parse(SessionKey).ForDevice(clientId);
+        return $"pocketagent://pair-relay?v=1&origin={Uri.EscapeDataString(RelayUrl)}&spki={CertificatePin}&host={HostId}&device={clientId}&auth={credential}&key={Uri.EscapeDataString(deviceKey.ToWire())}&ticket={ticket}";
+    }
 
     public static RelayEnrollment Parse(string value)
     {
@@ -102,7 +112,8 @@ internal sealed record RelayWireMessage(
     string? Token = null,
     Guid? SessionId = null,
     string? Reason = null,
-    RelayFrameEnvelope? Frame = null);
+    RelayFrameEnvelope? Frame = null,
+    bool PhonePairing = false);
 
 public sealed class RelaySessionKey
 {
@@ -134,6 +145,9 @@ public sealed class RelaySessionKey
     public string ToWire() => $"{Id}:{Convert.ToHexString(bytes).ToLowerInvariant()}";
 
     internal byte[] CopyBytes() => bytes.ToArray();
+
+    internal RelaySessionKey ForDevice(Guid deviceId) =>
+        new(deviceId, HMACSHA256.HashData(bytes, Encoding.UTF8.GetBytes($"pocketagent/phone-key/{deviceId}")));
 }
 
 public static class RelayCrypto
@@ -153,9 +167,9 @@ public static class RelayCrypto
 
     public static byte[] Open(RelaySessionKey key, Guid hostId, Guid deviceId, Guid requestId, RelayOpaqueEnvelope envelope)
     {
-        if (!Guid.TryParse(envelope.KeyId, out var keyId) || keyId != key.Id || envelope.Nonce.Length != NonceBytes)
+        if (!Guid.TryParse(envelope.KeyId, out var keyId) || keyId != key.Id || envelope.Nonce is not { Length: NonceBytes })
             throw new CryptographicException("The relay envelope belongs to a different session key.");
-        if (envelope.Ciphertext.Length < TagBytes)
+        if (envelope.Ciphertext is not { Length: >= TagBytes })
             throw new CryptographicException("The relay envelope is truncated.");
         var ciphertext = envelope.Ciphertext[..^TagBytes];
         var tag = envelope.Ciphertext[^TagBytes..];
@@ -187,6 +201,9 @@ public static class RelayApplicationCodec
         var decoded = JsonSerializer.Deserialize<RelayApplicationRequest>(body, Json)
             ?? throw new InvalidOperationException("Relay request body is empty.");
         if (decoded.Version != RelayProtocol.ApplicationVersion) throw new InvalidOperationException("Unsupported relay application version.");
+        if (string.IsNullOrEmpty(decoded.Method) || string.IsNullOrEmpty(decoded.Path) || decoded.Body is null ||
+            decoded.Headers is null || decoded.Headers.Any(header => string.IsNullOrEmpty(header.Key) || header.Value is null))
+            throw new InvalidOperationException("Relay request fields are incomplete.");
         return decoded;
     }
 
@@ -212,7 +229,7 @@ public sealed class RelayNode
 {
     private sealed record Host(Guid SessionId, ChannelWriter<RelayFrameEnvelope> Outbound);
     private sealed record Client(Guid SessionId, ChannelWriter<RelayFrameEnvelope> Outbound);
-    private sealed record Pending(Guid HostId, Guid ClientId);
+    private sealed record Pending(Guid HostId, Guid ClientId, Guid ClientSessionId);
     private readonly ConcurrentDictionary<Guid, Host> hosts = new();
     private readonly ConcurrentDictionary<Guid, Client> clients = new();
     private readonly ConcurrentDictionary<Guid, Pending> pending = new();
@@ -224,9 +241,9 @@ public sealed class RelayNode
         return session;
     }
 
-    public RelayNodeSession AttachClient(Guid clientId, ChannelWriter<RelayFrameEnvelope> outbound)
+    public RelayNodeSession AttachClient(Guid clientId, ChannelWriter<RelayFrameEnvelope> outbound, Guid? targetHost = null)
     {
-        var session = new RelayNodeSession(clientId, Guid.NewGuid(), false);
+        var session = new RelayNodeSession(clientId, Guid.NewGuid(), false, targetHost);
         clients[clientId] = new(session.SessionId, outbound);
         return session;
     }
@@ -234,9 +251,11 @@ public sealed class RelayNode
     public async Task RouteRequestAsync(RelayNodeSession session, RelayRequest request, CancellationToken cancellationToken)
     {
         if (session.IsHost || request.DeviceId != session.Identity) throw new InvalidOperationException("Relay client route does not match its session.");
+        if (session.TargetHost is Guid permitted && request.TargetHost != permitted)
+            throw new InvalidOperationException("Relay client is enrolled for a different host.");
         if (!clients.TryGetValue(session.Identity, out var client) || client.SessionId != session.SessionId) throw new InvalidOperationException("Relay client is not connected.");
         if (!hosts.TryGetValue(request.TargetHost, out var host)) throw new InvalidOperationException("Relay host is not connected.");
-        if (!pending.TryAdd(request.RequestId, new(request.TargetHost, session.Identity))) throw new InvalidOperationException("Relay request ID is already pending.");
+        if (!pending.TryAdd(request.RequestId, new(request.TargetHost, session.Identity, session.SessionId))) throw new InvalidOperationException("Relay request ID is already pending.");
         try { await host.Outbound.WriteAsync(RelayFrameEnvelope.ClientRequest(request), cancellationToken); }
         catch { pending.TryRemove(request.RequestId, out _); throw; }
     }
@@ -245,28 +264,32 @@ public sealed class RelayNode
     {
         if (!session.IsHost) throw new InvalidOperationException("Relay host route does not match its session.");
         if (!hosts.TryGetValue(session.Identity, out var host) || host.SessionId != session.SessionId) throw new InvalidOperationException("Relay host is not connected.");
-        if (!pending.TryGetValue(response.RequestId, out var route) || route.HostId != session.Identity || response.TargetHost != session.Identity) throw new InvalidOperationException("Relay response route is not pending.");
-        if (!clients.TryGetValue(route.ClientId, out var client)) throw new InvalidOperationException("Relay client is not connected.");
-        pending.TryRemove(response.RequestId, out _);
-        await client.Outbound.WriteAsync(RelayFrameEnvelope.HostResponse(response), cancellationToken);
+        if (response.TargetHost != session.Identity) throw new InvalidOperationException("Relay response route does not match its host.");
+        if (!pending.TryGetValue(response.RequestId, out var route) || route.HostId != session.Identity ||
+            !pending.TryRemove(new KeyValuePair<Guid, Pending>(response.RequestId, route))) return;
+        if (!clients.TryGetValue(route.ClientId, out var client) || client.SessionId != route.ClientSessionId) return;
+        try { await client.Outbound.WriteAsync(RelayFrameEnvelope.HostResponse(response), cancellationToken); }
+        catch (ChannelClosedException) { }
     }
 
     public void Detach(RelayNodeSession session)
     {
         if (session.IsHost)
         {
-            if (hosts.TryGetValue(session.Identity, out var host) && host.SessionId == session.SessionId) hosts.TryRemove(session.Identity, out _);
-            foreach (var pair in pending.Where(pair => pair.Value.HostId == session.Identity)) pending.TryRemove(pair.Key, out _);
+            if (hosts.TryGetValue(session.Identity, out var host) && host.SessionId == session.SessionId &&
+                hosts.TryRemove(new KeyValuePair<Guid, Host>(session.Identity, host)))
+                foreach (var pair in pending.Where(pair => pair.Value.HostId == session.Identity)) pending.TryRemove(pair);
         }
         else
         {
-            if (clients.TryGetValue(session.Identity, out var client) && client.SessionId == session.SessionId) clients.TryRemove(session.Identity, out _);
-            foreach (var pair in pending.Where(pair => pair.Value.ClientId == session.Identity)) pending.TryRemove(pair.Key, out _);
+            if (clients.TryGetValue(session.Identity, out var client) && client.SessionId == session.SessionId)
+                clients.TryRemove(new KeyValuePair<Guid, Client>(session.Identity, client));
+            foreach (var pair in pending.Where(pair => pair.Value.ClientSessionId == session.SessionId)) pending.TryRemove(pair);
         }
     }
 }
 
-public sealed record RelayNodeSession(Guid Identity, Guid SessionId, bool IsHost);
+public sealed record RelayNodeSession(Guid Identity, Guid SessionId, bool IsHost, Guid? TargetHost = null);
 
 public sealed class RelayAuthRegistry
 {
@@ -278,6 +301,12 @@ public sealed class RelayAuthRegistry
 
     internal bool VerifyHost(Guid id, string token) => Verify(hosts, id, token);
     internal bool VerifyClient(Guid id, string token) => Verify(clients, id, token);
+    internal bool VerifyPhone(Guid host, Guid client, string token) =>
+        token.Length == 64 && hosts.TryGetValue(host, out var hostToken) &&
+        CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(CreatePhoneToken(hostToken, host, client)), Encoding.UTF8.GetBytes(token));
+
+    internal static string CreatePhoneToken(byte[] hostToken, Guid host, Guid client) =>
+        Convert.ToHexString(HMACSHA256.HashData(hostToken, Encoding.UTF8.GetBytes($"pocketagent/phone-auth/{host}/{client}")));
 
     private static bool Verify(ConcurrentDictionary<Guid, byte[]> registry, Guid id, string token) =>
         registry.TryGetValue(id, out var expected) && CryptographicOperations.FixedTimeEquals(expected, Encoding.UTF8.GetBytes(token));
@@ -304,15 +333,16 @@ public sealed class RelayGateway
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, lifetime.ApplicationStopping);
         linkedCancellation.CancelAfter(TimeSpan.FromSeconds(15));
         var cancellation = linkedCancellation.Token;
-        var first = await ReceiveAsync(socket, cancellation);
+        var first = await ReceiveAsync(socket, 8192, cancellation);
         if (first is null) return;
         var authentication = JsonSerializer.Deserialize<RelayWireMessage>(first, Json) ?? throw new InvalidOperationException("Relay authentication was invalid.");
         RelayNodeSession session;
         var outbound = Channel.CreateBounded<RelayFrameEnvelope>(32);
         if (authentication.Kind == "authenticate-host" && authentication.HostId is Guid hostId && authentication.Token is not null && auth.VerifyHost(hostId, authentication.Token))
             session = node.AttachHost(hostId, outbound.Writer);
-        else if (authentication.Kind == "authenticate-client" && authentication.ClientId is Guid clientId && authentication.Token is not null && auth.VerifyClient(clientId, authentication.Token))
-            session = node.AttachClient(clientId, outbound.Writer);
+        else if (authentication.Kind == "authenticate-client" && authentication.ClientId is Guid clientId && authentication.Token is not null &&
+            (authentication.HostId is Guid target ? auth.VerifyPhone(target, clientId, authentication.Token) : auth.VerifyClient(clientId, authentication.Token)))
+            session = node.AttachClient(clientId, outbound.Writer, authentication.HostId);
         else
         {
             await SendAsync(socket, new RelayWireMessage("rejected", Reason: "relay authentication failed"), cancellation);
@@ -320,7 +350,7 @@ public sealed class RelayGateway
         }
         try
         {
-            await SendAsync(socket, new RelayWireMessage("authenticated", SessionId: session.SessionId), cancellation);
+            await SendAsync(socket, new RelayWireMessage("authenticated", SessionId: session.SessionId, PhonePairing: true), cancellation);
             linkedCancellation.CancelAfter(Timeout.InfiniteTimeSpan);
             var receiveLoop = ReceiveLoopAsync(socket, session, cancellation);
             var sendLoop = SendLoopAsync(socket, outbound.Reader, cancellation);
@@ -336,7 +366,7 @@ public sealed class RelayGateway
     {
         while (socket.State == WebSocketState.Open)
         {
-            var text = await ReceiveAsync(socket, cancellationToken);
+            var text = await ReceiveAsync(socket, session.IsHost ? RelayProtocol.MaxResponseFrameBytes : RelayProtocol.MaxRequestFrameBytes, cancellationToken);
             if (text is null) return;
             var wire = JsonSerializer.Deserialize<RelayWireMessage>(text, Json) ?? throw new InvalidOperationException("Relay message was invalid.");
             if (wire.Kind != "frame" || wire.Frame is null || wire.Frame.Version != RelayProtocol.Version) throw new InvalidOperationException("Relay frame version or shape is unsupported.");
@@ -358,7 +388,7 @@ public sealed class RelayGateway
         await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
     }
 
-    private static async Task<string?> ReceiveAsync(WebSocket socket, CancellationToken cancellationToken)
+    private static async Task<string?> ReceiveAsync(WebSocket socket, int maxBytes, CancellationToken cancellationToken)
     {
         using var buffer = new MemoryStream();
         var bytes = new byte[16 * 1024];
@@ -369,7 +399,7 @@ public sealed class RelayGateway
             if (result.MessageType == WebSocketMessageType.Close) return null;
             if (result.MessageType != WebSocketMessageType.Text) throw new InvalidOperationException("Relay messages must be text JSON.");
             buffer.Write(bytes, 0, result.Count);
-            if (buffer.Length > 2 * 1024 * 1024) throw new InvalidOperationException("Relay message exceeds the size limit.");
+            if (buffer.Length > maxBytes) throw new InvalidOperationException("Relay message exceeds the size limit.");
         } while (!result.EndOfMessage);
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
@@ -379,10 +409,12 @@ public sealed class RelayTransportClient : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly ClientWebSocket socket;
-    private RelayTransportClient(ClientWebSocket socket, Guid sessionId) { this.socket = socket; SessionId = sessionId; }
+    private RelayTransportClient(ClientWebSocket socket, Guid sessionId, bool phonePairing)
+    { this.socket = socket; SessionId = sessionId; SupportsPhonePairing = phonePairing; }
     public Guid SessionId { get; }
+    public bool SupportsPhonePairing { get; }
 
-    public static async Task<RelayTransportClient> ConnectAsync(Uri uri, bool host, Guid identity, string token, CancellationToken cancellationToken = default, string certificatePin = "")
+    public static async Task<RelayTransportClient> ConnectAsync(Uri uri, bool host, Guid identity, string token, CancellationToken cancellationToken = default, string certificatePin = "", Guid? targetHost = null)
     {
         var socket = new ClientWebSocket();
         try
@@ -392,13 +424,13 @@ public sealed class RelayTransportClient : IAsyncDisposable
                 socket.Options.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
                     certificate is X509Certificate2 presented && MatchesCertificate(presented, uri.IdnHost, certificatePin);
             await socket.ConnectAsync(uri, cancellationToken);
-            var message = host ? new RelayWireMessage("authenticate-host", HostId: identity, Token: token) : new RelayWireMessage("authenticate-client", ClientId: identity, Token: token);
+            var message = host ? new RelayWireMessage("authenticate-host", HostId: identity, Token: token) : new RelayWireMessage("authenticate-client", HostId: targetHost, ClientId: identity, Token: token);
             await SendAsync(socket, message, cancellationToken);
             var response = await ReceiveAsync(socket, cancellationToken) ?? throw new InvalidOperationException("Relay closed during authentication.");
             var authenticated = JsonSerializer.Deserialize<RelayWireMessage>(response, Json);
             if (authenticated?.Kind != "authenticated" || authenticated.SessionId is not Guid sessionId)
                 throw new InvalidOperationException("Relay authentication failed.");
-            return new(socket, sessionId);
+            return new(socket, sessionId, authenticated.PhonePairing);
         }
         catch
         {
@@ -440,6 +472,8 @@ public sealed class RelayTransportClient : IAsyncDisposable
         {
             result = await socket.ReceiveAsync(bytes, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close) return null;
+            if (result.MessageType != WebSocketMessageType.Text || buffer.Length + result.Count > RelayProtocol.MaxResponseFrameBytes)
+                throw new InvalidOperationException("Relay message has an invalid type or size.");
             buffer.Write(bytes, 0, result.Count);
         } while (!result.EndOfMessage);
         return Encoding.UTF8.GetString(buffer.ToArray());
@@ -466,6 +500,7 @@ public sealed class RelayApplicationHost : IAsyncDisposable
 
     private RelayApplicationHost(RelayTransportClient transport, RelaySessionKey key, Guid hostId, Func<RelayApplicationRequest, Task<RelayApplicationResponse>> handler)
     { this.transport = transport; this.key = key; this.hostId = hostId; this.handler = handler; }
+    public bool SupportsPhonePairing => transport.SupportsPhonePairing;
 
     public static async Task<RelayApplicationHost> ConnectAsync(Uri uri, Guid hostId, string token, RelaySessionKey key, Func<RelayApplicationRequest, Task<RelayApplicationResponse>> handler, CancellationToken cancellationToken = default, string certificatePin = "") =>
         new(await RelayTransportClient.ConnectAsync(uri, true, hostId, token, cancellationToken, certificatePin), key, hostId, handler);
@@ -475,10 +510,13 @@ public sealed class RelayApplicationHost : IAsyncDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             var frame = await transport.ReceiveFrameAsync(cancellationToken);
-            if (frame.Kind != "client-request" || frame.Request is null) continue;
-            var request = RelayApplicationCodec.DecodeRequest(key, hostId, frame.Request);
+            if (frame.Kind != "client-request" || frame.Request?.Envelope is null) continue;
+            var requestKey = frame.Request.Envelope.KeyId == frame.Request.DeviceId.ToString() ? key.ForDevice(frame.Request.DeviceId) : key;
+            RelayApplicationRequest request;
+            try { request = RelayApplicationCodec.DecodeRequest(requestKey, hostId, frame.Request); }
+            catch (Exception exception) when (exception is CryptographicException or JsonException or InvalidOperationException) { continue; }
             var response = await handler(request);
-            var wire = RelayApplicationCodec.EncodeResponse(key, hostId, frame.Request.DeviceId, frame.Request.RequestId, response);
+            var wire = RelayApplicationCodec.EncodeResponse(requestKey, hostId, frame.Request.DeviceId, frame.Request.RequestId, response);
             await transport.SendFrameAsync(RelayFrameEnvelope.HostResponse(wire), cancellationToken);
         }
     }
@@ -497,8 +535,8 @@ public sealed class RelayApplicationClient : IAsyncDisposable
     private RelayApplicationClient(RelayTransportClient transport, RelaySessionKey key, Guid hostId, Guid deviceId)
     { this.transport = transport; this.key = key; this.hostId = hostId; this.deviceId = deviceId; }
 
-    public static async Task<RelayApplicationClient> ConnectAsync(Uri uri, Guid hostId, Guid deviceId, string token, RelaySessionKey key, CancellationToken cancellationToken = default, string certificatePin = "") =>
-        new(await RelayTransportClient.ConnectAsync(uri, false, deviceId, token, cancellationToken, certificatePin), key, hostId, deviceId);
+    public static async Task<RelayApplicationClient> ConnectAsync(Uri uri, Guid hostId, Guid deviceId, string token, RelaySessionKey key, CancellationToken cancellationToken = default, string certificatePin = "", bool scoped = false) =>
+        new(await RelayTransportClient.ConnectAsync(uri, false, deviceId, token, cancellationToken, certificatePin, scoped ? hostId : null), key, hostId, deviceId);
 
     public async Task<RelayApplicationResponse> RequestAsync(RelayApplicationRequest request, CancellationToken cancellationToken = default)
     {

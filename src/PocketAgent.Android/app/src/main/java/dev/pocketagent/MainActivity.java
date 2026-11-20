@@ -129,11 +129,10 @@ public final class MainActivity extends Activity {
       JSONObject session = store.load();
       loadSavedConnections();
       if (session != null) {
-        String origin = ApiClient.normalizeOrigin(session.getString("origin"));
+        String origin = session.getString("origin");
         api = connections.get(origin);
         if (api == null) {
-          api =
-              new ApiClient(origin, session.getString("token"), session.optString("pin"));
+          api = ApiClient.fromSaved(session);
           connections.put(origin, api);
         }
         serverName = session.optString("name", api.origin);
@@ -180,6 +179,7 @@ public final class MainActivity extends Activity {
     generation++;
     ui.removeCallbacksAndMessages(null);
     network.shutdownNow();
+    connections.values().forEach(ApiClient::close);
     super.onDestroy();
   }
 
@@ -190,9 +190,7 @@ public final class MainActivity extends Activity {
       if (summary == null) continue;
       JSONObject saved = store.connection(summary.optString("origin"));
       String origin = saved.getString("origin");
-      connections.put(
-          origin,
-          new ApiClient(origin, saved.getString("token"), saved.optString("pin")));
+      connections.put(origin, ApiClient.fromSaved(saved));
       connectionNames.put(origin, saved.optString("name", origin));
       connectionStates.put(origin, false);
     }
@@ -521,15 +519,15 @@ public final class MainActivity extends Activity {
           String device = name.getText().toString().trim();
           String label =
               serverLabel.getText().toString().trim().isEmpty()
-                  ? ticket.origin
+                  ? ticket.relay == null ? ticket.origin : "Relay desktop"
                   : serverLabel.getText().toString().trim();
           int epoch = generation;
           pair.setEnabled(false);
           notice("Verifying desktop identity and pairing…");
           network.execute(
               () -> {
+                ApiClient candidate = ticket.client("");
                 try {
-                  ApiClient candidate = new ApiClient(ticket.origin, "", ticket.pin);
                   JSONObject result =
                       (JSONObject)
                           candidate.request(
@@ -538,13 +536,14 @@ public final class MainActivity extends Activity {
                                   .put("deviceName", device)
                                   .put("code", ticket.ticket));
                   String token = result.getString("token");
-                  store.save(ticket.origin, token, label, ticket.pin);
+                  store.save(ticket.origin, token, label, ticket.pin, ticket.relay);
                   ui.post(
                       () -> {
                         if (epoch != generation) return;
                         pairingInput.setText("");
-                         api = new ApiClient(ticket.origin, token, ticket.pin);
-                         connections.put(ticket.origin, api);
+                         api = ticket.client(token);
+                         ApiClient old = connections.put(ticket.origin, api);
+                         if (old != null) old.close();
                          connectionNames.put(ticket.origin, label);
                          connectionStates.put(ticket.origin, false);
                          connected = false;
@@ -563,7 +562,7 @@ public final class MainActivity extends Activity {
                           problem(safeError(exception));
                         }
                       });
-                }
+                } finally { candidate.close(); }
               });
         });
   }
@@ -828,6 +827,8 @@ public final class MainActivity extends Activity {
                       store.remove(client.origin);
                     } catch (Exception ignored) {
                     }
+                    connections.remove(client.origin);
+                    client.close();
                     api = null;
                     showPairing();
                     problem(safeError(ex));
@@ -1952,7 +1953,9 @@ public final class MainActivity extends Activity {
     LinearLayout card = column();
     card.setPadding(dp(8), dp(4), dp(8), dp(4));
     card.setBackgroundColor(CARD);
-    card.addView(label(name + "\n" + origin + "\n" + status, 14), match());
+    ApiClient client = connections.get(origin);
+    String address = client == null ? origin : client.address();
+    card.addView(label(name + "\n" + address + "\n" + status, 14), match());
     LinearLayout actions = row();
     actions.addView(button("Usage and resets", v -> showServerUsage(origin)));
     actions.addView(button("Open", v -> activateSavedServer(origin)));
@@ -1974,9 +1977,7 @@ public final class MainActivity extends Activity {
       JSONObject saved = store.activate(origin);
       api = connections.get(origin);
       if (api == null) {
-        api =
-            new ApiClient(
-                saved.getString("origin"), saved.getString("token"), saved.optString("pin"));
+        api = ApiClient.fromSaved(saved);
         connections.put(origin, api);
       }
       serverName = connectionNames.getOrDefault(origin, saved.optString("name", api.origin));
@@ -1993,16 +1994,15 @@ public final class MainActivity extends Activity {
 
   private void unpairSavedServer(String origin) {
     try {
-      JSONObject saved = store.connection(origin);
-      ApiClient client =
-          new ApiClient(
-              saved.getString("origin"), saved.getString("token"), saved.optString("pin"));
+      ApiClient client = connections.get(origin);
+      if (client == null) throw new IllegalArgumentException("Saved server was not found.");
       action(
           () -> client.request("/logout", new JSONObject()),
           ignored -> {
             try {
               store.remove(origin);
               connections.remove(origin);
+              client.close();
               connectionNames.remove(origin);
               connectionStates.remove(origin);
               connectionErrors.remove(origin);
@@ -2027,6 +2027,7 @@ public final class MainActivity extends Activity {
           } catch (Exception ignoredError) {
           }
           connections.remove(client.origin);
+          client.close();
           connectionNames.remove(client.origin);
           connectionStates.remove(client.origin);
           connectionErrors.remove(client.origin);
@@ -2341,7 +2342,8 @@ public final class MainActivity extends Activity {
   }
 
   private String safeError(Exception exception) {
-    if (exception instanceof ApiClient.ApiError || exception instanceof IllegalArgumentException)
+    if (exception instanceof ApiClient.ApiError || exception instanceof IllegalArgumentException ||
+        exception instanceof RelayConnection.ConnectionError)
       return exception.getMessage();
     if (exception instanceof javax.net.ssl.SSLException)
       return "Desktop identity or HTTPS verification failed. Check the phone clock and server"

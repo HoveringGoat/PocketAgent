@@ -451,8 +451,7 @@ public partial class MainWindow : Window
 
     private void SetDevicesRelayClientMode(bool client)
     {
-        DevicesHeading.Text = client ? "Relay client" : "Connect your phone";
-        DirectPairingPanel.Visibility = DirectPairingHelp.Visibility = client ? Visibility.Collapsed : Visibility.Visible;
+        DevicesHeading.Text = client ? "Pair your phone through the relay" : "Connect your phone";
         if (!client) CertificateStatus.Text = "";
     }
     private async void WindowClosing(object? sender, CancelEventArgs e)
@@ -477,9 +476,17 @@ public partial class MainWindow : Window
         {
             var running = relay;
             var host = running.Services.GetRequiredService<HostSettings>();
-            CertificateStatus.Text = host.Relay.ConnectsUpstream
-                ? "This desktop listens on loopback. Direct phone pairing requires a mode with an HTTPS listener."
+            var clientRelay = running.Services.GetRequiredService<RelayRemoteHostService>();
+            var isRelayClient = host.Relay.ConnectsUpstream;
+            var canPair = isRelayClient ? clientRelay.SupportsPhonePairing &&
+                host.Relay.UpstreamUrl.StartsWith("wss://", StringComparison.Ordinal) : host.UseHttps;
+            CertificateStatus.Text = isRelayClient
+                ? clientRelay.Status != RelayConnectionStatus.Connected ? "Connect to the relay to pair a phone."
+                    : !clientRelay.SupportsPhonePairing ? "Update the relay node to enable phone pairing."
+                    : !canPair ? "Set up HTTPS on the relay node and replace this desktop’s enrollment."
+                    : "Scan this QR using Add server in PocketAgent on Android."
                 : running.Services.GetRequiredService<PeerCertificates>().Status;
+            DirectPairingPanel.Visibility = isRelayClient && !canPair ? Visibility.Collapsed : Visibility.Visible;
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
@@ -500,13 +507,14 @@ public partial class MainWindow : Window
                 changingList = false; sessionSignature = signature;
             }
             var code = running.Services.GetRequiredService<PairingCode>().Current;
-            PairingDisplay.Text = code.Consumed ? "Pairing used — generate a new QR" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Pairing expired — generate a new QR" : host.UseHttps ? "Scan or copy to pair" : "Set up HTTPS to pair a phone";
-            PairingExpiry.Text = $"Single use · expires {code.ExpiresAt.LocalDateTime:t}";
+            PairingDisplay.Text = !canPair ? isRelayClient ? "" : "Set up HTTPS to pair a phone" :
+                code.Consumed ? "Pairing used — generate a new QR" : code.ExpiresAt <= DateTimeOffset.UtcNow ? "Pairing expired — generate a new QR" : "Scan or copy to pair";
+            PairingExpiry.Text = canPair ? $"Single use · expires {code.ExpiresAt.LocalDateTime:t}" : "";
             var pairing = running.Services.GetRequiredService<PairingCode>();
-            if (code.Consumed || code.ExpiresAt <= DateTimeOffset.UtcNow) { PairingQr.Source = null; qrRendered = ""; }
-            else if (host.UseHttps)
+            if (!canPair || code.Consumed || code.ExpiresAt <= DateTimeOffset.UtcNow) { PairingQr.Source = null; qrRendered = ""; }
+            else
             {
-                var payload = PeerCertificates.PairingPayload(host, pairing.Ticket);
+                var payload = isRelayClient ? GetRelayPhonePairingPayload() : PeerCertificates.PairingPayload(host, pairing.Ticket);
                 if (payload != qrRendered)
                 {
                     using var data = QRCoder.QRCodeGenerator.GenerateQrCode(payload, QRCoder.QRCodeGenerator.ECCLevel.M);

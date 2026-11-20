@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -12,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using PocketAgent;
@@ -130,7 +132,7 @@ internal static class RelaySetupChecks
                 Control<Button>(remote, "UnenrollRelayButton").IsEnabled)
                 throw new InvalidOperationException("A running client must show its status and explain how to unlock unenrollment.");
             await CheckRequests(remote, enrollment, clientId, savedNode.ClientToken, cancellation);
-            CheckClientDevices(remote, output, clientSettings.Origin);
+            await CheckPhonePairing(remote, output, clientSettings.Origin, enrollment, cancellation);
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
             Click(node, "ServerToggle");
@@ -324,19 +326,50 @@ internal static class RelaySetupChecks
         }
     }
 
-    private static void CheckClientDevices(MainWindow window, string output, string origin)
+    private static async Task CheckPhonePairing(MainWindow window, string output, string origin, RelayEnrollment enrollment, CancellationToken cancellation)
     {
         var navigation = Control<TabControl>(window, "Navigation");
         navigation.SelectedIndex = 1;
         Control<ComboBox>(window, "UiScaleSetting").SelectedValue = "large";
+        var host = (WebApplication)typeof(MainWindow).GetField("relay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+        var pairing = host.Services.GetRequiredService<PairingCode>();
+        pairing.Renew();
+        var phonePairing = typeof(MainWindow).GetMethod("GetRelayPhonePairingPayload", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (phonePairing?.Invoke(window, null) is not string payload || !payload.StartsWith("pocketagent://pair-relay?", StringComparison.Ordinal))
+            throw new InvalidOperationException("The connected desktop must issue a phone relay pairing QR.");
+        var fields = QueryHelpers.ParseQuery(new Uri(payload).Query);
+        if (fields["key"] == enrollment.SessionKey || fields["auth"] == enrollment.HostToken ||
+            fields["origin"] != enrollment.RelayUrl || fields["host"] != enrollment.HostId.ToString())
+            throw new InvalidOperationException("Phone enrollment must use the relay address, target ID, and separate phone credentials.");
+        var endpoint = new Uri(fields["origin"].ToString());
+        var clientId = Guid.Parse(fields["device"].ToString());
+        var key = RelaySessionKey.Parse(fields["key"].ToString());
+        try
+        {
+            await using var unauthorized = await RelayTransportClient.ConnectAsync(endpoint, false, clientId,
+                fields["auth"].ToString(), cancellation, enrollment.CertificatePin, Guid.NewGuid());
+            throw new InvalidOperationException("The phone relay credential admitted an unrelated desktop.");
+        }
+        catch (InvalidOperationException exception) when (exception.Message == "Relay authentication failed.") { }
+        await using (var client = await RelayApplicationClient.ConnectAsync(endpoint, enrollment.HostId, clientId,
+            fields["auth"].ToString(), key, cancellation, enrollment.CertificatePin, scoped: true))
+        {
+            var request = PairPhoneRequest(fields["ticket"].ToString());
+            var result = await client.RequestAsync(request, cancellation);
+            var repeated = await client.RequestAsync(request, cancellation);
+            if (result.Status != 200 || repeated.Status != 401)
+                throw new InvalidOperationException("A phone relay enrollment must pair exactly once.");
+        }
+        pairing.Renew();
+        var qr = Control<Image>(window, "PairingQr");
+        var qrPayload = (string)phonePairing.Invoke(window, null)!;
+        var rendered = typeof(MainWindow).GetField("qrRendered", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await WaitUntil(() => qr.Source is BitmapSource && Equals(rendered.GetValue(window), qrPayload), cancellation);
         var address = Control<TextBox>(window, "ConnectionAddress");
         var status = Control<TextBlock>(window, "CertificateStatus");
         var heading = Control<TextBlock>(window, "DevicesHeading");
-        if (address.Text != origin || !status.Text.Contains("loopback", StringComparison.Ordinal) ||
-            !status.Text.Contains("Direct phone pairing", StringComparison.Ordinal) ||
-            Control<FrameworkElement>(window, "DirectPairingPanel").Visibility != Visibility.Collapsed ||
-            Control<Image>(window, "PairingQr").Source is not null)
-            throw new InvalidOperationException("Devices must show the actual loopback address and avoid offering a direct pairing QR in client mode.");
+        if (address.Text != origin || !status.Text.Contains("Add server", StringComparison.Ordinal))
+            throw new InvalidOperationException("Devices must show how to pair the phone through the relay.");
         foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
         {
             window.Width = width;
@@ -344,7 +377,7 @@ internal static class RelaySetupChecks
             window.UpdateLayout();
             var scroller = (ScrollViewer)((TabItem)navigation.SelectedItem).Content;
             var viewport = (ScrollContentPresenter)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
-            foreach (var element in new FrameworkElement[] { heading, status, address })
+            foreach (var element in new FrameworkElement[] { heading, status, address, qr })
             {
                 element.BringIntoView();
                 window.UpdateLayout();
@@ -353,6 +386,60 @@ internal static class RelaySetupChecks
                     throw new InvalidOperationException($"Devices clips {element.Name} at {width} × {height}.");
             }
             Capture(window, Path.Combine(output, $"relay-client-devices-{width}-{height}.png"));
+        }
+        if (Environment.GetCommandLineArgs().Contains("--android-relay", StringComparer.OrdinalIgnoreCase))
+            await CheckAndroid((BitmapSource)qr.Source, endpoint.Port, cancellation);
+    }
+
+    private static RelayApplicationRequest PairPhoneRequest(string ticket) =>
+        RelayApplicationRequest.Create("POST", "/api/devices/pair",
+            JsonSerializer.SerializeToUtf8Bytes(new { deviceName = "Relay phone fixture", code = ticket })) with
+        { Headers = [new("Content-Type", "application/json")] };
+
+    private static async Task CheckAndroid(BitmapSource qr, int port, CancellationToken cancellation)
+    {
+        var serial = Environment.GetEnvironmentVariable("POCKETAGENT_TEST_ANDROID") ?? "";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(serial, @"^emulator-\d+$"))
+            throw new InvalidOperationException("Set POCKETAGENT_TEST_ANDROID to an isolated Android emulator.");
+        var adb = Environment.GetEnvironmentVariable("POCKETAGENT_TEST_ADB") ?? "adb";
+        async Task<string> Run(byte[]? input, params string[] arguments)
+        {
+            var start = new ProcessStartInfo(adb) { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null, UseShellExecute = false, CreateNoWindow = true };
+            foreach (var argument in new[] { "-s", serial }.Concat(arguments)) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            await using var killed = cancellation.Register(() => { if (!process.HasExited) process.Kill(entireProcessTree: true); });
+            if (input is not null)
+            {
+                await process.StandardInput.BaseStream.WriteAsync(input, cancellation);
+                process.StandardInput.Close();
+            }
+            var stdout = process.StandardOutput.ReadToEndAsync(cancellation);
+            var stderr = process.StandardError.ReadToEndAsync(cancellation);
+            await process.WaitForExitAsync(cancellation);
+            if (process.ExitCode != 0) throw new InvalidOperationException($"adb {arguments[0]} failed: {await stderr}");
+            return await stdout;
+        }
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(qr));
+        using var png = new MemoryStream();
+        encoder.Save(png);
+        await Run(null, "reverse", $"tcp:{port}", $"tcp:{port}");
+        try
+        {
+            var encoded = System.Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(png.ToArray()));
+            await Run(encoded, "shell", "-T", "run-as dev.pocketagent sh -c 'mkdir -p cache && base64 -d > cache/relay-pairing.png'");
+            var written = (await Run(null, "shell", "run-as", "dev.pocketagent", "stat", "-c", "%s", "cache/relay-pairing.png")).Trim();
+            if (written != png.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                throw new InvalidOperationException($"The generated QR did not transfer intact to the emulator ({written} of {png.Length} bytes).");
+            var result = await Run(null, "shell", "am", "instrument", "-w", "-r", "dev.pocketagent/.RelayPairingInstrumentation");
+            if (!result.Contains("INSTRUMENTATION_CODE: -1", StringComparison.Ordinal))
+                throw new InvalidOperationException(result);
+            Console.WriteLine(result);
+        }
+        finally
+        {
+            await Run(null, "shell", "run-as", "dev.pocketagent", "rm", "-f", "cache/relay-pairing.png");
+            await Run(null, "reverse", "--remove", $"tcp:{port}");
         }
     }
 

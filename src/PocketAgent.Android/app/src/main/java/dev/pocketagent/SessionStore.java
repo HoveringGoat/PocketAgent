@@ -81,28 +81,22 @@ final class SessionStore {
   }
 
   synchronized void save(String origin, String token, String name, String pin) throws Exception {
+    save(origin, token, name, pin, null);
+  }
+
+  synchronized void save(String origin, String token, String name, String pin, RelayTarget relay) throws Exception {
     JSONObject vault = readVault();
     org.json.JSONArray servers = vault.getJSONArray("servers");
+    JSONObject connection = new JSONObject().put("origin", origin).put("token", token).put("name", name).put("pin", pin);
+    if (relay != null) connection.put("relay", relay.toJson());
     boolean updated = false;
     for (int i = 0; i < servers.length(); i++)
       if (origin.equals(servers.getJSONObject(i).optString("origin"))) {
-        servers.put(
-            i,
-            new JSONObject()
-                .put("origin", origin)
-                .put("token", token)
-                .put("name", name)
-                .put("pin", pin));
+        servers.put(i, connection);
         updated = true;
         break;
       }
-    if (!updated)
-      servers.put(
-          new JSONObject()
-              .put("origin", origin)
-              .put("token", token)
-              .put("name", name)
-              .put("pin", pin));
+    if (!updated) servers.put(connection);
     vault.put("active", origin);
     writeVault(vault);
     preferences.edit().putString("lastOrigin", origin).apply();

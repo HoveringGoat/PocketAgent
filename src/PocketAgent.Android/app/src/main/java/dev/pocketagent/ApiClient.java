@@ -12,6 +12,8 @@ final class ApiClient {
   final String origin;
   final String token;
   final String pin;
+  final RelayTarget relay;
+  private final RelayConnection connection;
 
   static final class ApiError extends Exception {
     final int status;
@@ -27,10 +29,27 @@ final class ApiClient {
   }
 
   ApiClient(String origin, String token, String pin) {
+    this(origin, token, pin, null);
+  }
+
+  ApiClient(String origin, String token, String pin, RelayTarget relay) {
     this.origin = origin;
     this.token = token;
     this.pin = pin;
+    this.relay = relay;
+    connection = relay == null ? null : new RelayConnection(relay);
   }
+
+  static ApiClient fromSaved(JSONObject session) throws Exception {
+    JSONObject target = session.optJSONObject("relay");
+    RelayTarget relay = target == null ? null : RelayTarget.fromJson(target);
+    String origin = relay == null ? normalizeOrigin(session.getString("origin")) : relay.origin();
+    return new ApiClient(origin, session.getString("token"), session.optString("pin"), relay);
+  }
+
+  String address() { return relay == null ? origin : relay.endpoint; }
+
+  void close() { if (connection != null) connection.close(); }
 
   static String normalizeOrigin(String input) throws Exception {
     String address = input.trim();
@@ -61,6 +80,10 @@ final class ApiClient {
   }
 
   Object request(String path, JSONObject body) throws Exception {
+    if (this.connection != null) {
+      RelayConnection.Reply reply = this.connection.request(path, body, token, false);
+      return parseResponse(reply.status, new String(reply.body, StandardCharsets.UTF_8));
+    }
     HttpURLConnection connection =
         (HttpURLConnection) new URI(origin + "/api" + path).toURL().openConnection();
     if (!pin.isEmpty()) {
@@ -110,24 +133,30 @@ final class ApiClient {
           }
           text = output.toString(StandardCharsets.UTF_8.name());
         }
-      if (status >= 400) {
-        String message =
-            status == 401
-                ? "Device access ended. Pair with the desktop again."
-                : "Request failed (" + status + ").";
-        try {
-          message = new JSONObject(text).optString("error", message);
-        } catch (org.json.JSONException ignored) {
-        }
-        throw new ApiError(status, message);
-      }
-      return text.isEmpty() ? null : new JSONTokener(text).nextValue();
+      return parseResponse(status, text);
     } finally {
       connection.disconnect();
     }
   }
 
+  private static Object parseResponse(int status, String text) throws Exception {
+    if (status >= 300 && status < 400)
+      throw new ApiError(status, "The server redirected the request.");
+    if (status >= 400) {
+      String message = status == 401 ? "Device access ended. Pair with the desktop again." : "Request failed (" + status + ").";
+      try { message = new JSONObject(text).optString("error", message); }
+      catch (org.json.JSONException ignored) { }
+      throw new ApiError(status, message);
+    }
+    return text.isEmpty() ? null : new JSONTokener(text).nextValue();
+  }
+
   byte[] requestBytes(String path) throws Exception {
+    if (this.connection != null) {
+      RelayConnection.Reply reply = this.connection.request(path, null, token, true);
+      if (reply.status >= 300) throw new ApiError(reply.status, "The image could not be loaded from the desktop.");
+      return reply.body;
+    }
     HttpURLConnection connection =
         (HttpURLConnection) new URI(origin + "/api" + path).toURL().openConnection();
     if (!pin.isEmpty()) {

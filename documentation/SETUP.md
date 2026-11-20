@@ -29,8 +29,8 @@ Relay mode lets a locked-down desktop reach the relay node over an outbound WebS
 1. On the relay desktop, turn the server **OFF** and choose **Host relay node** under **Settings > Relay mode**. Save settings, then turn the server **ON**. The host panel shows the WebSocket address and warns when that address works only on the same computer.
 2. Select **Copy client enrollment** and transfer the complete string privately to the desktop that runs Codex. It contains the host credential, encryption key, and the certificate pin for directly hosted HTTPS.
 3. On the Codex desktop, turn the server **OFF** and choose **Connect to relay**. Paste the string and select **Save enrollment**. Turn the server **ON** and look for **Connected to relay**. Client mode uses a loopback listener and an outbound relay connection, so it starts without an inbound firewall prompt even if LAN or direct internet settings are saved. If it shows **Retrying**, check reachability to the node address and confirm the enrollment came from that node.
-4. For a custom .NET client, open **Advanced .NET client setup** on the node and select **Copy .NET client credentials**. Pass the endpoint, target host ID, client ID/token, session key, and optional certificate pin to `RelayApplicationClient.ConnectAsync`.
-5. On the connected desktop, open **Advanced .NET client pairing** and select **Copy device pairing ticket**. Submit the ticket as `code`, with a `deviceName`, in a JSON `POST /api/devices/pair` over the relay. The ticket expires after ten minutes or one use. Use the returned token in the `Authorization: Bearer` header for protected API operations. Android currently uses direct pairing.
+4. On the connected Codex desktop, open **Devices** to show the relay pairing QR. In Android PocketAgent, open **Add server**, scan the QR, and tap **Connect**. You can also copy and paste the full pairing string. Use desktop 0.3.19 or later on both desktops and Android 0.4.6 or later. The phone reaches the relay node's HTTPS address. The connected desktop remains responsible for device access and conversation permissions.
+5. For custom .NET clients, the node still offers **Copy .NET client credentials** and the connected desktop offers **Copy device pairing ticket** in their respective advanced panels. Submit the ticket as `code`, with a `deviceName`, in a JSON `POST /api/devices/pair`. The ticket expires after ten minutes or one use. The returned token authorizes protected API operations.
 
 **Off** is the default and hides both setup panels. Saving **Off** pauses relay use and retains saved credentials. To change or remove a client enrollment, stop the server and choose **Replace enrollment** or **Unenroll** in **Connect to relay**. Unenrolling removes the saved upstream credentials and leaves the client ready to enroll again. Each node provisions one reusable host/client enrollment.
 
@@ -42,6 +42,14 @@ dotnet run --project tests/PocketAgent.RelayChecks
 ```
 
 The desktop check starts the real relay node and outbound service over pinned WSS on separate loopback ports. It verifies the remote API, restart and reconnection, and Settings at minimum and larger window sizes. The transport check exercises two sequential encrypted requests through the relay. Test reachability from the remote network after configuring a public endpoint.
+
+To verify phone pairing on an isolated emulator, install the Android debug APK, set `POCKETAGENT_TEST_ANDROID` to the emulator serial, and run:
+
+```powershell
+dotnet run --project tests/PocketAgent.DesktopChecks -- --relay-setup --android-relay
+```
+
+The check uses ADB reverse, decodes the Windows-generated QR in the Android app, pairs through Add server, reloads the stored connection, reconnects, and checks device revocation.
 
 ## Wi-Fi and device pairing
 
@@ -93,7 +101,7 @@ dotnet run --project tests/PocketAgent.DesktopChecks -c Release
 node --test tests/relay.test.mjs
 ```
 
-The relay check proves encrypted routing and two sequential requests on one machine. It does not prove router reachability, production certificate enrollment, Android relay support, or a real Codex inference turn. Those remain separate acceptance tests.
+The relay checks verify encrypted routing, managed certificate trust, and Android pairing on an isolated emulator. Router reachability and a real Codex inference turn require separate acceptance tests.
 
 ## Diagnostics
 

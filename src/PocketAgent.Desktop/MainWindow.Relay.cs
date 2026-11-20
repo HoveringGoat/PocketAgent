@@ -179,6 +179,18 @@ public partial class MainWindow
         return pairing.Ticket;
     }
 
+    private string GetRelayPhonePairingPayload()
+    {
+        if (relay?.Services.GetRequiredService<RelayRemoteHostService>().SupportsPhonePairing != true)
+            throw new InvalidOperationException("Connect to a relay node that supports phone pairing.");
+        var upstream = settings.Host.Relay;
+        if (!upstream.UpstreamUrl.StartsWith("wss://", StringComparison.Ordinal))
+            throw new InvalidOperationException("Phone pairing requires HTTPS on the relay node.");
+        var enrollment = new RelayEnrollment(upstream.UpstreamUrl, Guid.Parse(upstream.RemoteHostId), upstream.RemoteHostToken,
+            upstream.SessionKey, upstream.UpstreamCertificatePin);
+        return enrollment.ToPhonePairingString(relay.Services.GetRequiredService<PairingCode>().Ticket);
+    }
+
     private async void CopyRelayDeviceTicket(object sender, RoutedEventArgs e) => await Act(() =>
     {
         Clipboard.SetText(GetRelayDeviceTicket());

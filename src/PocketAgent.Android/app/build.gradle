@@ -8,12 +8,15 @@ android {
         applicationId 'dev.pocketagent'
         minSdk 26
         targetSdk 34
-  versionCode 29
-  versionName project.findProperty('pocketAgentVersion') ?: '0.4.5'
+  versionCode 30
+  versionName project.findProperty('pocketAgentVersion') ?: '0.4.6'
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     lint { warningsAsErrors true; disable 'OldTargetApi', 'GradleDependency', 'AndroidGradlePluginVersion' }
     buildTypes { release { minifyEnabled false } }
 }
-dependencies { implementation 'com.google.zxing:core:3.5.4' }
+dependencies {
+    implementation 'com.google.zxing:core:3.5.4'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

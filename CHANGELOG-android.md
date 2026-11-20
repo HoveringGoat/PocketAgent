@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.6 - 2026-11-20
+
+- Pair with the Codex desktop through a relay QR and use the same conversation and device controls over the encrypted relay connection.
+
 ## 0.4.5 - 2026-11-19
 
 - Prevent model/reasoning and new-conversation folder flows from crashing when a desktop response is empty or does not match the expected JSON schema.

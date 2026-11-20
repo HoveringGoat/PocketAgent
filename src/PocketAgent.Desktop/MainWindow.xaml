@@ -109,7 +109,13 @@
           <Button Content="Connection diagnostics" Click="CheckConnectivity" HorizontalAlignment="Left"/>
           <Button Content="Locate Android installer APK" Click="LocateAndroid" HorizontalAlignment="Left"/>
           <StackPanel x:Name="DirectPairingPanel">
-            <Image x:Name="PairingQr" Width="360" Height="360" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR"/>
+            <Image x:Name="PairingQr" Width="260" Height="260" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,16" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="Desktop pairing QR">
+              <Image.Style>
+                <Style TargetType="Image">
+                  <Style.Triggers><Trigger Property="Source" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></Trigger></Style.Triggers>
+                </Style>
+              </Image.Style>
+            </Image>
             <TextBlock x:Name="PairingDisplay" FontSize="20" Margin="0,8,0,4"/><TextBlock x:Name="PairingExpiry"/>
             <WrapPanel><Button Content="Copy pairing string" Click="CopyPairing"/><Button Content="Generate new pairing QR" Click="RenewPairing"/></WrapPanel>
           </StackPanel>
