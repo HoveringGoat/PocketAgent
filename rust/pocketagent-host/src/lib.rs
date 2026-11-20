@@ -68,10 +68,12 @@ pub enum HostAction {
     SetModel {
         conversation_id: String,
         model: String,
+        response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     },
     SetReasoning {
         conversation_id: String,
         effort: String,
+        response: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     },
     Interrupt {
         conversation_id: String,
@@ -1305,25 +1307,30 @@ async fn set_model(
     Json(input): Json<ModelInput>,
 ) -> impl IntoResponse {
     let Some(identity) = require_identity(&state.registry, &headers) else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
     if !state.registry.can_access(&id, identity.id) {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     }
     if active_turn_for(&state, &id) {
-        return StatusCode::CONFLICT;
+        return StatusCode::CONFLICT.into_response();
     }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     if state
         .actions
         .send(HostAction::SetModel {
             conversation_id: id,
             model: input.model.unwrap_or_default(),
+            response: sender,
         })
-        .is_ok()
+        .is_err()
     {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(30), receiver).await {
+        Ok(Ok(Ok(snapshot))) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
 
@@ -1334,25 +1341,30 @@ async fn set_reasoning(
     Json(input): Json<ReasoningInput>,
 ) -> impl IntoResponse {
     let Some(identity) = require_identity(&state.registry, &headers) else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
     if !state.registry.can_access(&id, identity.id) {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     }
     if active_turn_for(&state, &id) {
-        return StatusCode::CONFLICT;
+        return StatusCode::CONFLICT.into_response();
     }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     if state
         .actions
         .send(HostAction::SetReasoning {
             conversation_id: id,
             effort: input.effort.unwrap_or_default(),
+            response: sender,
         })
-        .is_ok()
+        .is_err()
     {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(30), receiver).await {
+        Ok(Ok(Ok(snapshot))) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
 
@@ -1774,22 +1786,44 @@ mod tests {
                 serde_json::json!({"effort": "high"}),
             ),
         ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    axum::http::Request::post(path)
-                        .header("authorization", format!("Bearer {token}"))
-                        .header("content-type", "application/json")
-                        .body(axum::body::Body::from(body.to_string()))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-            assert!(matches!(
-                received.recv().await.unwrap(),
-                HostAction::SetModel { .. } | HostAction::SetReasoning { .. }
-            ));
+            let request_app = app.clone();
+            let request_token = token.clone();
+            let request = tokio::spawn(async move {
+                request_app
+                    .oneshot(
+                        axum::http::Request::post(path)
+                            .header("authorization", format!("Bearer {request_token}"))
+                            .header("content-type", "application/json")
+                            .body(axum::body::Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            });
+            let action = received.recv().await.unwrap();
+            match action {
+                HostAction::SetModel { response, .. } => response
+                    .send(Ok(serde_json::json!({
+                        "id": "thread-1",
+                        "model": "gpt-test",
+                        "reasoningEffort": null
+                    })))
+                    .unwrap(),
+                HostAction::SetReasoning { response, .. } => response
+                    .send(Ok(serde_json::json!({
+                        "id": "thread-1",
+                        "model": "gpt-test",
+                        "reasoningEffort": "high"
+                    })))
+                    .unwrap(),
+                _ => panic!("expected model or reasoning action"),
+            }
+            let response = request.await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let snapshot: serde_json::Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(snapshot["id"], "thread-1");
         }
         let response = app
             .clone()

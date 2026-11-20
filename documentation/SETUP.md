@@ -157,6 +157,8 @@ pairing, provider credentials, and conversation state are not used.
 
 Rust 0.1.16 never changes a conversation's model merely because the provider catalog reports an `isDefault` model. **Use Codex settings** is the initial selection; only an explicit model choice is sent as an override and persisted with that conversation. Existing saved overrides remain unchanged until the user selects **Use Codex settings**.
 
+Rust 0.1.17 returns the updated conversation snapshot from model and reasoning mutations, matching the Android client's response contract. Android 0.4.5 validates folder, directory, model, and mutation payloads before rendering dialogs or transcripts, so an empty or malformed desktop response becomes an actionable error/refresh instead of a client crash.
+
 Rust 0.1.15 keeps a newly granted conversation visible during the short interval before the Codex worker finishes its metadata refresh. The Android client can therefore begin its authenticated read immediately; the placeholder title is replaced by the saved desktop title on the next host sync. Rust diagnostics now include device grant/revoke outcomes and authenticated `/api/conversations` counts (host snapshot, authorized grants, and visible results), without logging bearer tokens or message contents.
 
 Rust desktop diagnostics are appended to `%LOCALAPPDATA%/PocketAgent-rust/desktop.log` (or the XDG data equivalent). Entries record lifecycle and failure categories without message bodies, tokens, or provider stderr.

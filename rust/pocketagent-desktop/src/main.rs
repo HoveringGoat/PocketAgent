@@ -1775,34 +1775,62 @@ fn start_codex_worker(
                         HostAction::SetModel {
                             conversation_id,
                             model,
+                            response,
                         } => {
-                            if store.set_model_options(
+                            let effort = store
+                                .conversations
+                                .iter()
+                                .find(|conversation| conversation.id == conversation_id)
+                                .and_then(|conversation| conversation.reasoning_effort.clone());
+                            let result = if store.set_model_options(
                                 &conversation_id,
                                 (!model.trim().is_empty()).then_some(model),
-                                store
-                                    .conversations
-                                    .iter()
-                                    .find(|conversation| conversation.id == conversation_id)
-                                    .and_then(|conversation| conversation.reasoning_effort.clone()),
+                                effort,
                             ) {
-                                let _ = store.save();
-                            }
+                                store.save().map_err(|error| error.to_string()).and_then(|_| {
+                                    store
+                                        .conversations
+                                        .iter()
+                                        .find(|conversation| conversation.id == conversation_id)
+                                        .map(|record| {
+                                            host_snapshot(record, "", &store.repository_path, None)
+                                        })
+                                        .ok_or_else(|| "conversation disappeared".to_owned())
+                                })
+                            } else {
+                                Err("conversation not found".to_owned())
+                            };
+                            let _ = response.send(result);
                         }
                         HostAction::SetReasoning {
                             conversation_id,
                             effort,
+                            response,
                         } => {
-                            if store.set_model_options(
+                            let model = store
+                                .conversations
+                                .iter()
+                                .find(|conversation| conversation.id == conversation_id)
+                                .and_then(|conversation| conversation.model.clone());
+                            let result = if store.set_model_options(
                                 &conversation_id,
-                                store
-                                    .conversations
-                                    .iter()
-                                    .find(|conversation| conversation.id == conversation_id)
-                                    .and_then(|conversation| conversation.model.clone()),
+                                model,
                                 (!effort.trim().is_empty()).then_some(effort),
                             ) {
-                                let _ = store.save();
-                            }
+                                store.save().map_err(|error| error.to_string()).and_then(|_| {
+                                    store
+                                        .conversations
+                                        .iter()
+                                        .find(|conversation| conversation.id == conversation_id)
+                                        .map(|record| {
+                                            host_snapshot(record, "", &store.repository_path, None)
+                                        })
+                                        .ok_or_else(|| "conversation disappeared".to_owned())
+                                })
+                            } else {
+                                Err("conversation not found".to_owned())
+                            };
+                            let _ = response.send(result);
                         }
                         HostAction::Interrupt { conversation_id } => {
                             if selected_id.as_deref() == Some(conversation_id.as_str()) {

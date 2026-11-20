@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.5 - 2026-11-19
+
+- Prevent model/reasoning and new-conversation folder flows from crashing when a desktop response is empty or does not match the expected JSON schema.
+- Validate directory and model payloads before opening selection dialogs and refresh safely when a mutation response cannot include a snapshot.
+
 ## 0.4.4 - 2026-11-16
 
 - Allow archiving and restoring an idle conversation from PocketAgent metadata when its Codex thread is unavailable.

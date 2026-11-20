@@ -1423,11 +1423,21 @@ public final class MainActivity extends Activity {
             new JSONObject()
                 .put("folders", client.request("/directories", null))
                 .put("models", client.request("/models", null)),
-        result -> newConversationDialog((JSONObject) result),
+        result -> newConversationDialog(result instanceof JSONObject ? (JSONObject) result : null),
         false);
   }
 
   private void newConversationDialog(JSONObject options) {
+    if (options == null) {
+      problem("The desktop returned no folder or model data. Refresh and try again.");
+      return;
+    }
+    JSONObject folders = options.optJSONObject("folders");
+    JSONArray models = options.optJSONArray("models");
+    if (folders == null || models == null) {
+      problem("The desktop returned an invalid folder/model response. Refresh and try again.");
+      return;
+    }
     ApiClient client = api;
     LinearLayout panel = column();
     panel.setPadding(dp(16), 0, dp(16), 0);
@@ -1436,14 +1446,13 @@ public final class MainActivity extends Activity {
     folder.setContentDescription("Conversation working folder");
     folder.setText(
         conversation == null
-            ? options.optJSONObject("folders").optString("path")
+            ? folders.optString("path")
             : conversation.optString("workingDirectory"));
     panel.addView(folder, match());
     panel.addView(
         button("Browse folders", v -> browseFolders(folder.getText().toString(), folder::setText)),
         match());
     String[] chosen = {""};
-    JSONArray models = options.optJSONArray("models");
     Button model = button("Use Codex settings", null);
     model.setContentDescription("New conversation model");
     model.setOnClickListener(
@@ -1479,9 +1488,17 @@ public final class MainActivity extends Activity {
     action(
         () -> client.request("/directories?path=" + ApiClient.segment(path), null),
         result -> {
+          if (!(result instanceof JSONObject)) {
+            problem("The desktop returned an invalid folder response. Refresh and try again.");
+            return;
+          }
           JSONObject listing = (JSONObject) result;
           JSONArray roots = listing.optJSONArray("roots"),
               directories = listing.optJSONArray("directories");
+          if (roots == null || directories == null || listing.optString("path").isEmpty()) {
+            problem("The desktop returned an incomplete folder response. Refresh and try again.");
+            return;
+          }
           java.util.ArrayList<String> labels = new java.util.ArrayList<>(),
               paths = new java.util.ArrayList<>();
           if (!listing.isNull("parent")) {
@@ -1516,16 +1533,26 @@ public final class MainActivity extends Activity {
   }
 
   private void modelChoices(JSONArray models, ModelSelection selectedModel) {
+    if (models == null) {
+      problem("The desktop returned no model choices. Refresh and try again.");
+      return;
+    }
     String[] names = new String[models.length()];
-    for (int i = 0; i < models.length(); i++)
-      names[i] = models.optJSONObject(i).optString("displayName");
+    for (int i = 0; i < models.length(); i++) {
+      JSONObject candidate = models.optJSONObject(i);
+      if (candidate == null || candidate.optString("model").trim().isEmpty()) {
+        problem("The desktop returned an invalid model response. Refresh and try again.");
+        return;
+      }
+      names[i] = candidate.optString("displayName", candidate.optString("model"));
+    }
     new AlertDialog.Builder(this)
         .setTitle("Choose model")
         .setItems(
             names,
             (dialog, which) -> {
               JSONObject choice = models.optJSONObject(which);
-              selectedModel.accept(choice.optString("model"), names[which]);
+              if (choice != null) selectedModel.accept(choice.optString("model"), names[which]);
             })
         .setNegativeButton("Cancel", null)
         .show();
@@ -1543,7 +1570,7 @@ public final class MainActivity extends Activity {
         () -> client.request("/models", null),
         result ->
             modelChoices(
-                (JSONArray) result,
+                result instanceof JSONArray ? (JSONArray) result : null,
                 (slug, name) ->
                     action(
                         () ->
@@ -1551,7 +1578,10 @@ public final class MainActivity extends Activity {
                                 "/conversations/" + ApiClient.segment(id) + "/model",
                                 new JSONObject().put("model", slug)),
                         state -> {
-                          if (selected.equals(id)) renderConversation((JSONObject) state);
+                          if (selected.equals(id) && state instanceof JSONObject)
+                            renderConversation((JSONObject) state);
+                          else if (!(state instanceof JSONObject))
+                            refresh();
                           notice(
                               "Model selected for future messages, including scheduled messages.");
                           if (api == client && selected.equals(id)) showReasoning();
@@ -1574,6 +1604,10 @@ public final class MainActivity extends Activity {
         result -> {
           if (api != client || !selected.equals(id) || conversation == null
               || !model.equals(conversation.optString("model"))) return;
+          if (!(result instanceof JSONArray)) {
+            problem("The desktop returned an invalid model response. Refresh and try again.");
+            return;
+          }
           JSONArray models = (JSONArray) result;
           JSONObject selectedModel = null;
           for (int i = 0; i < models.length(); i++) {
@@ -1607,7 +1641,13 @@ public final class MainActivity extends Activity {
                 String effort = which == 0 ? null : labels[which];
                 action(
                     () -> client.request("/conversations/" + ApiClient.segment(id) + "/reasoning", new JSONObject().put("effort", effort == null ? JSONObject.NULL : effort)),
-                    state -> { if (selected.equals(id)) renderConversation((JSONObject) state); notice("Reasoning effort selected for future messages."); dialog.dismiss(); },
+                    state -> {
+                      if (selected.equals(id) && state instanceof JSONObject)
+                        renderConversation((JSONObject) state);
+                      else if (!(state instanceof JSONObject)) refresh();
+                      notice("Reasoning effort selected for future messages.");
+                      dialog.dismiss();
+                    },
                     false);
               })
               .setNegativeButton("Cancel", null)
