@@ -145,7 +145,7 @@ internal static class Program
             var snapshot = new ConversationSnapshot("readability", "Readability", "completed", null,
                 [new("user", "userMessage", "User sample", "", "completed", now), new("agent", "agentMessage", "Assistant sample", "", "completed", now), new("tool", "commandExecution", "", "Tool sample", "completed", now)],
                 [new("approval", "item/commandExecution/requestApproval", JsonSerializer.SerializeToElement(new { reason = "Approval reason" }), ["decline"], true)],
-                "Error sample", "PocketAgent", root, "fixture", "inherit", null, null, null, null, null, false);
+                "Error sample", "PocketAgent", root, "fixture-host", "inherit", null, null, null, null, "fixture-model", false);
             typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
             window.Show();
             var editButton = (Button)window.FindName("EditConversationButton")!;
@@ -191,7 +191,8 @@ internal static class Program
             var idleMetaHeight = metaSurface.ActualHeight;
             var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
-            if (!conversationMeta.Contains("completed", StringComparison.Ordinal) || !conversationMeta.Contains("fixture", StringComparison.Ordinal) || !conversationMeta.Contains("default", StringComparison.Ordinal))
+            if (conversationMeta != "completed - fixture-model default" ||
+                !Equals(formatConversationMeta.Invoke(window, [snapshot with { Model = null }]), "completed - Codex default"))
                 throw new InvalidOperationException("The conversation context must show status, model and reasoning like Android.");
             var sendButton = (Button)window.FindName("SendButton")!;
             if (!Equals(sendButton.Content, "Send"))
