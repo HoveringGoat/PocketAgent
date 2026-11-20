@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.20
+
+- Give the branding column enough width to show the complete PocketAgent version at the supported minimum window size.
+- Accept both legacy `agentMessage` and current Responses API `message` content when rendering Codex replies, including completed turns and history reads.
+
 ### Rust desktop preview 0.1.19
 
 - Follow the Codex model catalog cursor so every available non-hidden model is shown, matching the .NET host.

@@ -363,7 +363,10 @@ export component AppWindow inherits Window {
             height: 58px;
             spacing: 12px;
             Text {
-                width: 170px;
+                // Segoe UI bold needs a little over 170 px for the full
+                // `PocketAgent v0.1.x` label. Keep enough width at the
+                // supported 800 px window size so the version is not elided.
+                width: 220px;
                 text: app-version == "" ? "PocketAgent" : "PocketAgent v" + app-version;
                 color: #c1daa6;
                 font-size: 22px;

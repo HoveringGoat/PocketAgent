@@ -92,12 +92,17 @@ try {
   $reply = $null
   for ($attempt = 0; $attempt -lt 65 -and $null -eq $reply; $attempt++) {
     if (Test-Path -LiteralPath $env:POCKETAGENT_FIXTURE_STATE) {
-      $history = Get-Content -LiteralPath $env:POCKETAGENT_FIXTURE_STATE -Raw | ConvertFrom-Json
-      $completedTurns = @($history.PSObject.Properties | ForEach-Object { $_.Value.turns })
-      $reply = $completedTurns |
-        ForEach-Object { $_.items } |
-        Where-Object { $_.type -eq 'agentMessage' -and $_.text -like '*ready*' } |
-        Select-Object -First 1
+      try {
+        $history = Get-Content -LiteralPath $env:POCKETAGENT_FIXTURE_STATE -Raw | ConvertFrom-Json
+        $completedTurns = @($history.PSObject.Properties | ForEach-Object { $_.Value.turns })
+        $reply = $completedTurns |
+          ForEach-Object { $_.items } |
+          Where-Object { $_.type -eq 'agentMessage' -and $_.text -like '*ready*' } |
+          Select-Object -First 1
+      } catch [System.ArgumentException] {
+        # The fixture writes synchronously, but a read can still race the
+        # replacement on Windows. Keep polling until the JSON is complete.
+      }
     }
     if ($null -eq $reply) { Start-Sleep -Milliseconds 100 }
   }

@@ -861,10 +861,14 @@ fn start_codex_worker(
                             if !read_only_sessions.contains(&id) {
                                 continue;
                             }
-                            if let Some(current) = session.as_mut()
-                                && let Ok(history) = current.read_thread(&id).await
-                            {
-                                set_transcript(&weak, history);
+                            if let Some(current) = session.as_mut() {
+                                match current.read_thread(&id).await {
+                                    Ok(history) => set_transcript(&weak, history),
+                                    Err(error) => diagnostics::record(
+                                        "conversation",
+                                        &format!("mirror_read_failed {error}"),
+                                    ),
+                                }
                             }
                             continue;
                         }

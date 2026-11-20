@@ -298,8 +298,8 @@ impl CodexSession {
                             .and_then(Value::as_array)
                     {
                         for item in items {
-                            if item.get("type").and_then(Value::as_str) == Some("agentMessage")
-                                && let Some(text) = item.get("text").and_then(Value::as_str)
+                            if is_assistant_item(item)
+                                && let Some(text) = response_item_text(item)
                             {
                                 output.push_str(text);
                             }
@@ -718,14 +718,14 @@ fn append_completed_agent_item(
     let Some(item) = message.get("params").and_then(|params| params.get("item")) else {
         return;
     };
-    if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
+    if !is_assistant_item(item) {
         return;
     }
     let item_id = item.get("id").and_then(Value::as_str);
     if item_id.is_some_and(|id| streamed_agent_items.contains(id)) {
         return;
     }
-    if let Some(text) = item.get("text").and_then(Value::as_str) {
+    if let Some(text) = response_item_text(item) {
         output.push_str(text);
     }
     if let Some(item_id) = item_id {
@@ -788,10 +788,15 @@ fn render_item(item: &Value) -> Option<String> {
                     })
                     .map(|text| transcript_item("user", &text))
             }),
-        "agentMessage" => item
-            .get("text")
-            .and_then(Value::as_str)
-            .map(|text| transcript_item("assistant", text)),
+        "agentMessage" => response_item_text(item).map(|text| transcript_item("assistant", text)),
+        // Newer app-server responses use Responses API message items instead
+        // of the legacy agentMessage shape. Keep both wire formats readable.
+        "message" => {
+            let role = item.get("role").and_then(Value::as_str)?;
+            response_item_text(item).map(|text| {
+                transcript_item(if role == "user" { "user" } else { "assistant" }, text)
+            })
+        }
         "commandExecution" => {
             let command = item
                 .get("command")
@@ -835,6 +840,32 @@ fn render_item(item: &Value) -> Option<String> {
             .map(|source| transcript_item("assistant", &format!("![Image]({source})"))),
         _ => None,
     }
+}
+
+fn is_assistant_item(item: &Value) -> bool {
+    match item.get("type").and_then(Value::as_str) {
+        Some("agentMessage") => true,
+        Some("message") => item.get("role").and_then(Value::as_str) == Some("assistant"),
+        _ => false,
+    }
+}
+
+fn response_item_text(item: &Value) -> Option<&str> {
+    item.get("text").and_then(Value::as_str).or_else(|| {
+        item.get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| {
+                content.iter().find_map(|part| {
+                    let kind = part.get("type").and_then(Value::as_str);
+                    (matches!(
+                        kind,
+                        Some("text") | Some("output_text") | Some("input_text")
+                    ))
+                    .then(|| part.get("text").and_then(Value::as_str))
+                    .flatten()
+                })
+            })
+    })
 }
 
 fn transcript_item(role: &str, text: &str) -> String {
@@ -1184,6 +1215,37 @@ mod tests {
             }),
         );
         assert_eq!(output, "reply");
+    }
+
+    #[test]
+    fn responses_message_items_render_assistant_content() {
+        let text = thread_text(&json!({
+            "thread": { "items": [
+                { "type": "message", "role": "assistant", "content": [
+                    { "type": "output_text", "text": "current reply" }
+                ] }
+            ] }
+        }));
+        assert_eq!(text, "\u{001e}assistant\ncurrent reply");
+    }
+
+    #[test]
+    fn completed_responses_message_reaches_prompt_output() {
+        let mut output = String::new();
+        let mut streamed = HashSet::new();
+        append_completed_agent_item(
+            &mut output,
+            &mut streamed,
+            &json!({
+                "params": { "item": {
+                    "id": "response-item-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "current reply" }]
+                } }
+            }),
+        );
+        assert_eq!(output, "current reply");
     }
 
     #[test]

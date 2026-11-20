@@ -108,6 +108,10 @@ try {
         $appRect = $appName.Current.BoundingRectangle
         $locationRect = $location.Current.BoundingRectangle
         $usageRect = $usage.Current.BoundingRectangle
+        if ($appName.Current.Name -notmatch '^PocketAgent v\d+\.\d+\.\d+$' -or
+            $appRect.Width -lt 200) {
+            throw "PocketAgent branding/version is clipped or missing at $sizeLabel."
+        }
         $brandingRowDelta = [Math]::Abs($appRect.Top - $locationRect.Top)
         $usageRowDelta = $usageRect.Top - $locationRect.Top
         $usageIndent = [Math]::Abs($usageRect.Left - $locationRect.Left)
