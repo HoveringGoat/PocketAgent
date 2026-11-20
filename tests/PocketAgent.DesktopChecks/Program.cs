@@ -45,6 +45,9 @@ internal static class Program
             var settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
             settings.StartServerOnLaunch = false;
             settings.CheckUpdatesOnStartup = false;
+            var secretSettings = new HostSettings { CodexApiKey = "fixture-secret-that-must-not-be-serialized" };
+            if (JsonSerializer.Serialize(secretSettings).Contains("fixture-secret-that-must-not-be-serialized", StringComparison.Ordinal))
+                throw new InvalidOperationException("Codex API keys must not be serialized with host settings.");
             if (Environment.GetCommandLineArgs().Contains("--conversation-ui", StringComparer.OrdinalIgnoreCase))
             {
                 ConversationUiChecks.Run(window, root);

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -11,6 +12,7 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
     private readonly SemaphoreSlim startGate = new(1, 1);
     private readonly SemaphoreSlim writeGate = new(1, 1);
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> pending = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> turnCompletions = new(StringComparer.Ordinal);
     private readonly Channel<JsonElement> events = Channel.CreateUnbounded<JsonElement>(new() { SingleReader = true, SingleWriter = true });
     private readonly CancellationTokenSource lifetime = new();
     private Process? process;
@@ -22,6 +24,21 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
     public CodexExecutable? Executable { get; private set; }
     public ChannelReader<JsonElement> Events => events.Reader;
     public bool IsReady => ready && !failed;
+    public string CredentialEnvironmentVariable => settings.CodexApiKeyEnvironmentVariable;
+    public bool CredentialOverride => settings.CodexApiKeyOverride;
+
+    public ProviderCredentialInfo CredentialInfo
+    {
+        get
+        {
+            var variable = settings.CodexApiKeyEnvironmentVariable;
+            var value = settings.CodexApiKeyOverride ? settings.CodexApiKey : Environment.GetEnvironmentVariable(variable);
+            var source = settings.CodexApiKeyOverride
+                ? value is null ? "PocketAgent override is empty" : "PocketAgent protected store"
+                : value is null ? "Not detected" : $"Inherited {variable}";
+            return new(source, value is not null, value is null ? null : Fingerprint(value), variable);
+        }
+    }
 
     public async Task EnsureStarted()
     {
@@ -45,6 +62,12 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
                 StandardErrorEncoding = new UTF8Encoding(false),
                 WorkingDirectory = settings.RepositoryPath
             };
+            if (settings.CodexApiKeyOverride)
+            {
+                info.Environment.Remove(settings.CodexApiKeyEnvironmentVariable);
+                if (!string.IsNullOrWhiteSpace(settings.CodexApiKey))
+                    info.Environment[settings.CodexApiKeyEnvironmentVariable] = settings.CodexApiKey;
+            }
             foreach (var argument in settings.CodexArguments)
                 info.ArgumentList.Add(argument);
             ServerDiagnostics.Log("codex", Microsoft.Extensions.Logging.LogLevel.Information, $"process_start executable={Path.GetFileName(Executable.Path)} arguments={settings.CodexArguments.Length} working_directory_name={Path.GetFileName(Path.TrimEndingDirectorySeparator(settings.RepositoryPath))}");
@@ -111,6 +134,22 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
 
     public Task Respond(JsonElement id, object result) => Send(new { id, result });
 
+    public Task<JsonElement> WaitForTurnCompletion(string threadId, TimeSpan timeout)
+    {
+        var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!turnCompletions.TryAdd(threadId, completion))
+            throw new InvalidOperationException("Another provider verification is already running.");
+        return AwaitTurnCompletion(threadId, completion, timeout);
+    }
+
+    private async Task<JsonElement> AwaitTurnCompletion(string threadId, TaskCompletionSource<JsonElement> completion, TimeSpan timeout)
+    {
+        try { return await completion.Task.WaitAsync(timeout, lifetime.Token); }
+        finally { turnCompletions.TryRemove(threadId, out _); }
+    }
+
+    public void CancelTurnCompletion(string threadId) => turnCompletions.TryRemove(threadId, out _);
+
     private async Task Send(object message)
     {
         await writeGate.WaitAsync(lifetime.Token);
@@ -148,7 +187,12 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
                         completion.TrySetResult(message.GetProperty("result").Clone());
                 }
                 else if (message.TryGetProperty("method", out _))
+                {
+                    if (message.Text("method") == "turn/completed" && message.Field("params").Text("threadId") is { Length: > 0 } threadId &&
+                        turnCompletions.TryRemove(threadId, out var turnCompletion))
+                        turnCompletion.TrySetResult(message.Clone());
                     await events.Writer.WriteAsync(message.Clone(), lifetime.Token);
+                }
             }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
@@ -166,9 +210,13 @@ public sealed class CodexConnection(HostSettings settings) : IAsyncDisposable
             ready = false;
             foreach (var completion in pending.Values)
                 completion.TrySetException(new ApiException(503, "Codex disconnected before confirming the request. Its outcome may be unknown."));
+            foreach (var completion in turnCompletions.Values)
+                completion.TrySetException(new ApiException(503, "Codex disconnected before completing the verification request."));
             events.Writer.TryWrite(JsonSerializer.SerializeToElement(new { method = "pocketagent/disconnected" }));
         }
     }
+
+    private static string Fingerprint(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..12];
 
     private async Task DrainErrors()
     {

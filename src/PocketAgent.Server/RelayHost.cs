@@ -183,9 +183,11 @@ public static class RelayHost
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/provider/status", (ProviderDiagnostics diagnostics) => diagnostics.Check());
+        api.MapPost("/provider/verify", async (ProviderDiagnostics diagnostics) => Results.Ok(await diagnostics.VerifyInference()));
         api.MapGet("/models", (ProviderDiagnostics diagnostics) => diagnostics.Models());
         api.MapGet("/directories", (string? path, WorkspaceDirectories directories) => directories.Browse(path));
         api.MapGet("/usage", (ProviderUsage usage) => usage.Check());
+        api.MapPost("/usage/retry", (ProviderUsage usage) => usage.Check(true));
         api.MapGet("/scheduled", (HttpContext context, LocalStore store) => store.Scheduled(deviceId: context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapGet("/conversations/{id}/scheduled", (string id, HttpContext context, LocalStore store, Conversations conversations) =>
         {

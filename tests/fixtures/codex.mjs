@@ -84,17 +84,24 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           process.env.POCKETAGENT_FIXTURE_SIGNED_OUT === '1'
             ? null
             : {
-                type: 'chatgpt',
+                type: process.env.POCKETAGENT_FIXTURE_AUTH_TYPE ?? 'chatgpt',
                 email: 'private-test-account@example.com',
                 id: 'private-account-id',
               },
-        requiresOpenaiAuth: true,
+        requiresOpenaiAuth: process.env.POCKETAGENT_FIXTURE_AUTH_TYPE === 'apiKey' ? false : true,
       });
       break;
     case 'config/read':
       reply({ config: { model: 'gpt-6.1-sol', model_provider: null } });
       break;
     case 'account/rateLimits/read':
+      if (process.env.POCKETAGENT_FIXTURE_USAGE_CHATGPT_ONLY === '1') {
+        write({
+          id: request.id,
+          error: { code: -32601, message: 'Codex: chatgpt authentication required to read rate limits' },
+        });
+        break;
+      }
       if (process.env.POCKETAGENT_FIXTURE_USAGE_UNSUPPORTED === '1') {
         write({
           id: request.id,
@@ -215,6 +222,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       break;
     case 'turn/start': {
       checkPermissions(params, true);
+      if (process.env.POCKETAGENT_FIXTURE_PROJECT_ERROR === '1') {
+        write({
+          id: request.id,
+          error: {
+            code: -32000,
+            message: 'Unexpected status 401 unauthorized: you do not have access to the project tied to the API key.',
+          },
+        });
+        break;
+      }
       const threadId = params.threadId;
       const thread = threads[threadId];
       if (params.cwd !== thread.cwd) throw new Error('Turn started in the wrong folder.');
@@ -255,6 +272,18 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       }
       reply({ turn });
       notify('turn/started', { threadId, turn });
+      if (process.env.POCKETAGENT_FIXTURE_PROJECT_ERROR_AFTER_ACCEPT === '1') {
+        setTimeout(() => {
+          turn.status = 'failed';
+          turn.error = { message: 'Unexpected status 401 unauthorized: you do not have access to the project tied to the API key.' };
+          notify('turn/completed', { threadId, turn });
+        }, 20);
+        break;
+      }
+      if (text === 'pocketagent-inference-check') {
+        setTimeout(() => completeWithoutItems(threadId), 20);
+        break;
+      }
       if (text === 'drop') {
         setTimeout(() => process.exit(0), 100);
         break;

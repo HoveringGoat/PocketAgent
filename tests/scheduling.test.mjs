@@ -58,11 +58,27 @@ test('unavailable usage is explicit and does not disable ordinary conversation i
     assert.equal(usage.available, false);
     assert.equal(usage.fiveHour, null);
     assert.equal(usage.weekly, null);
+    assert.equal(usage.unavailableReason, 'Usage limits are unavailable.');
     const thread = await (await relay.request('/conversations', {})).json();
     const receipt = await (
       await relay.request(`/conversations/${thread.id}/messages`, { text: 'hold' })
     ).json();
     assert.equal(receipt.queued, false);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test('ChatGPT-only usage failures enter a quiet circuit until manually retried', async () => {
+  const relay = await startRelay({ extraEnv: { POCKETAGENT_FIXTURE_USAGE_CHATGPT_ONLY: '1' } });
+  try {
+    await relay.pair();
+    const first = await (await relay.request('/usage')).json();
+    const second = await (await relay.request('/usage')).json();
+    assert.equal(first.unavailableReason, 'Usage limits are unavailable for Platform API-key authentication.');
+    assert.deepEqual(second, first);
+    const retried = await (await relay.request('/usage/retry', {})).json();
+    assert.equal(retried.available, false);
   } finally {
     await relay.stop();
   }

@@ -72,6 +72,8 @@ public partial class MainWindow : Window
         if (RepositorySetting.Text.Length == 0 && repositoryArgument >= 0 && repositoryArgument + 1 < arguments.Length)
             RepositorySetting.Text = arguments[repositoryArgument + 1];
         CodexSetting.Text = settings.Host.CodexExecutable;
+        CodexApiKeyVariableSetting.Text = settings.Host.CodexApiKeyEnvironmentVariable;
+        UpdateCodexCredentialStatus();
         PermissionModeSetting.SelectedValue = settings.Host.PermissionMode;
         StartServerOnLaunchSetting.IsChecked = settings.StartServerOnLaunch;
         LaunchOnWindowsStartupSetting.IsChecked = settings.LaunchOnWindowsStartup;
@@ -100,6 +102,17 @@ public partial class MainWindow : Window
     {
         try { var executable = CodexExecutableResolver.Resolve(settings.Host); CodexResolved.Text = $"{executable.Source}\n{executable.Path}"; }
         catch (Exception exception) { CodexResolved.Text = exception.Message; }
+    }
+
+    private void UpdateCodexCredentialStatus()
+    {
+        CodexApiKeyStatus.Text = !CodexCredentialStore.IsAvailable
+            ? "Protected API-key storage is unavailable on this operating system."
+            : settings.Host.CodexApiKeyOverride && CodexCredentialStore.Exists()
+                ? $"A saved API-key override is present for {settings.Host.CodexApiKeyEnvironmentVariable}. The key value is hidden."
+            : settings.Host.CodexApiKeyOverride
+                ? "A saved API-key override is enabled, but no protected key was found. Enter a replacement before starting Codex."
+                : $"No saved override. Codex may use {settings.Host.CodexApiKeyEnvironmentVariable} from the desktop environment or its own sign-in store.";
     }
 
     private void SelectNavigation(object sender, RoutedEventArgs e)
@@ -165,6 +178,8 @@ public partial class MainWindow : Window
                 CodexExecutable = CodexSetting.Text.Trim(),
                 CodexArguments = settings.Host.CodexArguments,
                 CodexExtensionsDirectory = settings.Host.CodexExtensionsDirectory,
+                CodexApiKeyEnvironmentVariable = CodexApiKeyVariableSetting.Text.Trim(),
+                CodexApiKeyOverride = settings.Host.CodexApiKeyOverride || !string.IsNullOrWhiteSpace(CodexApiKeySetting.Password),
                 ListenAddress = AddressSetting.Text.Trim(),
                 Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture),
                 CertificatePath = CertificateSetting.Text.Trim(),
@@ -178,13 +193,17 @@ public partial class MainWindow : Window
             }
         };
         RuntimeHostSettings(candidate.Host).Validate();
+        if (!string.IsNullOrWhiteSpace(CodexApiKeySetting.Password))
+            CodexCredentialStore.Save(CodexApiKeySetting.Password);
         candidate.Save(); settings = candidate;
+        CodexApiKeySetting.Clear();
         replacingRelayEnrollment = false;
         RelayEnrollmentSetting.Clear();
         UpdateRelaySetup();
         StartupRegistration.SetEnabled(candidate.LaunchOnWindowsStartup);
         updateTimer.IsEnabled = candidate.CheckUpdatesPeriodically;
         ResolveCodex();
+        UpdateCodexCredentialStatus();
     }
 
     private async void SaveSettings(object sender, RoutedEventArgs e) => await Act(() => { SaveConfiguration(); ErrorDisplay.Text = "Settings saved."; return Task.CompletedTask; });
@@ -326,6 +345,7 @@ public partial class MainWindow : Window
         {
             SaveConfiguration();
             var host = RuntimeHostSettings(settings.Host);
+            host.CodexApiKey = host.CodexApiKeyOverride ? CodexCredentialStore.Read() : null;
             if (IPAddress.TryParse(host.ListenAddress, out var listenAddress) && !IPAddress.IsLoopback(listenAddress) && !WindowsFirewall.IsConfigured(host.Port))
             {
                 var choice = AppDialogs.Show(this, $"Allow inbound TCP {host.Port} through Windows Firewall? PocketAgent will create one port-based rule named '{WindowsFirewall.RuleName(host.Port)}'. It is tied to the port, not this version's executable path, so future updates will not prompt again. The rule is needed for inbound connections and can be removed from Windows Firewall later.", "Windows Firewall", MessageBoxButton.YesNo);
@@ -490,8 +510,12 @@ public partial class MainWindow : Window
             var sessions = await Conversations.List();
             if (relay != running) return;
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
-            UsageDisplay.Text = $"5hr: {UsageText(usage.FiveHour, true)} | weekly: {UsageText(usage.Weekly, false)}";
-            UsageDisplay.ToolTip = $"Five-hour reset: {usage.FiveHour?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}\nWeekly reset: {usage.Weekly?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}";
+            UsageDisplay.Text = usage.Available
+                ? $"5hr: {UsageText(usage.FiveHour, true)} | weekly: {UsageText(usage.Weekly, false)}"
+                : usage.UnavailableReason ?? "Usage limits unavailable.";
+            UsageDisplay.ToolTip = usage.Available
+                ? $"Five-hour reset: {usage.FiveHour?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}\nWeekly reset: {usage.Weekly?.ResetsAt?.LocalDateTime.ToString("g") ?? "unavailable"}"
+                : usage.UnavailableReason ?? "Usage limits are unavailable.";
             var signature = JsonSerializer.Serialize(sessions);
             if (selected is not null && !sessions.Any(session => session.Id == selected))
             {
@@ -1329,14 +1353,85 @@ public partial class MainWindow : Window
         if (File.Exists(apk)) Process.Start(new ProcessStartInfo("explorer.exe") { Arguments = $"/select,\"{apk}\"", UseShellExecute = true });
         else ErrorDisplay.Text = "The signed Android APK is in the artifacts folder after scripts/Build-Android.ps1 runs.";
     }
+    private async void SaveCodexApiKey(object sender, RoutedEventArgs e) => await Act(() =>
+    {
+        if (relay is not null) throw new InvalidOperationException("Stop the server before replacing the Codex API key.");
+        if (string.IsNullOrWhiteSpace(CodexApiKeySetting.Password)) throw new InvalidOperationException("Paste an OpenAI Platform API key first.");
+        SaveConfiguration();
+        ErrorDisplay.Text = "API key saved securely. Start the server, then run Check Codex connection.";
+        return Task.CompletedTask;
+    });
+
+    private async void RemoveCodexApiKey(object sender, RoutedEventArgs e) => await Act(() =>
+    {
+        if (relay is not null) throw new InvalidOperationException("Stop the server before removing the Codex API key override.");
+        CodexCredentialStore.Clear();
+        settings.Host.CodexApiKeyOverride = false;
+        settings.Save();
+        UpdateCodexCredentialStatus();
+        ErrorDisplay.Text = "Saved API-key override removed. Codex will use its environment or sign-in store when it starts.";
+        return Task.CompletedTask;
+    });
+
     private async void CheckProvider(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is null) throw new InvalidOperationException("Start the server first.");
-        var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
+        var diagnostics = relay.Services.GetRequiredService<ProviderDiagnostics>();
+        var status = await diagnostics.Check();
         providerModel = status.ConfiguredModel ?? status.DefaultModel;
-        var binary = relay.Services.GetRequiredService<CodexConnection>().Executable;
-        ProviderDisplay.Text = $"{(status.SignInAvailable ? "Desktop sign-in found" : "Desktop sign-in missing")}\nModel: {status.ConfiguredModel ?? status.DefaultModel ?? "provider default"}\n{(status.ConfiguredModelInCatalog == false ? "Configured model is absent from this executable's catalog. " : "")}Inference has not been verified.\n{binary?.Source}\n{binary?.Path}";
+        var connection = relay.Services.GetRequiredService<CodexConnection>();
+        var binary = connection.Executable;
+        var fileVersion = binary is null ? null : TryFileVersion(binary.Path);
+        ProviderDisplay.Text = $"{(status.Connected ? "Codex process connected" : "Codex process unavailable")}\n" +
+            $"Authentication: {status.AuthenticationType ?? "not identified"}\n" +
+            $"Credential: {(status.CredentialPresent ? status.CredentialSource : "not detected")} ({status.CredentialEnvironmentVariable})\n" +
+            $"Credential fingerprint: {connection.CredentialInfo.Fingerprint ?? "unavailable"} (comparison only; key hidden)\n" +
+            $"Provider: {status.Provider ?? "not identified"}\n" +
+            $"Model: {status.ConfiguredModel ?? status.DefaultModel ?? "provider default"}\n" +
+            $"Model catalog: {(status.ConfiguredModelInCatalog == false ? "configured model is absent" : status.Models.Length > 0 ? $"{status.Models.Length} model(s) available" : "unavailable")}\n" +
+            "Inference access: not tested\n" +
+            $"Executable: {binary?.Source ?? "not resolved"}\n{binary?.Path ?? ""}{(fileVersion is null ? "" : $"\nFile version: {fileVersion}")}" +
+            (string.IsNullOrWhiteSpace(status.Error) ? "" : $"\nDiagnostic details: {status.Error}");
+        ProviderResolutionPanel.Visibility = Visibility.Collapsed;
     });
+
+    private async void VerifyProvider(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null) throw new InvalidOperationException("Start the server first.");
+        VerifyProviderButton.IsEnabled = false;
+        try
+        {
+            var result = await relay.Services.GetRequiredService<ProviderDiagnostics>().VerifyInference();
+            ProviderDisplay.Text = result.Verified
+                ? $"Inference access verified\nModel: {result.Model ?? "provider default"}\nChecked: {result.CheckedAt.LocalDateTime:g}"
+                : $"Inference access failed\nModel: {result.Model ?? "provider default"}\n{result.Message}";
+            var projectFailure = result.ProviderStatus == 401 || result.Message.Contains("project", StringComparison.OrdinalIgnoreCase);
+            ProviderResolutionPanel.Visibility = projectFailure ? Visibility.Visible : Visibility.Collapsed;
+            ProviderResolutionText.Text = projectFailure
+                ? "The credential was accepted far enough to identify its project, but that project was rejected for this model. Grant the project model access or replace the saved key, restart Codex, and run this test again."
+                : "Update the credential or provider configuration, restart Codex, and run this test again.";
+        }
+        finally { VerifyProviderButton.IsEnabled = true; }
+    });
+
+    private async void RetryProviderUsage(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null) throw new InvalidOperationException("Start the server first.");
+        var usage = await relay.Services.GetRequiredService<ProviderUsage>().Check(true);
+        UsageDisplay.Text = usage.Available
+            ? $"5hr: {UsageText(usage.FiveHour, true)} | weekly: {UsageText(usage.Weekly, false)}"
+            : usage.UnavailableReason ?? "Usage limits unavailable.";
+        UsageDisplay.ToolTip = usage.UnavailableReason ?? "Usage limits are unavailable.";
+    });
+
+    private void OpenProviderProject(object sender, RoutedEventArgs e) => OpenExternal("https://platform.openai.com/settings/organization/projects");
+    private void OpenProviderKeys(object sender, RoutedEventArgs e) => OpenExternal("https://platform.openai.com/api-keys");
+    private static void OpenExternal(string address) => Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
+    private static string? TryFileVersion(string path)
+    {
+        try { return FileVersionInfo.GetVersionInfo(path).FileVersion; }
+        catch { return null; }
+    }
     private void OpenGuide(object sender, RoutedEventArgs e)
     {
         var file = Path.Combine(AppContext.BaseDirectory, "documentation", "SETUP.md");

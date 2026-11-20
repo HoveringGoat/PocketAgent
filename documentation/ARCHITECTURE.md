@@ -12,6 +12,10 @@ Desktop administration calls local services in-process. The network API exposes 
 
 `CodexExecutableResolver` prioritizes an explicit executable override, then the highest installed stable VS Code `openai.chatgpt-*` extension's architecture-matching native binary, then a native CLI on PATH/npm locations. The default extension root is the current user's `.vscode/extensions`; `CodexExtensionsDirectory` can override it. No extension files are copied, changed, or redistributed. An already running provider process keeps its selected executable until restart. The model is never silently replaced.
 
+Desktop Settings can save an OpenAI Platform API key in the current Windows user's Credential Manager. The secret is never serialized into `desktop.json`, logged, copied into diagnostics, or included in a relay/mobile payload. When the saved override is enabled, `CodexConnection` removes the inherited value for the selected environment variable and injects the protected value only into the newly launched Codex child. Removing the override returns to the inherited environment or Codex-managed sign-in store. The settings page shows the selected executable source/path, provider-reported authentication mode, credential source, environment-variable name and a short SHA-256 comparison fingerprint without exposing the key.
+
+The read-only provider check calls `account/read`, `config/read` and the paginated model catalog. Catalog access is not treated as inference entitlement. The explicit **Test inference access** action creates an unlisted provider verification thread and sends one clearly labeled test request; it does not create a PocketAgent conversation. A successful `turn/completed` proves the selected provider/model path accepted an inference request. A provider rejection is returned with its status and sanitized message, including project-access failures. The UI offers OpenAI project and API-key settings links, key replacement, model selection and recheck. PocketAgent cannot grant an OpenAI project permission itself.
+
 `HostSettings.PermissionMode` is a desktop-owned startup setting:
 
 | Value | Behavior |
@@ -101,7 +105,7 @@ Readability tests inspect effective brushes and rendered screen surfaces, but ca
 
 ## Usage and scheduled messages
 
-`ProviderUsage` reads `account/rateLimits/read` through the same provider connection and accepts rate-limit updates. It exposes only normalized remaining percentage, duration, reset time and availability. Account IDs, plan/credit details and upsell payloads stay private. Five-hour and weekly labels require reported 300-minute and 10080-minute windows; unsupported/missing data is shown as unavailable. Read results are briefly cached. No credits or earned resets are purchased/consumed by PocketAgent.
+`ProviderUsage` reads `account/rateLimits/read` through the same provider connection and accepts rate-limit updates. It exposes only normalized remaining percentage, duration, reset time and availability. Account IDs, plan/credit details and upsell payloads stay private. Five-hour and weekly labels require reported 300-minute and 10080-minute windows. When the provider reports that rate limits require ChatGPT authentication, usage enters a quiet unsupported state and the recurring poll stops until the provider restarts, authentication mode changes or the user selects **Retry usage check**. Other failures remain unavailable without becoming a sign-in verdict. No credits or earned resets are purchased/consumed by PocketAgent.
 
 `ScheduledMessages.Send` checks known exhausted windows. A blocked prompt is persisted and acknowledged as queued, with the reported reset time or an explicit unknown-reset state. The latest reset among exhausted windows is used. A later provider `usageLimitExceeded` failure also defers an accepted prompt only when no work is known to have executed. It never automatically repeats partial work or an uncertain submission.
 

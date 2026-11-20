@@ -293,7 +293,8 @@ internal static class RelaySetupChecks
             window.UpdateLayout();
             var viewport = (ScrollContentPresenter)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
             var primaryControls = new[] { "RelayModeSetting", "RelayServerOffNotice", "RelayEnrollmentSetting", "RelayNodeStatus", "RelayUpstreamStatus",
-                "CopyRelayEnrollmentButton", "UnenrollRelayButton", "SaveRelayEnrollmentButton", "ReplaceRelayEnrollmentButton" };
+                "CopyRelayEnrollmentButton", "UnenrollRelayButton", "SaveRelayEnrollmentButton", "ReplaceRelayEnrollmentButton", "CodexApiKeySetting",
+                "CodexApiKeyVariableSetting", "SaveCodexApiKeyButton", "RemoveCodexApiKeyButton", "VerifyProviderButton", "ProviderDisplay" };
             foreach (var name in primaryControls)
             {
                 var control = Control<FrameworkElement>(window, name);

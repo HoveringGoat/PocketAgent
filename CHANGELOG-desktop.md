@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.21 - 2026-11-20
+
+- Add protected in-app Codex Platform API-key replacement and credential-source diagnostics.
+- Separate read-only provider checks from explicit inference verification, with actionable project-access guidance.
+- Stop recurring usage-limit polling when the provider only supports ChatGPT authentication.
+
 ## 0.3.20 - 2026-11-20
 
 - Select and copy transcript messages, formatted agent replies, expanded activity output, and conversation errors.

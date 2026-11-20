@@ -48,3 +48,61 @@ test('provider status reports missing sign-in on an otherwise paired phone', asy
     await relay.stop();
   }
 });
+
+test('provider status identifies Platform API-key authentication without exposing the key', async () => {
+  const relay = await startRelay({
+    extraEnv: {
+      POCKETAGENT_FIXTURE_AUTH_TYPE: 'apiKey',
+      OPENAI_API_KEY: 'fixture-api-key-that-must-not-appear',
+    },
+  });
+  try {
+    await relay.pair();
+    const status = await (await relay.request('/provider/status')).json();
+    assert.equal(status.authenticationType, 'apiKey');
+    assert.equal(status.credentialPresent, true);
+    assert.equal(status.credentialEnvironmentVariable, 'OPENAI_API_KEY');
+    assert.equal(JSON.stringify(status).includes('fixture-api-key-that-must-not-appear'), false);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test('explicit provider verification proves inference access', async () => {
+  const relay = await startRelay();
+  try {
+    await relay.pair();
+    const response = await relay.request('/provider/verify', {});
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.verified, true);
+    assert.equal(result.message, 'Inference access verified.');
+  } finally {
+    await relay.stop();
+  }
+});
+
+test('provider verification reports project access failures without retrying', async () => {
+  const relay = await startRelay({ extraEnv: { POCKETAGENT_FIXTURE_PROJECT_ERROR: '1' } });
+  try {
+    await relay.pair();
+    const result = await (await relay.request('/provider/verify', {})).json();
+    assert.equal(result.verified, false);
+    assert.equal(result.providerStatus, 401);
+    assert.match(result.message, /project tied to the API key/);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test('provider verification classifies deferred project access failures', async () => {
+  const relay = await startRelay({ extraEnv: { POCKETAGENT_FIXTURE_PROJECT_ERROR_AFTER_ACCEPT: '1' } });
+  try {
+    await relay.pair();
+    const result = await (await relay.request('/provider/verify', {})).json();
+    assert.equal(result.verified, false);
+    assert.equal(result.providerStatus, 401);
+  } finally {
+    await relay.stop();
+  }
+});

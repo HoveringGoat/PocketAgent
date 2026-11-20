@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json.Serialization;
 
 namespace PocketAgent;
 
@@ -13,6 +14,10 @@ public sealed class HostSettings
     public string CertificatePath { get; set; } = "";
     public string CodexExecutable { get; set; } = "";
     public string CodexExtensionsDirectory { get; set; } = "";
+    public string CodexApiKeyEnvironmentVariable { get; set; } = "OPENAI_API_KEY";
+    public bool CodexApiKeyOverride { get; set; }
+    [JsonIgnore]
+    public string? CodexApiKey { get; set; }
     public string PublicOrigin { get; set; } = "";
     public string DirectOrigin { get; set; } = "";
     public bool PinnedCertificate { get; set; }
@@ -75,6 +80,9 @@ public sealed class HostSettings
             RepositoryPath = Path.GetFullPath(RepositoryPath);
         if (CodexArguments.Length == 0)
             CodexArguments = ["app-server", "--listen", "stdio://"];
+        if (string.IsNullOrWhiteSpace(CodexApiKeyEnvironmentVariable) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(CodexApiKeyEnvironmentVariable, "^[A-Za-z_][A-Za-z0-9_]*$"))
+            throw new InvalidOperationException("The Codex API-key environment variable must be a valid environment variable name.");
         if (Relay.Enabled && (!Guid.TryParse(Relay.HostId, out var relayHostId) || relayHostId == Guid.Empty || string.IsNullOrWhiteSpace(Relay.HostToken)))
             throw new InvalidOperationException("Relay.HostId and Relay.HostToken are required when relay mode is enabled.");
         if (Relay.ConnectsUpstream && !string.IsNullOrWhiteSpace(Relay.UpstreamUrl))
