@@ -991,7 +991,7 @@ public partial class MainWindow : Window
                 var content = TranscriptMarkdown.ReadOnlyText(item.Text);
                 content.Margin = new Thickness(12);
                 renderedRows[item.Id] = content;
-                Transcript.Children.Add(new Border { Child = content, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2A3B2D")), CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
+                Transcript.Children.Add(new Border { Child = content, Background = Brushes.Transparent, CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
             }
             foreach (var image in item.Images ?? []) RenderImage(item, image, snapshot);
         }

@@ -83,6 +83,10 @@ internal static class ConversationUiChecks
         var group = transcript.Children.OfType<Expander>().Single();
         if (group.IsExpanded || !Equals(group.Header, "Agent ran 10 commands"))
             throw new InvalidOperationException("Ten routine commands should form one collapsed activity group.");
+        var userMessageSurface = Descendants(transcript).OfType<Border>().FirstOrDefault(border =>
+            Descendants(border).OfType<TextBox>().Any(text => text.Text == "Earlier message 29"));
+        if (userMessageSurface is not { Background: SolidColorBrush { Color: { A: 0 } } })
+            throw new InvalidOperationException("User messages must keep the transcript background instead of rendering an opaque bubble.");
         if (!Descendants(transcript).OfType<Button>().Any(button => button.Content?.ToString()?.Contains("failed command") == true))
             throw new InvalidOperationException("A failed command must remain visible outside the routine activity group.");
         var header = (ToggleButton)group.Template.FindName("HeaderSite", group);
