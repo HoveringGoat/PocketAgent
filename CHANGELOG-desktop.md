@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.22
+
+- Fall back to `thread/items/list` when paginated Codex history returns turns without renderable items, so active or externally-owned sessions still show their user and assistant messages.
+
 ### Rust desktop preview 0.1.21
 
 - Put the Codex wrapper and all provider descendants in a Windows kill-on-close job so crashed or closed Rust clients do not leave an orphaned app-server holding a thread writer lease.

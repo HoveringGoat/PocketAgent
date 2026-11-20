@@ -471,7 +471,32 @@ impl CodexSession {
                 .and_then(Value::as_array)
                 .map(|data| recent_turns_in_display_order(data, INITIAL_HISTORY_TURNS as usize))
                 .unwrap_or_default();
-            Ok(turns_text(&turns))
+            let history = turns_text(&turns);
+            if !history.trim().is_empty() {
+                return Ok(history);
+            }
+
+            // A thread owned by another app-server can report paginated
+            // metadata/turns without including usable items in the turns
+            // response. The protocol provides thread/items/list specifically
+            // for this case; use it as a compatibility fallback so a session
+            // does not appear loaded while rendering an empty transcript.
+            let items_page = self
+                .request(
+                    "thread/items/list",
+                    json!({
+                        "threadId": thread_id,
+                        "limit": INITIAL_HISTORY_TURNS * 8,
+                        "sortDirection": "desc"
+                    }),
+                )
+                .await?;
+            let items = items_page
+                .get("data")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            Ok(paginated_items_text(items))
         } else {
             Ok(thread_text(&result))
         }
@@ -832,6 +857,16 @@ fn turns_text(turns: &[Value]) -> String {
         .join("\n\n")
 }
 
+fn paginated_items_text(entries: &[Value]) -> String {
+    entries
+        .iter()
+        .rev()
+        .filter_map(|entry| entry.get("item"))
+        .filter_map(render_item)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn recent_turns_in_display_order(data: &[Value], limit: usize) -> Vec<Value> {
     data.iter().take(limit).cloned().rev().collect()
 }
@@ -850,9 +885,12 @@ fn render_item(item: &Value) -> Option<String> {
                         content
                             .iter()
                             .filter_map(|part| {
-                                (part.get("type").and_then(Value::as_str) == Some("text"))
-                                    .then(|| part.get("text").and_then(Value::as_str))
-                                    .flatten()
+                                matches!(
+                                    part.get("type").and_then(Value::as_str),
+                                    Some("text") | Some("input_text")
+                                )
+                                .then(|| part.get("text").and_then(Value::as_str))
+                                .flatten()
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -1495,6 +1533,33 @@ mod tests {
         assert_eq!(
             turns_text(&turns),
             "\u{001e}user\nolder\n\n\u{001e}assistant\nnewest"
+        );
+    }
+
+    #[test]
+    fn paginated_item_fallback_renders_wrapped_items_in_display_order() {
+        let newest_first = vec![
+            json!({
+                "turnId": "turn-new",
+                "item": {
+                    "id": "item-new",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "newest reply" }]
+                }
+            }),
+            json!({
+                "turnId": "turn-old",
+                "item": {
+                    "id": "item-old",
+                    "type": "userMessage",
+                    "content": [{ "type": "input_text", "text": "older prompt" }]
+                }
+            }),
+        ];
+        assert_eq!(
+            paginated_items_text(&newest_first),
+            "\u{001e}user\nolder prompt\n\n\u{001e}assistant\nnewest reply"
         );
     }
 
