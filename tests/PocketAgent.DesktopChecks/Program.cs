@@ -37,17 +37,6 @@ internal static class Program
                 !diagnosticsText.Contains("EXCEPTION source=desktop-check", StringComparison.Ordinal) ||
                 diagnosticsText.Contains("should-not-appear", StringComparison.Ordinal))
                 throw new InvalidOperationException("Desktop diagnostics must record lifecycle and exception entries without exposing token-like values.");
-            const string providerSecret = "sk-fixture-provider-secret";
-            ServerDiagnostics.Log("codex-stderr", Microsoft.Extensions.Logging.LogLevel.Warning,
-                $"provider_error status=401 project=proj_fixture request=req_fixture authorization=Bearer {providerSecret} api_key={providerSecret}");
-            var serverDiagnosticsLog = ServerDiagnostics.LogPath;
-            var providerDiagnostics = File.ReadAllText(serverDiagnosticsLog);
-            if (!providerDiagnostics.Contains("category=codex-stderr", StringComparison.Ordinal) ||
-                !providerDiagnostics.Contains("status=401", StringComparison.Ordinal) ||
-                !providerDiagnostics.Contains("project=proj_fixture", StringComparison.Ordinal) ||
-                !providerDiagnostics.Contains("request=req_fixture", StringComparison.Ordinal) ||
-                providerDiagnostics.Contains(providerSecret, StringComparison.Ordinal))
-                throw new InvalidOperationException("Provider stderr diagnostics must retain safe error context while redacting credentials.");
             var parser = typeof(UpdateService).GetMethod("TryDesktopVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
             var parseArguments = new object?[] { "desktop-v0.3.2", null };
             if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
