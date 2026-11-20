@@ -258,6 +258,7 @@ function Invoke-ReleaseTestGate([string]$dotnetCommand) {
 
     $networkChecksProject = Join-Path $projectRoot 'tests/PocketAgent.NetworkChecks/PocketAgent.NetworkChecks.csproj'
     $desktopChecksProject = Join-Path $projectRoot 'tests/PocketAgent.DesktopChecks/PocketAgent.DesktopChecks.csproj'
+    $relayChecksProject = Join-Path $projectRoot 'tests/PocketAgent.RelayChecks/PocketAgent.RelayChecks.csproj'
     $serverDll = Join-Path $projectRoot 'src/PocketAgent.Server/bin/Release/net10.0/PocketAgent.Server.dll'
     $previousServerDll = $env:POCKETAGENT_TEST_SERVER_DLL
     $previousNode = $env:POCKETAGENT_TEST_NODE
@@ -266,9 +267,11 @@ function Invoke-ReleaseTestGate([string]$dotnetCommand) {
         Invoke-Checked $dotnetCommand @('restore', 'PocketAgent.slnx', '--locked-mode') 'Release test gate dependency restore failed for the solution.'
         Invoke-Checked $dotnetCommand @('restore', $networkChecksProject, '--locked-mode') 'Release test gate dependency restore failed for NetworkChecks.'
         Invoke-Checked $dotnetCommand @('restore', $desktopChecksProject, '--locked-mode') 'Release test gate dependency restore failed for DesktopChecks.'
+        Invoke-Checked $dotnetCommand @('restore', $relayChecksProject, '--locked-mode') 'Release test gate dependency restore failed for RelayChecks.'
         Invoke-Checked $dotnetCommand @('build', 'PocketAgent.slnx', '--no-restore', '-c', 'Release') 'Release test gate solution build failed.'
         Invoke-Checked $dotnetCommand @('build', $networkChecksProject, '--no-restore', '-c', 'Release') 'Release test gate NetworkChecks build failed.'
         Invoke-Checked $dotnetCommand @('build', $desktopChecksProject, '--no-restore', '-c', 'Release') 'Release test gate DesktopChecks build failed.'
+        Invoke-Checked $dotnetCommand @('build', $relayChecksProject, '--no-restore', '-c', 'Release') 'Release test gate RelayChecks build failed.'
         if (!(Test-Path -LiteralPath $serverDll)) { throw "Release test gate server assembly was not produced: $serverDll" }
 
         $env:POCKETAGENT_TEST_SERVER_DLL = $serverDll
@@ -276,6 +279,7 @@ function Invoke-ReleaseTestGate([string]$dotnetCommand) {
         Invoke-Checked $nodeCommand @('--test', 'tests/conversation-options.test.mjs') 'Release test gate conversation/session tests failed.'
         Invoke-Checked $dotnetCommand @('run', '--project', $networkChecksProject, '--no-build', '-c', 'Release') 'Release test gate NetworkChecks failed.'
         Invoke-Checked $dotnetCommand @('run', '--project', $desktopChecksProject, '--no-build', '-c', 'Release') 'Release test gate DesktopChecks failed.'
+        Invoke-Checked $dotnetCommand @('run', '--project', $relayChecksProject, '--no-build', '-c', 'Release') 'Release test gate RelayChecks failed.'
         Write-Output 'Mandatory release test gate passed.'
     }
     finally {
