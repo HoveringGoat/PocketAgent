@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,28 +15,49 @@ public static class RelayProtocol
     public const int ApplicationVersion = 1;
 }
 
-public sealed record RelayEnrollment(string RelayUrl, Guid HostId, string HostToken, string SessionKey)
+public sealed record RelayEnrollment(string RelayUrl, Guid HostId, string HostToken, string SessionKey, string CertificatePin = "")
 {
     public static RelayEnrollment Create(Uri relayUrl)
     {
         var hostId = Guid.NewGuid();
-        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        return new(relayUrl.ToString().TrimEnd('/'), hostId, token, RelaySessionKey.Create().ToWire());
+        var token = CreateToken();
+        return new(ValidateEndpoint(relayUrl.AbsoluteUri, "").AbsoluteUri, hostId, token, RelaySessionKey.Create().ToWire());
     }
 
+    public static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
     public string ToPairingString() =>
-        $"pocketagent://relay?v=1&origin={Uri.EscapeDataString(RelayUrl)}&host={HostId}&token={Uri.EscapeDataString(HostToken)}&key={Uri.EscapeDataString(SessionKey)}";
+        $"pocketagent://relay?v=1&origin={Uri.EscapeDataString(RelayUrl)}&host={HostId}&token={Uri.EscapeDataString(HostToken)}&key={Uri.EscapeDataString(SessionKey)}" +
+        (CertificatePin.Length > 0 ? $"&spki={CertificatePin}" : "");
 
     public static RelayEnrollment Parse(string value)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "pocketagent" || uri.Host != "relay")
             throw new FormatException("Relay enrollment must be a pocketagent://relay pairing string.");
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
-        if (query.Count != 5 || query["v"] != "1" || !Uri.TryCreate(query["origin"].ToString(), UriKind.Absolute, out var origin) || origin.Scheme is not ("ws" or "wss") || !Guid.TryParse(query["host"], out var hostId) || string.IsNullOrWhiteSpace(query["token"]) || string.IsNullOrWhiteSpace(query["key"]))
+        var pin = query.GetValueOrDefault("spki").ToString();
+        var token = query.GetValueOrDefault("token").ToString();
+        var sessionKey = query.GetValueOrDefault("key").ToString();
+        if (query.Count != (query.ContainsKey("spki") ? 6 : 5) || query.Values.Any(value => value.Count != 1) ||
+            query.GetValueOrDefault("v") != "1" || !Guid.TryParse(query.GetValueOrDefault("host"), out var hostId) || hostId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(sessionKey))
             throw new FormatException("Relay enrollment is missing required fields.");
-        var key = RelaySessionKey.Parse(query["key"]!);
-        _ = key;
-        return new(origin.ToString().TrimEnd('/'), hostId, query["token"]!, query["key"]!);
+        var origin = ValidateEndpoint(query.GetValueOrDefault("origin").ToString(), pin);
+        _ = RelaySessionKey.Parse(sessionKey);
+        return new(origin.AbsoluteUri, hostId, token, sessionKey, pin);
+    }
+
+    public static Uri ValidateEndpoint(string value, string certificatePin)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var origin) || origin.Scheme is not ("ws" or "wss") ||
+            origin.Host.Length == 0 || origin.Port == 0 || origin.UserInfo.Length > 0 ||
+            origin.AbsolutePath is not ("/" or "/relay") || origin.Query.Length > 0 || origin.Fragment.Length > 0)
+            throw new FormatException("Use a relay WebSocket origin or its /relay endpoint without credentials, a query, or a fragment.");
+        if (origin.Scheme == "ws" && !origin.IsLoopback)
+            throw new FormatException("Use wss:// for a network relay. ws:// is supported on loopback.");
+        if (certificatePin.Length > 0 && (origin.Scheme != "wss" || certificatePin.Length != 64 || !certificatePin.All(Uri.IsHexDigit)))
+            throw new FormatException("A relay certificate pin must be a 64-digit hexadecimal SHA-256 value for a wss:// endpoint.");
+        return new UriBuilder(origin) { Path = "/relay" }.Uri;
     }
 }
 
@@ -266,14 +288,24 @@ public sealed class RelayGateway
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly RelayNode node;
     private readonly RelayAuthRegistry auth;
+    private readonly IHostApplicationLifetime lifetime;
 
-    public RelayGateway(RelayNode node, RelayAuthRegistry auth) { this.node = node; this.auth = auth; }
+    public RelayGateway(RelayNode node, RelayAuthRegistry auth, IHostApplicationLifetime lifetime)
+    {
+        this.node = node;
+        this.auth = auth;
+        this.lifetime = lifetime;
+    }
 
     public async Task HandleAsync(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        var first = await ReceiveAsync(socket, context.RequestAborted) ?? throw new InvalidOperationException("Relay authentication was not supplied.");
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, lifetime.ApplicationStopping);
+        linkedCancellation.CancelAfter(TimeSpan.FromSeconds(15));
+        var cancellation = linkedCancellation.Token;
+        var first = await ReceiveAsync(socket, cancellation);
+        if (first is null) return;
         var authentication = JsonSerializer.Deserialize<RelayWireMessage>(first, Json) ?? throw new InvalidOperationException("Relay authentication was invalid.");
         RelayNodeSession session;
         var outbound = Channel.CreateBounded<RelayFrameEnvelope>(32);
@@ -283,15 +315,15 @@ public sealed class RelayGateway
             session = node.AttachClient(clientId, outbound.Writer);
         else
         {
-            await SendAsync(socket, new RelayWireMessage("rejected", Reason: "relay authentication failed"), context.RequestAborted);
+            await SendAsync(socket, new RelayWireMessage("rejected", Reason: "relay authentication failed"), cancellation);
             return;
         }
-        await SendAsync(socket, new RelayWireMessage("authenticated", SessionId: session.SessionId), context.RequestAborted);
-        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         try
         {
-            var receiveLoop = ReceiveLoopAsync(socket, session, outbound.Writer, linkedCancellation.Token);
-            var sendLoop = SendLoopAsync(socket, outbound.Reader, linkedCancellation.Token);
+            await SendAsync(socket, new RelayWireMessage("authenticated", SessionId: session.SessionId), cancellation);
+            linkedCancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+            var receiveLoop = ReceiveLoopAsync(socket, session, cancellation);
+            var sendLoop = SendLoopAsync(socket, outbound.Reader, cancellation);
             await Task.WhenAny(receiveLoop, sendLoop);
             linkedCancellation.Cancel();
             try { await Task.WhenAll(receiveLoop, sendLoop); } catch (OperationCanceledException) { }
@@ -300,7 +332,7 @@ public sealed class RelayGateway
         finally { linkedCancellation.Cancel(); node.Detach(session); outbound.Writer.TryComplete(); }
     }
 
-    private async Task ReceiveLoopAsync(WebSocket socket, RelayNodeSession session, ChannelWriter<RelayFrameEnvelope> outbound, CancellationToken cancellationToken)
+    private async Task ReceiveLoopAsync(WebSocket socket, RelayNodeSession session, CancellationToken cancellationToken)
     {
         while (socket.State == WebSocketState.Open)
         {
@@ -350,16 +382,37 @@ public sealed class RelayTransportClient : IAsyncDisposable
     private RelayTransportClient(ClientWebSocket socket, Guid sessionId) { this.socket = socket; SessionId = sessionId; }
     public Guid SessionId { get; }
 
-    public static async Task<RelayTransportClient> ConnectAsync(Uri uri, bool host, Guid identity, string token, CancellationToken cancellationToken = default)
+    public static async Task<RelayTransportClient> ConnectAsync(Uri uri, bool host, Guid identity, string token, CancellationToken cancellationToken = default, string certificatePin = "")
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(uri, cancellationToken);
-        var message = host ? new RelayWireMessage("authenticate-host", HostId: identity, Token: token) : new RelayWireMessage("authenticate-client", ClientId: identity, Token: token);
-        await SendAsync(socket, message, cancellationToken);
-        var response = await ReceiveAsync(socket, cancellationToken) ?? throw new InvalidOperationException("Relay closed during authentication.");
-        var authenticated = JsonSerializer.Deserialize<RelayWireMessage>(response, Json) ?? throw new InvalidOperationException("Relay authentication response was invalid.");
-        if (authenticated.Kind != "authenticated" || authenticated.SessionId is not Guid sessionId) throw new InvalidOperationException(authenticated.Reason ?? "Relay authentication failed.");
-        return new(socket, sessionId);
+        try
+        {
+            uri = RelayEnrollment.ValidateEndpoint(uri.AbsoluteUri, certificatePin);
+            if (certificatePin.Length > 0)
+                socket.Options.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+                    certificate is X509Certificate2 presented && MatchesCertificate(presented, uri.IdnHost, certificatePin);
+            await socket.ConnectAsync(uri, cancellationToken);
+            var message = host ? new RelayWireMessage("authenticate-host", HostId: identity, Token: token) : new RelayWireMessage("authenticate-client", ClientId: identity, Token: token);
+            await SendAsync(socket, message, cancellationToken);
+            var response = await ReceiveAsync(socket, cancellationToken) ?? throw new InvalidOperationException("Relay closed during authentication.");
+            var authenticated = JsonSerializer.Deserialize<RelayWireMessage>(response, Json);
+            if (authenticated?.Kind != "authenticated" || authenticated.SessionId is not Guid sessionId)
+                throw new InvalidOperationException("Relay authentication failed.");
+            return new(socket, sessionId);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    internal static bool MatchesCertificate(X509Certificate2 certificate, string host, string pin)
+    {
+        var now = DateTime.Now;
+        return certificate.NotBefore <= now && certificate.NotAfter >= now &&
+            certificate.MatchesHostname(host, allowWildcards: true, allowCommonName: false) &&
+            string.Equals(PeerCertificates.Fingerprint(certificate), pin, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task SendFrameAsync(RelayFrameEnvelope frame, CancellationToken cancellationToken = default) => await SendAsync(socket, new RelayWireMessage("frame", Frame: frame), cancellationToken);
@@ -396,8 +449,9 @@ public sealed class RelayTransportClient : IAsyncDisposable
     {
         if (socket.State == WebSocketState.Open)
         {
-            try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
-            catch (WebSocketException) { socket.Abort(); }
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            try { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", timeout.Token); }
+            catch (Exception exception) when (exception is WebSocketException or OperationCanceledException) { socket.Abort(); }
         }
         socket.Dispose();
     }
@@ -413,8 +467,8 @@ public sealed class RelayApplicationHost : IAsyncDisposable
     private RelayApplicationHost(RelayTransportClient transport, RelaySessionKey key, Guid hostId, Func<RelayApplicationRequest, Task<RelayApplicationResponse>> handler)
     { this.transport = transport; this.key = key; this.hostId = hostId; this.handler = handler; }
 
-    public static async Task<RelayApplicationHost> ConnectAsync(Uri uri, Guid hostId, string token, RelaySessionKey key, Func<RelayApplicationRequest, Task<RelayApplicationResponse>> handler, CancellationToken cancellationToken = default) =>
-        new(await RelayTransportClient.ConnectAsync(uri, true, hostId, token, cancellationToken), key, hostId, handler);
+    public static async Task<RelayApplicationHost> ConnectAsync(Uri uri, Guid hostId, string token, RelaySessionKey key, Func<RelayApplicationRequest, Task<RelayApplicationResponse>> handler, CancellationToken cancellationToken = default, string certificatePin = "") =>
+        new(await RelayTransportClient.ConnectAsync(uri, true, hostId, token, cancellationToken, certificatePin), key, hostId, handler);
 
     public async Task ServeAsync(CancellationToken cancellationToken = default)
     {
@@ -443,8 +497,8 @@ public sealed class RelayApplicationClient : IAsyncDisposable
     private RelayApplicationClient(RelayTransportClient transport, RelaySessionKey key, Guid hostId, Guid deviceId)
     { this.transport = transport; this.key = key; this.hostId = hostId; this.deviceId = deviceId; }
 
-    public static async Task<RelayApplicationClient> ConnectAsync(Uri uri, Guid hostId, Guid deviceId, string token, RelaySessionKey key, CancellationToken cancellationToken = default) =>
-        new(await RelayTransportClient.ConnectAsync(uri, false, deviceId, token, cancellationToken), key, hostId, deviceId);
+    public static async Task<RelayApplicationClient> ConnectAsync(Uri uri, Guid hostId, Guid deviceId, string token, RelaySessionKey key, CancellationToken cancellationToken = default, string certificatePin = "") =>
+        new(await RelayTransportClient.ConnectAsync(uri, false, deviceId, token, cancellationToken, certificatePin), key, hostId, deviceId);
 
     public async Task<RelayApplicationResponse> RequestAsync(RelayApplicationRequest request, CancellationToken cancellationToken = default)
     {

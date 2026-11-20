@@ -24,22 +24,24 @@ CGNAT and double NAT require router/ISP changes. Local diagnostics verify listen
 
 ## Relay mode
 
-Relay mode avoids an inbound firewall rule on a locked-down remote desktop. The unlocked desktop runs the relay node; the remote desktop enrolls with a one-time host identity/token and shared session key, then opens an outbound WebSocket to the relay. The relay routes encrypted request/response envelopes by host, device and request IDs and never sees conversation content or provider credentials.
+Relay mode lets a locked-down desktop reach the relay node over an outbound WebSocket. Use a network address the remote desktop can reach for the relay node. For LAN use, configure HTTPS under **Settings > Advanced certificate settings > Set up Wi-Fi connection**. For internet use, follow the [direct internet](#direct-internet-ip-and-port) setup on the relay node and forward its HTTPS port. A loopback listener is useful when testing on one computer.
 
-Enrollment is intended to mirror device pairing:
+1. On the relay desktop, stop the server, open **Settings > Relay**, check **Enable relay node on this desktop**, and save. Turn the server on. **Relay node listening** shows the WebSocket address.
+2. Select **Copy host enrollment** and transfer the complete string privately to the remote desktop. It contains the host credential, encryption key and, for a directly hosted HTTPS endpoint, the relay certificate pin.
+3. On the remote desktop, stop the server, paste the string into **Upstream relay enrollment**, and save. Keep the default loopback listener for relay-only access. Turn the server on and look for **Upstream relay connected**. If it shows **Retrying**, check reachability to the displayed node address and confirm the enrollment came from that node.
+4. For a .NET relay client, select **Copy client setup** on the node. Pass the endpoint, target host ID, client ID/token, session key and optional certificate pin to `RelayApplicationClient.ConnectAsync`.
+5. On the connected remote desktop, select **Copy device pairing ticket**. Submit the ticket as `code`, with a `deviceName`, in a JSON `POST /api/devices/pair` over the relay. The ticket expires after ten minutes or one use. Use the returned token in the `Authorization: Bearer` header for protected API operations. Android currently uses direct pairing.
 
-1. The relay node generates a `pocketagent://relay` pairing string containing the relay WebSocket origin, remote-host identity/token and session key.
-2. The remote server imports that string into its Relay settings and stores it in its local data directory.
-3. The remote server connects outbound and appears as an attached host on the relay node.
-4. Clients pair to the relay and select the attached remote host.
+Each node provisions one reusable host/client enrollment. Save the settings with the relay checkbox cleared to disable the node on its next start. Clear **Upstream relay enrollment** and save on the remote desktop to disable its outbound connection on its next start.
 
-The current .NET prototype exposes `/relay`, accepts authenticated host/client WebSocket sessions, and has an outbound remote-host service configured through `PocketAgent__Relay__*` settings. The two-server loopback verification is:
+The server can also be configured through `PocketAgent__Relay__*` settings. A network relay uses `wss://`. Without a configured pin, the client uses platform certificate trust. Plain `ws://` is supported for loopback. Two focused checks cover desktop and transport behavior:
 
 ```powershell
+dotnet run --project tests/PocketAgent.DesktopChecks -- --relay-setup
 dotnet run --project tests/PocketAgent.RelayChecks
 ```
 
-That check starts a relay node and a second remote HTTP server on separate loopback ports, sends two encrypted requests through the relay, and verifies both responses.
+The desktop check starts the real relay node and outbound service over pinned WSS on separate loopback ports. It verifies the remote API, restart and reconnection, and Settings at minimum and larger window sizes. The transport check exercises two sequential encrypted requests through the relay. Test reachability from the remote network after configuring a public endpoint.
 
 ## Wi-Fi and device pairing
 

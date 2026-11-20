@@ -59,7 +59,8 @@ public static class RelayHost
         builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ScheduledMessages>());
         builder.Services.AddHostedService<ConversationMaintenance>();
         builder.Services.AddHostedService<HeartbeatService>();
-        builder.Services.AddHostedService<RelayRemoteHostService>();
+        builder.Services.AddSingleton<RelayRemoteHostService>();
+        builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<RelayRemoteHostService>());
         builder.Services.AddSingleton<RelayNode>();
         builder.Services.AddSingleton<RelayAuthRegistry>();
         builder.Services.AddSingleton<RelayGateway>();

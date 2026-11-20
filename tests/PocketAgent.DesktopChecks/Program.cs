@@ -23,6 +23,11 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
+            if (Environment.GetCommandLineArgs().Contains("--relay-setup", StringComparer.OrdinalIgnoreCase))
+            {
+                RelaySetupChecks.Run(root);
+                return 0;
+            }
             DesktopDiagnostics.Log("desktop-check startup marker token=should-not-appear");
             DesktopDiagnostics.LogException("desktop-check", new InvalidOperationException("diagnostic exception marker"));
             var diagnosticsLog = DesktopDiagnostics.LogPath;
@@ -55,6 +60,7 @@ internal static class Program
                 return RunInteractivePinPreview(window, root);
             if (Environment.GetCommandLineArgs().Contains("--access-preview", StringComparer.OrdinalIgnoreCase))
                 return RunAccessPreview(window, root);
+            RelaySetupChecks.Run(root);
             foreach (var name in new[] { "RenameButton", "ModelButton", "PinButton", "ArchiveButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
@@ -128,8 +134,8 @@ internal static class Program
             sessions.DisplayMemberPath = "";
             foreach (var title in new[] { "Release planning", "Image review", "Network setup", "Updater tests", "Documentation" }) sessions.Items.Add(title);
             sessions.SelectedIndex = 0;
-            ((TextBlock)window.FindName("ServerNameDisplay")).Text = "WORK-PC";
-            ((TextBlock)window.FindName("ConversationLocation")).Text = "C:\\Github\\PocketAgent";
+            ((Run)window.FindName("ServerNameDisplay")).Text = "WORK-PC";
+            ((Run)window.FindName("ConversationLocation")).Text = "C:\\Github\\PocketAgent";
             ((TextBlock)window.FindName("UsageDisplay")).Text = "5hr: 63% · weekly: 8%";
             var now = DateTimeOffset.Now;
             var snapshot = new ConversationSnapshot("readability", "Readability", "completed", null,
@@ -289,8 +295,8 @@ internal static class Program
         typeof(MainWindow).GetField("conversation", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, snapshot);
         ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
         ((StackPanel)window.FindName("ConversationActions")!).IsEnabled = true;
-        ((TextBlock)window.FindName("ServerNameDisplay")!).Text = Environment.MachineName;
-        ((TextBlock)window.FindName("ConversationLocation")!).Text = root;
+        ((Run)window.FindName("ServerNameDisplay")!).Text = Environment.MachineName;
+        ((Run)window.FindName("ConversationLocation")!).Text = root;
         ((TextBlock)window.FindName("UsageDisplay")!).Text = "Preview";
         ((TabControl)window.FindName("Navigation")!).SelectedIndex = 0;
         window.Show();
@@ -308,8 +314,8 @@ internal static class Program
         ((TabControl)window.FindName("Navigation")!).SelectedIndex = 0;
         ((Grid)window.FindName("ConversationPanel")!).IsEnabled = true;
         ((StackPanel)window.FindName("ConversationActions")!).IsEnabled = true;
-        ((TextBlock)window.FindName("ServerNameDisplay")!).Text = "WORK-PC";
-        ((TextBlock)window.FindName("ConversationLocation")!).Text = "C:\\Github\\PocketAgent";
+        ((Run)window.FindName("ServerNameDisplay")!).Text = "WORK-PC";
+        ((Run)window.FindName("ConversationLocation")!).Text = "C:\\Github\\PocketAgent";
         ((TextBlock)window.FindName("UsageDisplay")!).Text = "5hr: 63%  •  weekly: 8%";
         ((TextBlock)window.FindName("ConversationMeta")!).Text = "Idle  •  Select a conversation";
         var sessions = (ListBox)window.FindName("SessionList")!;

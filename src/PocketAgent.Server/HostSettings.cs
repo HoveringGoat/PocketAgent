@@ -64,14 +64,14 @@ public sealed class HostSettings
             RepositoryPath = Path.GetFullPath(RepositoryPath);
         if (CodexArguments.Length == 0)
             CodexArguments = ["app-server", "--listen", "stdio://"];
-        if (Relay.Enabled && (!Guid.TryParse(Relay.HostId, out _) || string.IsNullOrWhiteSpace(Relay.HostToken)))
+        if (Relay.Enabled && (!Guid.TryParse(Relay.HostId, out var relayHostId) || relayHostId == Guid.Empty || string.IsNullOrWhiteSpace(Relay.HostToken)))
             throw new InvalidOperationException("Relay.HostId and Relay.HostToken are required when relay mode is enabled.");
         if (!string.IsNullOrWhiteSpace(Relay.UpstreamUrl))
         {
-            if (!Uri.TryCreate(Relay.UpstreamUrl, UriKind.Absolute, out var relayUri) || relayUri.Scheme is not ("ws" or "wss") || relayUri.AbsolutePath is not ("" or "/" or "/relay") || !Guid.TryParse(Relay.RemoteHostId, out _) || string.IsNullOrWhiteSpace(Relay.RemoteHostToken))
+            if (!Guid.TryParse(Relay.RemoteHostId, out var remoteHostId) || remoteHostId == Guid.Empty || string.IsNullOrWhiteSpace(Relay.RemoteHostToken))
                 throw new InvalidOperationException("Relay.UpstreamUrl, Relay.RemoteHostId and Relay.RemoteHostToken must describe a valid relay enrollment.");
             _ = RelaySessionKey.Parse(Relay.SessionKey);
-            Relay.UpstreamUrl = new UriBuilder(relayUri) { Path = "/relay" }.Uri.ToString().TrimEnd('/');
+            Relay.UpstreamUrl = RelayEnrollment.ValidateEndpoint(Relay.UpstreamUrl, Relay.UpstreamCertificatePin).AbsoluteUri;
         }
     }
 
@@ -97,7 +97,9 @@ public sealed class RelaySettings
     public string HostToken { get; set; } = "";
     public string ClientId { get; set; } = "";
     public string ClientToken { get; set; } = "";
+    public string NodeSessionKey { get; set; } = "";
     public string UpstreamUrl { get; set; } = "";
+    public string UpstreamCertificatePin { get; set; } = "";
     public string RemoteHostId { get; set; } = "";
     public string RemoteHostToken { get; set; } = "";
     public string SessionKey { get; set; } = "";

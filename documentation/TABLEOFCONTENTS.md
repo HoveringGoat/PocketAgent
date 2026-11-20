@@ -18,7 +18,7 @@
   - [Wi-Fi setup](SETUP.md#connect-over-wi-fi)
   - [Direct IP and port](SETUP.md#direct-internet-ip-and-port)
   - [QR or pairing-string enrollment](SETUP.md#pair-by-qr-or-pairing-string)
-  - [Relay mode](SETUP.md#relay-mode-status)
+  - [Relay mode](SETUP.md#relay-mode)
   - [Android servers and conversations](SETUP.md#android-servers-and-conversations)
   - [Usage and scheduled messages](SETUP.md#usage-and-scheduled-messages)
   - [Build from source](SETUP.md#build-from-source)

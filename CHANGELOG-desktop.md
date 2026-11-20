@@ -4,6 +4,12 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.15 - 2026-11-20
+
+- Enable the relay node, copy enrollment and client setup, connect upstream, and issue a device pairing ticket from desktop Settings.
+- Validate pinned WebSocket connections and dispatch relayed requests to the remote desktop's authenticated API.
+- Keep desktop navigation visible at the minimum window size with Large appearance scaling.
+
 ## 0.3.14 - 2026-11-20
 
 - Port the encrypted relay transport, enrollment payloads and outbound remote-host connection into the maintained .NET server.

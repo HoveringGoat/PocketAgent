@@ -83,10 +83,11 @@ public partial class MainWindow : Window
         PortSetting.Text = settings.Host.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         CertificateSetting.Text = settings.Host.CertificatePath;
         DirectOriginSetting.Text = settings.Host.DirectOrigin;
+        LoadRelaySetup();
         if (settings.Host.RepositoryPath.Length == 0) Navigation.SelectedIndex = 2;
         ResolveCodex();
         UpdateNavigationButtons();
-        timer.Tick += async (_, _) => { UpdateElapsedDisplay(); await Refresh(); };
+        timer.Tick += async (_, _) => { UpdateElapsedDisplay(); UpdateRelaySetup(); await Refresh(); };
         timer.Start();
         updateTimer.Tick += async (_, _) => await CheckForUpdatesCore(false);
         updateTimer.Start();
@@ -170,11 +171,13 @@ public partial class MainWindow : Window
                 PinnedCertificate = settings.Host.PinnedCertificate && CertificateSetting.Text.Trim() == settings.Host.CertificatePath,
                 EnableHeartbeats = HeartbeatSetting.IsChecked == true,
                 PermissionMode = PermissionModeSetting.SelectedValue as string ?? "inherit",
-                DataDirectory = DesktopSettings.DirectoryPath
+                DataDirectory = DesktopSettings.DirectoryPath,
+                Relay = ReadRelaySettings()
             }
         };
         candidate.Host.Validate();
         candidate.Save(); settings = candidate;
+        UpdateRelaySetup();
         StartupRegistration.SetEnabled(candidate.LaunchOnWindowsStartup);
         updateTimer.IsEnabled = candidate.CheckUpdatesPeriodically;
         ResolveCodex();
@@ -330,7 +333,7 @@ public partial class MainWindow : Window
             relay = candidate;
             sessionSignature = "";
             ConnectionAddress.Text = settings.Host.ClientOrigin;
-            SetServerToggle(true); SaveButton.IsEnabled = false;
+            SetServerToggle(true, "Starting...", false); SaveButton.IsEnabled = false;
             PermissionModeSetting.IsEnabled = false;
             try
             {
@@ -436,6 +439,8 @@ public partial class MainWindow : Window
         ServerToggle.IsChecked = running;
         ServerToggle.Content = label ?? (running ? "ON" : "OFF");
         ServerToggle.IsEnabled = enabled;
+        RelaySetupInputs.IsEnabled = !running && enabled;
+        UpdateRelaySetup();
     }
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
