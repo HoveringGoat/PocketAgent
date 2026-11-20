@@ -92,7 +92,7 @@ try {
         $texts = @($window.FindAll(
             [System.Windows.Automation.TreeScope]::Descendants,
             $headerTextCondition))
-        $appName = $texts | Where-Object { $_.Current.Name -eq 'PocketAgent' } |
+        $appName = $texts | Where-Object { $_.Current.Name -like 'PocketAgent*' } |
             Sort-Object { $_.Current.BoundingRectangle.Top } | Select-Object -First 1
         $location = $texts | Where-Object {
             $_.Current.Name -match '\s\|\s' -or $_.Current.Name -like '*No folder selected*'

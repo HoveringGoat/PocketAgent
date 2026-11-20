@@ -56,6 +56,8 @@ Copy-Item -LiteralPath $executable -Destination (Join-Path $output $executableNa
 Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md -Destination $output -Force
 & (Join-Path (Get-Location) 'tests/rust-desktop-smoke.ps1') -Executable (Join-Path $output $executableName)
 if ($LASTEXITCODE -ne 0) { throw 'Rust desktop smoke test failed.' }
+& (Join-Path (Get-Location) 'tests/rust-sessions-smoke.ps1') -Executable (Join-Path $output $executableName)
+if ($LASTEXITCODE -ne 0) { throw 'Rust desktop sessions workflow gate failed.' }
 
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -Force
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

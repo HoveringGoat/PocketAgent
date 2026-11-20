@@ -44,7 +44,10 @@ try {
   Click-Audit 'New conversation'
   Click-Audit 'Browse'
   Click-Audit 'Create'
-  $null=Await-Audit { Find-Audit 'New conversation ready' } 'new fixture conversation'
+  # The transcript is rendered as custom Slint blocks and is not exposed as
+  # a standalone automation Text node. The created tab is the stable UI
+  # assertion that the provider thread was created and selected.
+  $null=Await-Audit { Find-Audit 'PocketAgent' } 'new fixture conversation'
   Click-Audit 'Pin conversation'
   $null=Await-Audit { Find-Audit 'Pinned*PocketAgent' } 'pinned tab'
   foreach ($actionName in @('New conversation', 'Rename conversation', 'Model and reasoning', 'Manage conversation access', 'Pin conversation', 'Archive conversation', 'Show archived conversations')) {
@@ -84,6 +87,23 @@ try {
   if ($composer.Current.Value) { throw 'Persisted schedule did not clear the draft' }
   Click-Audit 'Cancel scheduled message'
   $null=Await-Audit { -not (Find-Audit 'Cancel scheduled message') } 'canceled pending job'
+  $composer.SetValue('unicode:reply')
+  Click-Audit 'Send'
+  $reply = $null
+  for ($attempt = 0; $attempt -lt 65 -and $null -eq $reply; $attempt++) {
+    if (Test-Path -LiteralPath $env:POCKETAGENT_FIXTURE_STATE) {
+      $history = Get-Content -LiteralPath $env:POCKETAGENT_FIXTURE_STATE -Raw | ConvertFrom-Json
+      $completedTurns = @($history.PSObject.Properties | ForEach-Object { $_.Value.turns })
+      $reply = $completedTurns |
+        ForEach-Object { $_.items } |
+        Where-Object { $_.type -eq 'agentMessage' -and $_.text -like '*ready*' } |
+        Select-Object -First 1
+    }
+    if ($null -eq $reply) { Start-Sleep -Milliseconds 100 }
+  }
+  if ($null -eq $reply -or $reply.text -notlike '*It*ready*') {
+    throw 'A completed Codex reply was not persisted by the desktop workflow.'
+  }
   $composer.SetValue('hold')
   Click-Audit 'Send'
   $null=Await-Audit { -not $composer.Current.Value } 'accepted send acknowledgement'
@@ -96,10 +116,10 @@ try {
   $null=Await-Audit { Find-Audit 'Codex is ready*' } 'stopped turn'
   $history = Get-Content -LiteralPath $env:POCKETAGENT_FIXTURE_STATE -Raw | ConvertFrom-Json
   $turns = @($history.PSObject.Properties | ForEach-Object { $_.Value.turns })
-  if ($turns.Count -ne 1 -or $turns[0].status -ne 'interrupted' -or $turns[0].items.Count -ne 2) {
-    throw 'Send, steer, and Stop must operate on one provider turn.'
+  if ($turns.Count -ne 2 -or $turns[0].status -ne 'completed' -or $turns[1].status -ne 'interrupted' -or $turns[1].items.Count -ne 2) {
+    throw 'Send, reply, steer, and Stop must operate on the expected provider turns.'
   }
-  'Release fixture UI passed: browse, create, pin, schedule dialog, cancel, send, steer, and stop.'
+  'Release fixture UI passed: browse, create, pin, schedule dialog, cancel, send, reply, steer, and stop.'
 } finally {
     if ($p -and !$p.HasExited) {
         $p.CloseMainWindow() | Out-Null

@@ -8,6 +8,7 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 - Follow the Codex model catalog cursor so every available non-hidden model is shown, matching the .NET host.
 - Render completed agent-message items and legacy turn histories so provider replies remain visible when Codex sends a completed item without a delta event.
+- Make the canonical Rust build run the provider-backed Sessions workflow smoke, including create, send, reply, steer, stop, scheduling, pin, and rename checks.
 
 ### Rust desktop preview 0.1.18
 
