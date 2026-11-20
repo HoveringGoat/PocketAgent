@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.16
+
+- Preserve model consent: an unset conversation model now omits the model override and uses Codex's configured default. The provider catalog's `isDefault` value is informational and is never silently persisted or sent as a per-conversation selection.
+
 ### Rust desktop preview 0.1.15
 
 - Keep an explicitly granted conversation visible to Android while the desktop worker refreshes its local conversation snapshot, then replace the temporary entry with the saved metadata on the next sync.

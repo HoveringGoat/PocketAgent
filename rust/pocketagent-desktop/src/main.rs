@@ -807,7 +807,6 @@ fn start_codex_worker(
             let mut store = DesktopStore::load();
             let mut selected_id = None::<String>;
             let mut read_only_sessions = HashSet::<String>::new();
-            let mut provider_default_model = None::<String>;
             let mut showing_archived = false;
             let mut deferred_commands = VecDeque::new();
             let mut archive_timer = tokio::time::interval(std::time::Duration::from_secs(600));
@@ -904,16 +903,13 @@ fn start_codex_worker(
                                     .await
                                 {
                                     let model_text = models.entries.join("\n");
-                                    provider_default_model = models.default_model.clone();
                                     *host_models
                                         .write()
                                         .expect("model lock should not be poisoned") = models.api;
-                                    set_model_catalog(&weak, model_text, models.default_model);
-                                    set_selected_model_options(
-                                        &weak,
-                                        provider_default_model.clone(),
-                                        None,
-                                    );
+                                    set_model_catalog(&weak, model_text);
+                                    // A provider catalog default is informational only. It is
+                                    // never an implicit per-conversation override.
+                                    set_selected_model_options(&weak, None, None);
                                 }
                                 if let Ok(usage) = session
                                     .as_mut()
@@ -964,11 +960,7 @@ fn start_codex_worker(
                             set_codex_error(&weak, "Working folder does not exist.".into());
                             continue;
                         }
-                        let model = if model.trim().is_empty() {
-                            provider_default_model.clone().unwrap_or_default()
-                        } else {
-                            model
-                        };
+                        let model = normalize_model_selection(model.as_str());
                         current.set_repository(working_directory.clone());
                         match current
                             .new_thread((!model.trim().is_empty()).then_some(model.as_str()))
@@ -1050,11 +1042,6 @@ fn start_codex_worker(
                                 )
                             })
                             .unwrap_or_default();
-                        let options = if options.trim().is_empty() {
-                            provider_default_model.clone().unwrap_or_default()
-                        } else {
-                            options
-                        };
                         let working_directory = store
                             .conversations
                             .iter()
@@ -1231,11 +1218,7 @@ fn start_codex_worker(
                         conversation_id,
                         expected_turn_id: _expected_turn_id,
                     } => {
-                        let model = if model.trim().is_empty() {
-                            provider_default_model.clone().unwrap_or_default()
-                        } else {
-                            model
-                        };
+                        let model = normalize_model_selection(model.as_str());
                         if let Some(schedule_id) = schedule_id.as_deref()
                             && !schedule_pending(&store, schedule_id)
                         {
@@ -1712,6 +1695,7 @@ fn start_codex_worker(
                             response,
                         } => {
                             let result = async {
+                                let model = normalize_model_selection(model.as_str());
                                 let Some(current) = session.as_mut() else {
                                     return Err("Codex is disconnected.".to_owned());
                                 };
@@ -2544,7 +2528,7 @@ fn normalize_model_selection(value: &str) -> String {
     }
 }
 
-fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String, default_model: Option<String>) {
+fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String) {
     let value = if models.is_empty() {
         "Provider returned no visible models".to_owned()
     } else {
@@ -2558,15 +2542,9 @@ fn set_model_catalog(weak: &slint::Weak<AppWindow>, models: String, default_mode
                 .or_else(|| (!line.trim().is_empty()).then(|| line.trim().to_owned()))
         })
         .collect::<Vec<_>>();
-    if let Some(default_model) = default_model.as_deref()
-        && let Some(index) = model_options
-            .iter()
-            .position(|model| model == default_model)
-    {
-        let default = model_options.remove(index);
-        model_options.insert(0, default);
-    }
-    model_options.push(CODEX_DEFAULT_MODEL_LABEL.to_owned());
+    // The consent-preserving option must be the initial choice. Provider
+    // catalog defaults are available choices, never implicit overrides.
+    model_options.insert(0, CODEX_DEFAULT_MODEL_LABEL.to_owned());
     let options = model_options;
     let _ = weak.upgrade_in_event_loop(move |window| {
         window.set_model_catalog(value.into());
@@ -3809,6 +3787,7 @@ mod tests {
     #[test]
     fn model_selection_uses_provider_default_label_without_forcing_configured_model() {
         assert_eq!(normalize_model_selection("Use Codex settings"), "");
+        assert_eq!(normalize_model_selection(""), "");
         assert_eq!(normalize_model_selection("gpt-6-astra"), "gpt-6-astra");
     }
 
