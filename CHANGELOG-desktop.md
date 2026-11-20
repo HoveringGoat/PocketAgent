@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+### Rust desktop preview 0.1.14
+
+- Match Android's structured usage, model, and local-folder API contracts.
+- Read mirrored conversation history without taking Codex's writer lease and preserve user, agent, and activity roles.
+
 ### Rust desktop preview 0.1.4
 
 - Match the .NET Codex executable discovery order and launch the Windows desktop/provider processes without console windows.

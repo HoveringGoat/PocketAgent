@@ -103,12 +103,55 @@ pub enum HostAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub authenticated: bool,
     pub device_name: Option<String>,
     pub repository: Option<String>,
     pub host_name: String,
     pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostModel {
+    pub model: String,
+    pub display_name: String,
+    pub is_default: bool,
+    pub default_reasoning_effort: Option<String>,
+    pub supported_reasoning_efforts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindow {
+    pub remaining_percent: i64,
+    pub resets_at: Option<String>,
+    pub window_minutes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUsage {
+    pub available: bool,
+    pub five_hour: Option<UsageWindow>,
+    pub weekly: Option<UsageWindow>,
+    pub exhausted: bool,
+    pub next_reset_at: Option<String>,
+    pub checked_at: String,
+}
+
+impl Default for HostUsage {
+    fn default() -> Self {
+        Self {
+            available: false,
+            five_hour: None,
+            weekly: None,
+            exhausted: false,
+            next_reset_at: None,
+            checked_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
 }
 
 type SessionProvider = dyn Fn(Option<&DeviceIdentity>) -> SessionInfo + Send + Sync;
@@ -124,8 +167,8 @@ pub struct HostHttpState {
     pub snapshots: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     pub schedules: Arc<RwLock<Vec<HostSchedule>>>,
     pub image_root: Arc<RwLock<String>>,
-    pub models: Arc<RwLock<String>>,
-    pub usage: Arc<RwLock<String>>,
+    pub models: Arc<RwLock<Vec<HostModel>>>,
+    pub usage: Arc<RwLock<HostUsage>>,
     pub provider_status: Arc<RwLock<String>>,
     pub active_turn: Arc<RwLock<Option<(String, String)>>>,
     pub active_turn_started_at_ms: Arc<RwLock<Option<i64>>>,
@@ -146,8 +189,8 @@ impl HostHttpState {
             snapshots: Arc::new(RwLock::new(HashMap::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             image_root: Arc::new(RwLock::new(String::new())),
-            models: Arc::new(RwLock::new(String::new())),
-            usage: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(RwLock::new(Vec::new())),
+            usage: Arc::new(RwLock::new(HostUsage::default())),
             provider_status: Arc::new(RwLock::new("disconnected".into())),
             active_turn: Arc::new(RwLock::new(None)),
             active_turn_started_at_ms: Arc::new(RwLock::new(None)),
@@ -584,6 +627,11 @@ struct HistoryQuery {
     limit: Option<usize>,
 }
 
+fn display_path(path: &FsPath) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    value.strip_prefix("//?/").unwrap_or(&value).to_owned()
+}
+
 pub fn router(state: HostHttpState) -> Router {
     Router::new()
         .route("/", get(root))
@@ -651,8 +699,7 @@ async fn models(State(state): State<HostHttpState>, headers: HeaderMap) -> impl 
         .read()
         .expect("model lock should not be poisoned")
         .clone();
-    Json(serde_json::json!({ "models": models.lines().map(str::to_owned).collect::<Vec<_>>() }))
-        .into_response()
+    Json(models).into_response()
 }
 
 async fn usage(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
@@ -664,7 +711,7 @@ async fn usage(State(state): State<HostHttpState>, headers: HeaderMap) -> impl I
         .read()
         .expect("usage lock should not be poisoned")
         .clone();
-    Json(serde_json::json!({ "summary": summary })).into_response()
+    Json(summary).into_response()
 }
 
 async fn logout(State(state): State<HostHttpState>, headers: HeaderMap) -> impl IntoResponse {
@@ -889,21 +936,25 @@ async fn list_directories(
         return StatusCode::NOT_FOUND.into_response();
     };
     let requested = query.path.unwrap_or_default();
-    if requested.starts_with("\\\\")
-        || requested.starts_with("//")
-        || std::path::Path::new(&requested).is_absolute()
-    {
+    let requested = requested
+        .strip_prefix("//?/")
+        .unwrap_or(&requested)
+        .to_owned();
+    let requested_absolute = std::path::Path::new(&requested).is_absolute();
+    if requested.starts_with("\\\\") || requested.starts_with("//") {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let candidate = if requested.trim().is_empty() {
         root.clone()
+    } else if std::path::Path::new(&requested).is_absolute() {
+        std::path::PathBuf::from(requested)
     } else {
         root.join(requested)
     };
     let Ok(candidate) = std::fs::canonicalize(candidate) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !candidate.starts_with(&root) || !candidate.is_dir() {
+    if (!requested_absolute && !candidate.starts_with(&root)) || !candidate.is_dir() {
         return StatusCode::NOT_FOUND.into_response();
     }
     let mut directories = std::fs::read_dir(&candidate)
@@ -919,21 +970,35 @@ async fn list_directories(
             if name.starts_with('.') {
                 return None;
             }
-            let relative = path
-                .strip_prefix(&root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-            Some(serde_json::json!({ "name": name, "path": relative }))
+            Some(serde_json::json!({
+                "name": name,
+                "path": display_path(&path)
+            }))
         })
         .collect::<Vec<_>>();
     directories.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    let parent = candidate.parent().map(display_path);
+    let roots = if cfg!(windows) {
+        (b'A'..=b'Z')
+            .map(|letter| std::path::PathBuf::from(format!("{}:\\", letter as char)))
+            .filter(|path| path.is_dir())
+            .map(|path| {
+                serde_json::json!({
+                    "name": display_path(&path).trim_end_matches('/'),
+                    "path": display_path(&path)
+                })
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![serde_json::json!({ "name": "/", "path": "/" })]
+    };
     Json(serde_json::json!({
-        "path": candidate
-            .strip_prefix(&root)
-            .map(|path| path.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default(),
+        "path": display_path(&candidate),
+        "parent": parent,
+        "defaultDirectory": display_path(&root),
+        "roots": roots,
         "directories": directories,
+        "hasMore": false,
     }))
     .into_response()
 }
@@ -1387,6 +1452,76 @@ mod tests {
     use super::*;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    async fn android_get(state: HostHttpState, token: &str, path: &str) -> serde_json::Value {
+        let response = router(state)
+            .oneshot(
+                axum::http::Request::get(path)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+    }
+
+    fn android_state() -> (HostHttpState, String) {
+        let registry = DeviceRegistry::new();
+        let paired = registry
+            .pair("phone", &registry.pairing_display().ticket)
+            .unwrap();
+        let (actions, _) = tokio::sync::mpsc::unbounded_channel();
+        (
+            HostHttpState::new(registry, actions, |identity| SessionInfo {
+                authenticated: identity.is_some(),
+                device_name: identity.map(|i| i.name.clone()),
+                repository: None,
+                host_name: "fixture".into(),
+                version: "test".into(),
+            }),
+            paired.token,
+        )
+    }
+
+    #[tokio::test]
+    async fn android_models_are_an_array() {
+        let (state, token) = android_state();
+        assert!(android_get(state, &token, "/api/models").await.is_array());
+    }
+
+    #[tokio::test]
+    async fn android_usage_has_explicit_availability_and_windows() {
+        let (state, token) = android_state();
+        let usage = android_get(state, &token, "/api/usage").await;
+        assert_eq!(usage["available"], false);
+        assert!(usage.get("fiveHour").is_some());
+        assert!(usage.get("weekly").is_some());
+    }
+
+    #[tokio::test]
+    async fn android_folders_round_trip_absolute_paths() {
+        let root = std::env::temp_dir().join(format!("pocketagent-android-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("child")).unwrap();
+        let (state, token) = android_state();
+        *state.image_root.write().unwrap() = root.to_string_lossy().into();
+        let listing = android_get(state.clone(), &token, "/api/directories").await;
+        assert!(FsPath::new(listing["path"].as_str().unwrap()).is_absolute());
+        assert!(listing["roots"].is_array());
+        assert!(listing.get("parent").is_some());
+        assert_eq!(listing["hasMore"], false);
+        let child = listing["directories"][0]["path"].as_str().unwrap();
+        assert!(FsPath::new(child).is_absolute());
+        let encoded = child
+            .bytes()
+            .map(|b| format!("%{b:02X}"))
+            .collect::<String>();
+        let child_listing =
+            android_get(state, &token, &format!("/api/directories?path={encoded}")).await;
+        assert_eq!(child_listing["parent"], listing["path"]);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn pairing_is_single_use_and_tokens_authenticate() {

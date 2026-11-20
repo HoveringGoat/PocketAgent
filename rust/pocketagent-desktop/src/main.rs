@@ -11,8 +11,8 @@ use codex::{
 };
 use pocketagent_crypto::SessionKey;
 use pocketagent_host::{
-    DeviceRegistry, HostAction, HostConversation, HostHttpState, HostSchedule, SessionInfo,
-    router as host_router,
+    DeviceRegistry, HostAction, HostConversation, HostHttpState, HostModel, HostSchedule,
+    HostUsage, SessionInfo, router as host_router,
 };
 use pocketagent_relay::RelayNode;
 use pocketagent_relay::application::RelayApplicationHost;
@@ -744,8 +744,8 @@ struct HostSharedState {
     conversations: Arc<std::sync::RwLock<Vec<HostConversation>>>,
     schedules: Arc<std::sync::RwLock<Vec<HostSchedule>>>,
     registry: DeviceRegistry,
-    models: Arc<std::sync::RwLock<String>>,
-    usage: Arc<std::sync::RwLock<String>>,
+    models: Arc<std::sync::RwLock<Vec<HostModel>>>,
+    usage: Arc<std::sync::RwLock<HostUsage>>,
     provider_status: Arc<std::sync::RwLock<String>>,
     active_turn: Arc<std::sync::RwLock<Option<(String, String)>>>,
     active_turn_started_at_ms: Arc<std::sync::RwLock<Option<i64>>>,
@@ -888,7 +888,7 @@ fn start_codex_worker(
                                     provider_default_model = models.default_model.clone();
                                     *host_models
                                         .write()
-                                        .expect("model lock should not be poisoned") = model_text.clone();
+                                        .expect("model lock should not be poisoned") = models.api;
                                     set_model_catalog(&weak, model_text, models.default_model);
                                     set_selected_model_options(
                                         &weak,
@@ -899,13 +899,13 @@ fn start_codex_worker(
                                 if let Ok(usage) = session
                                     .as_mut()
                                     .expect("session was set")
-                                    .usage_summary()
+                                    .usage_status()
                                     .await
                                 {
                                     *host_usage
                                         .write()
-                                        .expect("usage lock should not be poisoned") = usage.clone();
-                                    set_usage(&weak, usage);
+                                        .expect("usage lock should not be poisoned") = usage.api;
+                                    set_usage(&weak, usage.summary);
                                 }
                                 match sessions {
                                     Ok(sessions) => {
@@ -1288,7 +1288,7 @@ fn start_codex_worker(
                         if let Ok(usage) = current.usage_status().await {
                             *host_usage
                                 .write()
-                                .expect("usage lock should not be poisoned") = usage.summary.clone();
+                                .expect("usage lock should not be poisoned") = usage.api;
                             set_usage(&weak, usage.summary.clone());
                             if usage.exhausted {
                                 let due_at = usage
@@ -1524,11 +1524,11 @@ fn start_codex_worker(
                                             .insert(id.to_owned(), snapshot);
                                     }
                                 }
-                                if let Ok(usage) = current.usage_summary().await {
+                                if let Ok(usage) = current.usage_status().await {
                                     *host_usage
                                         .write()
-                                        .expect("usage lock should not be poisoned") = usage.clone();
-                                    set_usage(&weak, usage);
+                                        .expect("usage lock should not be poisoned") = usage.api;
+                                    set_usage(&weak, usage.summary);
                                 }
                                 refresh_sessions(current, &weak, &mut store, &host_conversations)
                                     .await;
@@ -1870,29 +1870,10 @@ fn start_codex_worker(
                                 let Some(current) = session.as_mut() else {
                                     return Err("Codex is disconnected.".to_owned());
                                 };
-                                if selected_id.as_deref() != Some(conversation_id.as_str()) {
-                                    let model = store
-                                        .conversations
-                                        .iter()
-                                        .find(|conversation| conversation.id == conversation_id)
-                                        .and_then(|conversation| conversation.model.clone());
-                                    let working_directory = store
-                                        .conversations
-                                        .iter()
-                                        .find(|conversation| conversation.id == conversation_id)
-                                        .map(|conversation| conversation.working_directory.clone())
-                                        .filter(|directory| !directory.is_empty())
-                                        .unwrap_or_else(|| store.repository_path.clone());
-                                    current.set_repository(working_directory.clone());
-                                    current
-                                        .resume_thread(&conversation_id, model.as_deref())
-                                        .await
-                                        .map_err(|error| error.to_string())?;
-                                    selected_id = Some(conversation_id.clone());
-                                    set_current_working_directory(&weak, working_directory);
-                                }
+                                // Mobile polling must not acquire Codex's writer lease or
+                                // change the desktop's selected provider target.
                                 let history = current
-                                    .current_thread_text()
+                                    .read_thread(&conversation_id)
                                     .await
                                     .map_err(|error| error.to_string())?;
                                 let Some(record) = store
@@ -2084,48 +2065,39 @@ fn set_scheduled_items(weak: &slint::Weak<AppWindow>, store: &DesktopStore) {
 }
 
 fn history_items(conversation_id: &str, history: &str) -> Vec<serde_json::Value> {
-    let chars = transcript_plain_text(history).chars().collect::<Vec<_>>();
-    if chars.is_empty() {
-        return Vec::new();
-    }
-    chars
-        .chunks(8_000)
-        .enumerate()
-        .map(|(index, chunk)| {
-            serde_json::json!({
-                "id": format!("history-{conversation_id}-{index}"),
-                "type": "assistant",
-                "text": chunk.iter().collect::<String>(),
-                "detail": "",
+    let segments = if history.contains(TRANSCRIPT_MARKER) {
+        history.split(TRANSCRIPT_MARKER).collect::<Vec<_>>()
+    } else {
+        vec![history]
+    };
+    let mut items = Vec::new();
+    for (index, segment) in segments.into_iter().enumerate() {
+        if segment.trim().is_empty() {
+            continue;
+        }
+        let (header, body) = if history.contains(TRANSCRIPT_MARKER) && index > 0 {
+            segment.split_once('\n').unwrap_or(("assistant", segment))
+        } else {
+            ("assistant", segment)
+        };
+        let item_type = match header {
+            "user" => "userMessage",
+            "assistant" => "agentMessage",
+            _ => "commandExecution",
+        };
+        let chunks = body.trim_end().chars().collect::<Vec<_>>();
+        for (chunk_index, chunk) in chunks.chunks(8_000).enumerate() {
+            let text = chunk.iter().collect::<String>();
+            items.push(serde_json::json!({
+                "id": format!("history-{conversation_id}-{index}-{chunk_index}"),
+                "type": item_type,
+                "text": if item_type == "commandExecution" { "" } else { text.as_str() },
+                "detail": if item_type == "commandExecution" { text.as_str() } else { "" },
                 "status": "completed"
-            })
-        })
-        .collect()
-}
-
-fn transcript_plain_text(history: &str) -> String {
-    if !history.contains(TRANSCRIPT_MARKER) {
-        return history.to_owned();
+            }));
+        }
     }
-    history
-        .split(TRANSCRIPT_MARKER)
-        .enumerate()
-        .filter_map(|(index, segment)| {
-            if segment.is_empty() {
-                return None;
-            }
-            if index == 0 {
-                return Some(segment.to_owned());
-            }
-            Some(
-                segment
-                    .split_once('\n')
-                    .map_or(segment, |(_, body)| body)
-                    .to_owned(),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    items
 }
 
 fn host_snapshot(
@@ -3789,6 +3761,20 @@ mod tests {
                 .iter()
                 .any(|usage| matches!(usage, rcgen::ExtendedKeyUsagePurpose::ServerAuth))
         );
+    }
+
+    #[test]
+    fn android_history_preserves_message_roles_and_activity() {
+        let items = super::history_items(
+            "fixture",
+            "\u{001e}user\nHello\n\n\u{001e}assistant\nHi\n\n\u{001e}activity\ncommand output",
+        );
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["type"], "userMessage");
+        assert_eq!(items[0]["text"], "Hello");
+        assert_eq!(items[1]["type"], "agentMessage");
+        assert_eq!(items[1]["text"], "Hi");
+        assert_eq!(items[2]["detail"], "command output");
     }
 
     #[test]

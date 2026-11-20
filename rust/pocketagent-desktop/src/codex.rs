@@ -1,3 +1,4 @@
+use pocketagent_host::{HostModel, HostUsage, UsageWindow};
 use serde_json::{Value, json};
 use std::{io, path::Path, sync::Arc};
 use tokio::{
@@ -30,12 +31,14 @@ pub struct UsageStatus {
     pub exhausted: bool,
     pub next_reset_at_unix: Option<i64>,
     pub summary: String,
+    pub api: HostUsage,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModelCatalog {
     pub entries: Vec<String>,
     pub default_model: Option<String>,
+    pub api: Vec<HostModel>,
 }
 
 pub struct PromptControl<'a> {
@@ -521,6 +524,29 @@ impl CodexSession {
                 .map(|value| format!(" [{value}]"))
                 .unwrap_or_default();
             catalog.entries.push(format!("{id} - {display}{efforts}"));
+            catalog.api.push(HostModel {
+                model: id.to_owned(),
+                display_name: display.to_owned(),
+                is_default: model
+                    .get("isDefault")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                default_reasoning_effort: model
+                    .get("defaultReasoningEffort")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                supported_reasoning_efforts: model
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| {
+                        v.get("reasoningEffort")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect(),
+            });
             if model.get("isDefault").and_then(Value::as_bool) == Some(true) {
                 catalog.default_model = Some(id.to_owned());
             }
@@ -532,13 +558,6 @@ impl CodexSession {
                 .and_then(|entry| entry.split_once(" - ").map(|(id, _)| id.to_owned()));
         }
         catalog
-    }
-
-    pub async fn usage_summary(
-        &mut self,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let result = self.request("account/rateLimits/read", json!({})).await?;
-        Ok(rate_limit_status(&result).summary)
     }
 
     pub async fn usage_status(
@@ -779,6 +798,7 @@ fn rate_limit_status(result: &Value) -> UsageStatus {
         bucket = result.get("rateLimits").unwrap_or(result);
     }
     let mut exhausted = false;
+    let mut api = HostUsage::default();
     let mut reset_times = Vec::new();
     let windows = [bucket.get("primary"), bucket.get("secondary")]
         .into_iter()
@@ -790,9 +810,28 @@ fn rate_limit_status(result: &Value) -> UsageStatus {
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             let remaining = (100 - used).clamp(0, 100);
+            let window = UsageWindow {
+                remaining_percent: remaining,
+                window_minutes: minutes,
+                resets_at: window
+                    .get("resetsAt")
+                    .and_then(Value::as_i64)
+                    .filter(|seconds| *seconds > 0 && *seconds < 253402300799)
+                    .and_then(|seconds| chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0))
+                    .map(|time| time.to_rfc3339()),
+            };
+            match minutes {
+                300 => api.five_hour = Some(window.clone()),
+                10080 => api.weekly = Some(window.clone()),
+                _ => {}
+            }
             if remaining == 0 {
                 exhausted = true;
-                if let Some(reset) = window.get("resetsAt").and_then(Value::as_i64)
+                if let Some(reset) = window
+                    .resets_at
+                    .as_ref()
+                    .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+                    .map(|time| time.timestamp())
                     && reset > chrono::Utc::now().timestamp()
                 {
                     reset_times.push(reset);
@@ -812,11 +851,18 @@ fn rate_limit_status(result: &Value) -> UsageStatus {
             ..UsageStatus::default()
         }
     } else {
+        let next_reset_at_unix = reset_times.into_iter().max();
+        api.available = true;
+        api.exhausted = exhausted;
+        api.next_reset_at = next_reset_at_unix
+            .and_then(|seconds| chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0))
+            .map(|time| time.to_rfc3339());
         UsageStatus {
             available: true,
             exhausted,
-            next_reset_at_unix: reset_times.into_iter().max(),
+            next_reset_at_unix,
             summary: windows.join("  -  "),
+            api,
         }
     }
 }

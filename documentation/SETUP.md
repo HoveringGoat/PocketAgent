@@ -172,6 +172,8 @@ The Devices **Connection diagnostics** report includes the rule's PASS/FAIL stat
 
 The Rust host certificate is a persisted self-signed leaf with SANs for the listener and advertised addresses and the TLS `serverAuth` extended-key usage required by Android's pinned-trust verifier. A newly generated certificate is loaded on host startup; restart the desktop after changing certificate files.
 
+The Rust Android-compatible API returns the same structured usage windows, model options, and absolute local-folder entries as the .NET host. Conversation history reads use Codex's non-writing thread-read path, so a phone can mirror a conversation while another client owns its active writer lease; returned transcript items preserve user, agent, and activity roles.
+
 The Rust desktop status row shows live elapsed work time and the duration of the last completed turn; host snapshots expose the corresponding active-start and completed-duration fields.
 
 The Rust desktop uses persistent top-level **Sessions**, **Devices**, and **Settings** pages. Its native layout follows the packaged desktop shell: a compact server/context header, right-aligned navigation and lifecycle indicator, title-only conversation tabs, adjacent conversation actions, a bounded transcript surface, status row, and composer/action panel. Sessions owns conversation selection and the transcript/composer; Devices owns pairing renewal, per-conversation grants, and device revocation; Settings owns Codex connection and relay configuration. Each page is scrollable so controls below the initial viewport remain reachable, and transcript rows size themselves to their Markdown content so blocks do not overlap.
