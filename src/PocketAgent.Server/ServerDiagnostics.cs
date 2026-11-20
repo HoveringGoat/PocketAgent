@@ -35,8 +35,8 @@ public static class ServerDiagnostics
                 if (logPath is null) Initialize();
                 var suffix = exception is null
                     ? ""
-                    : $" exception={exception.GetType().Name} detail={Limit(Sanitize(exception.Message), 1200)}";
-                WriteCore($"{level.ToString().ToUpperInvariant()} category={Sanitize(category)} {Sanitize(message)}{suffix}");
+                    : $" exception={exception.GetType().Name} detail={Limit(exception.Message, 1200)}";
+                WriteCore($"{level.ToString().ToUpperInvariant()} category={category} {message}{suffix}");
             }
         }
         catch
@@ -72,17 +72,6 @@ public static class ServerDiagnostics
         if (logPath is null) return;
         RotateIfNeeded();
         File.AppendAllText(logPath, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}", Encoding.UTF8);
-    }
-
-    private static string Sanitize(string value)
-    {
-        var sanitized = Limit(value.Replace('\r', ' ').Replace('\n', ' '), 4000);
-        sanitized = Regex.Replace(sanitized,
-            @"(?i)(authorization|token|password|secret|api[-_]?key)\s*([=:])\s*([^\s&,;]+)",
-            "$1$2<redacted>");
-        sanitized = Regex.Replace(sanitized, @"(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*", "Bearer <redacted>");
-        sanitized = Regex.Replace(sanitized, @"\bsk-[A-Za-z0-9_-]{12,}\b", "<redacted-api-key>");
-        return sanitized;
     }
 
     private static string Limit(string value, int length) => value.Length <= length ? value : value[..length] + "...";
