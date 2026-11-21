@@ -80,6 +80,7 @@ public partial class MainWindow : Window
         CheckUpdatesOnStartupSetting.IsChecked = settings.CheckUpdatesOnStartup;
         CheckUpdatesPeriodicallySetting.IsChecked = settings.CheckUpdatesPeriodically;
         AutomaticUpdatesSetting.IsChecked = settings.AutomaticUpdates;
+        UpdateCodexExtensionOnStartupSetting.IsChecked = settings.UpdateCodexExtensionOnStartup;
         UiScaleSetting.SelectedValue = settings.UiScale;
         ApplyUiScale(settings.UiScale);
         HeartbeatSetting.IsChecked = settings.Host.EnableHeartbeats;
@@ -142,6 +143,8 @@ public partial class MainWindow : Window
             await StartServerCore();
         if (settings.CheckUpdatesOnStartup)
             await CheckForUpdatesCore(true);
+        if (settings.UpdateCodexExtensionOnStartup)
+            await CheckCodexExtensionUpdateCore();
     }
 
     private void WriteUpdateHealth()
@@ -171,6 +174,7 @@ public partial class MainWindow : Window
             CheckUpdatesOnStartup = CheckUpdatesOnStartupSetting.IsChecked == true,
             CheckUpdatesPeriodically = CheckUpdatesPeriodicallySetting.IsChecked == true,
             AutomaticUpdates = AutomaticUpdatesSetting.IsChecked == true,
+            UpdateCodexExtensionOnStartup = UpdateCodexExtensionOnStartupSetting.IsChecked == true,
             UiScale = UiScaleSetting.SelectedValue as string ?? "comfortable",
             Host = new HostSettings
             {
@@ -207,6 +211,28 @@ public partial class MainWindow : Window
     }
 
     private async void SaveSettings(object sender, RoutedEventArgs e) => await Act(() => { SaveConfiguration(); ErrorDisplay.Text = "Settings saved."; return Task.CompletedTask; });
+    private async void CheckCodexExtensionUpdate(object sender, RoutedEventArgs e) => await CheckCodexExtensionUpdateCore();
+
+    private async Task CheckCodexExtensionUpdateCore()
+    {
+        if (relay is not null)
+        {
+            var sessions = await Conversations.List();
+            if (sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain"))
+            {
+                CodexUpdateStatus.Text = "Codex extension update waiting for all conversations to become idle.";
+                return;
+            }
+        }
+        try
+        {
+            var result = await CodexExtensionUpdateService.CheckAsync(settings.Host, install: true);
+            CodexUpdateStatus.Text = result.Message;
+            if (result.Updated) ResolveCodex();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
+        { CodexUpdateStatus.Text = $"Codex extension update unavailable: {exception.Message}"; }
+    }
     private void UiScaleChanged(object sender, SelectionChangedEventArgs e)
     {
         if (UiScaleSetting.SelectedValue is not string value) return;

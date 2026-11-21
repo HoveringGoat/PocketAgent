@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.29 - 2026-11-21
+
+- Add optional startup and manual updates for the installed VS Code Codex extension, with idle-session protection and explicit-executable opt-out handling.
+
 ## 0.3.28 - 2026-11-21
 
 - Use one authoritative listener/public/router port for direct internet setup instead of assuming router port translation.

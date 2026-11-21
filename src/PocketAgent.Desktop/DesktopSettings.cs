@@ -9,6 +9,7 @@ public sealed class DesktopSettings
     public bool CheckUpdatesOnStartup { get; set; } = true;
     public bool CheckUpdatesPeriodically { get; set; } = true;
     public bool AutomaticUpdates { get; set; }
+    public bool UpdateCodexExtensionOnStartup { get; set; }
     public bool StartServerOnLaunch { get; set; } = true;
     public bool LaunchOnWindowsStartup { get; set; }
     public string UiScale { get; set; } = "comfortable";

@@ -2,7 +2,7 @@
 
 ## Use the packaged native apps
 
-Install the desktop/server package and Android APK from the same release. Extract the desktop ZIP and run the executable inside its desktop folder; the package is self-contained. Saved state remains under `%LOCALAPPDATA%/PocketAgent`, outside the release directory. Close the prior desktop before starting an upgrade so its provider process and listener are released.
+Install the desktop/server package and Android APK from the same release. The desktop package is self-contained and stores saved state under `%LOCALAPPDATA%/PocketAgent`, outside the release directory. Close the prior desktop before starting an upgrade so its provider process and listener are released.
 
 ## Desktop setup and permissions
 
@@ -11,6 +11,8 @@ Choose a default working folder in Settings. New conversations can select anothe
 Settings includes **Codex Platform API key**. Paste a replacement while the server is stopped, choose the environment-variable name used by the provider (normally `OPENAI_API_KEY`), and select **Save API key**. PocketAgent stores the value in Windows Credential Manager and injects it only when launching the selected Codex executable. It is never saved in `desktop.json`, logged, copied, or included in relay/mobile data. **Remove saved key** disables the PocketAgent override and returns to the inherited environment or Codex-managed sign-in store. After changing the key, start the server and use **Check Codex connection** followed by **Test inference access**.
 
 The connection check identifies the running executable, authentication mode, credential source, configured provider/model and model catalog without running inference. **Test inference access** performs one real provider request and may consume usage; it is the only check that proves the key's project can use the selected model. If it reports that the project tied to the API key is unauthorized, grant the project model access or replace the key with one from the intended project, restart Codex and run the test again. PocketAgent cannot change OpenAI project permissions. Usage limits may be shown as unavailable for Platform API-key authentication because the ChatGPT-only rate-limit method is not applicable; PocketAgent stops polling that method and offers a manual retry.
+
+The **Update the VS Code Codex extension when PocketAgent starts** setting is off by default. When enabled, startup checks the installed stable `openai.chatgpt` extension against the VS Code Marketplace and runs the VS Code command-line installer only when a newer version exists. The **Check for Codex extension updates now** button performs the same check manually regardless of the startup setting. Updates are skipped while a conversation is active and when an explicit Codex executable override is configured. Restart the PocketAgent server after an extension update so the new bundled `codex.exe` is selected.
 
 Permission mode is desktop-owned: inherit Codex settings, ask for workspace-write/on-request approvals, or full access. Stop, save and restart before changing the mode. The provider model picker uses the live catalog and never silently substitutes a model.
 

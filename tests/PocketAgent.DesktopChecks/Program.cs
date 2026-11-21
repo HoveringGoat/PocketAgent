@@ -41,6 +41,10 @@ internal static class Program
             var parseArguments = new object?[] { "desktop-v0.3.2", null };
             if (!(bool)parser.Invoke(null, parseArguments)! || ((Version)parseArguments[1]!).ToString(3) != "0.3.2")
                 throw new InvalidOperationException("The desktop updater must parse its platform release tag.");
+            if (!CodexExtensionUpdateService.IsNewer(new Version(1, 2, 3), new Version(1, 2, 4)) ||
+                CodexExtensionUpdateService.IsNewer(new Version(1, 2, 4), new Version(1, 2, 4)) ||
+                CodexExtensionUpdateService.IsNewer(new Version(1, 2, 5), new Version(1, 2, 4)))
+                throw new InvalidOperationException("Codex extension updates must only run for a newer marketplace version.");
             var window = new MainWindow();
             var settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
             settings.StartServerOnLaunch = false;
