@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.7 - 2026-11-21
+
+- Expand Android connection errors with DNS, route, TCP timeout/refusal, TLS, and server-response diagnostics.
+
 ## 0.4.6 - 2026-11-20
 
 - Pair with the Codex desktop through a relay QR and use the same conversation and device controls over the encrypted relay connection.

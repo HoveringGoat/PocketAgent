@@ -32,8 +32,12 @@ import android.widget.TextView;
 import android.net.Uri;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.UnknownHostException;
+import java.net.NoRouteToHostException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -2342,13 +2346,28 @@ public final class MainActivity extends Activity {
   }
 
   private String safeError(Exception exception) {
-    if (exception instanceof ApiClient.ApiError || exception instanceof IllegalArgumentException ||
-        exception instanceof RelayConnection.ConnectionError)
+    if (exception instanceof ApiClient.ApiError)
+      return exception.getMessage() + "\n\nNetwork diagnostic: the HTTPS server and selected port responded. This is an API or pairing response, not a blocked-port failure.";
+    if (exception instanceof IllegalArgumentException || exception instanceof RelayConnection.ConnectionError)
       return exception.getMessage();
     if (exception instanceof javax.net.ssl.SSLException)
       return "Desktop identity or HTTPS verification failed. Check the phone clock and server"
                  + " address. If the desktop key changed, scan a fresh QR on that desktop. No"
                  + " connection was trusted automatically.";
+    if (exception instanceof UnknownHostException)
+      return "The server address could not be resolved. Check the LAN IP or hostname in the pairing string."
+          + " No TCP port or firewall test was reached.";
+    if (exception instanceof NoRouteToHostException)
+      return "The phone has no route to the server address. Check that both devices are on the same LAN"
+          + " and that Wi-Fi client isolation is disabled. No TCP port or firewall test was completed.";
+    if (exception instanceof SocketTimeoutException)
+      return "The TCP connection to the server timed out. The address was not reachable within the timeout;"
+          + " check the selected port, router forwarding, Wi-Fi isolation, and Windows Firewall. A timeout"
+          + " does not prove which one blocked it.";
+    if (exception instanceof ConnectException)
+      return "The server host was reached, but the TCP connection was refused. The selected port is reachable"
+          + " at the host, but no listener accepted it; check that PocketAgent is running and listening on that port."
+          + " Windows Firewall did not silently drop this attempt.";
     return "Could not reach the desktop. Check the IP and port, that the server is running, router"
         + " TCP forwarding, and Windows Firewall. Test over cellular; some routers cannot"
         + " access their own public IP from Wi-Fi.";
