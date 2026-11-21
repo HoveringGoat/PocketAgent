@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.31 - 2026-11-21
+
+- Clean up the disposable installer test through Inno Setup's uninstaller so test paths cannot become the next installer default.
+
 ## 0.3.30 - 2026-11-21
 
 - Distribute the desktop installer as the only desktop package and have the automatic updater run it silently with checksum verification.

@@ -90,5 +90,9 @@ finally {
     if ($server -and !$server.HasExited) { $server.Kill() }
     $desktopPath = Join-Path $install 'PocketAgent.Desktop.exe'
     Get-Process -Name PocketAgent.Desktop -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $desktopPath } | Stop-Process -Force -ErrorAction SilentlyContinue
+    $uninstaller = Join-Path $install 'unins000.exe'
+    if (Test-Path -LiteralPath $uninstaller) {
+        try { Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -WindowStyle Hidden | Out-Null } catch { Write-Output "WARNING disposable installer cleanup failed: $($_.Exception.Message)" }
+    }
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }
