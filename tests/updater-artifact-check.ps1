@@ -20,6 +20,11 @@ $install = Join-Path $root 'install'
 $server = $null
 $parent = $null
 $updater = $null
+$progressPipe = $null
+$reader = $null
+$writer = $null
+$previousDesktopData = $env:POCKETAGENT_DESKTOP_DATA
+$previousDesktopLogs = $env:POCKETAGENT_DESKTOP_LOG_DIRECTORY
 function Quote-Argument([string]$value) { return '"' + $value.Replace('"', '\"') + '"' }
 function Set-ProcessArguments([Diagnostics.ProcessStartInfo]$info, [string[]]$arguments) {
     # The release test runs under Windows PowerShell 5.1, whose ProcessStartInfo
@@ -35,6 +40,8 @@ function Wait-ForFile([string]$path, [int]$seconds) {
     return $false
 }
 try {
+    $env:POCKETAGENT_DESKTOP_DATA = Join-Path $root 'desktop-data'
+    $env:POCKETAGENT_DESKTOP_LOG_DIRECTORY = Join-Path $root 'desktop-logs'
     New-Item -ItemType Directory -Force -Path $install | Out-Null
     Get-ChildItem -LiteralPath $packageDirectory -Force | Copy-Item -Destination $install -Recurse -Force
 
@@ -48,7 +55,7 @@ try {
     Start-Sleep -Milliseconds 500
 
     $parentInfo = [Diagnostics.ProcessStartInfo]::new('powershell.exe')
-    Set-ProcessArguments $parentInfo @('-NoProfile', '-Command', 'Start-Sleep -Seconds 3')
+    Set-ProcessArguments $parentInfo @('-NoProfile', '-Command', 'Start-Sleep -Seconds 120')
     $parentInfo.UseShellExecute = $false; $parentInfo.CreateNoWindow = $true
     $parent = [Diagnostics.Process]::Start($parentInfo)
 
@@ -56,17 +63,54 @@ try {
     $log = Join-Path $root 'update.log'
     $assetUrl = "http://127.0.0.1:$port/PocketAgent-$Version-Setup.exe"
     $checksumUrl = "http://127.0.0.1:$port/PocketAgent-$Version-Setup.exe.sha256"
+    $pipeName = 'PocketAgent-update-check-' + [Guid]::NewGuid().ToString('N')
+    $progressPipe = [IO.Pipes.NamedPipeServerStream]::new($pipeName, [IO.Pipes.PipeDirection]::InOut, 1,
+        [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous)
     $arguments = @(
         '--asset-url', $assetUrl, '--sha256-url', $checksumUrl,
         '--install-root', $install, '--restart-path', (Join-Path $install 'PocketAgent.Desktop.exe'),
         '--wait-pid', $parent.Id.ToString([Globalization.CultureInfo]::InvariantCulture), '--version', $Version,
-        '--health-file', $health, '--log-file', $log
+        '--health-file', $health, '--log-file', $log, '--progress-pipe', $pipeName
     ) | ForEach-Object { Quote-Argument $_ }
     $updaterInfo = [Diagnostics.ProcessStartInfo]::new($updaterPath)
     $updaterInfo.Arguments = $arguments -join ' '
     $updaterInfo.WorkingDirectory = Split-Path $updaterPath
-    $updaterInfo.UseShellExecute = $true; $updaterInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $updaterInfo.UseShellExecute = $true
     $updater = [Diagnostics.Process]::Start($updaterInfo)
+    $connection = $progressPipe.WaitForConnectionAsync()
+    if (!$connection.Wait(20000)) { throw 'The updater did not connect to the desktop progress pipe.' }
+    $reader = [IO.StreamReader]::new($progressPipe)
+    $writer = [IO.StreamWriter]::new($progressPipe)
+    $verified = $false
+    do {
+        $read = $reader.ReadLineAsync()
+        if (!$read.Wait(30000)) { throw 'The updater stalled before it was ready.' }
+        $message = $read.Result
+        if ($message -eq 'verifying') { $verified = $true }
+        if ($null -eq $message -or $message -eq 'failed') { throw "The updater did not prepare the installer. See $log." }
+    } until ($message -eq 'ready')
+    $updater.Refresh()
+    if (!$verified -or $parent.HasExited -or $updater.MainWindowHandle -eq [IntPtr]::Zero -or $updater.MainWindowTitle -ne 'Updating PocketAgent') {
+        throw 'The updater must verify the checksum and display its window before the desktop exits.'
+    }
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $window = [Windows.Automation.AutomationElement]::FromHandle($updater.MainWindowHandle)
+    $statusCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, "Waiting for PocketAgent to close$([char]0x2026)")
+    $progressCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ProgressBar)
+    $statusElement = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $statusCondition)
+    $progressElement = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $progressCondition)
+    if (!$statusElement -or !$progressElement -or $statusElement.Current.IsOffscreen -or $progressElement.Current.IsOffscreen) {
+        throw 'The updater window must show its handoff status and progress bar.'
+    }
+    $statusBounds = $statusElement.Current.BoundingRectangle
+    $progressBounds = $progressElement.Current.BoundingRectangle
+    $windowBounds = $window.Current.BoundingRectangle
+    if (!$windowBounds.Contains($statusBounds) -or !$windowBounds.Contains($progressBounds) -or $statusBounds.Bottom -gt $progressBounds.Top) {
+        throw 'The updater window status and progress bar must be fully visible and separate.'
+    }
+    $writer.WriteLine('install')
+    $writer.Flush()
+    $parent.Kill()
     if (!$updater.WaitForExit(120000)) { throw 'The updater did not exit within 120 seconds.' }
     $logText = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
     if ($updater.ExitCode -ne 0) { throw "The updater exited with code $($updater.ExitCode).`n$logText" }
@@ -82,10 +126,15 @@ try {
     $staleInstallTransactions = @(Get-ChildItem $install -Directory -Filter '.PocketAgent-update-*' -ErrorAction SilentlyContinue)
     if ($staleInstallTransactions.Count -gt 0) { Write-Output "INFO stale hidden install transactions were ignored: $($staleInstallTransactions.Name -join ', ')" }
     if (!(Test-Path -LiteralPath (Join-Path $install 'PocketAgent.Desktop.exe'))) { throw 'The updated desktop executable is missing after installer update.' }
-    Write-Output "PASS updater installer handoff, silent install, restart health check, and staging cleanup ($Version)."
+    Write-Output "PASS updater progress, visible handoff, silent install, restart health check, and staging cleanup ($Version)."
 }
 finally {
+    $env:POCKETAGENT_DESKTOP_DATA = $previousDesktopData
+    $env:POCKETAGENT_DESKTOP_LOG_DIRECTORY = $previousDesktopLogs
     if ($updater -and !$updater.HasExited) { $updater.Kill() }
+    if ($writer) { $writer.Dispose() }
+    if ($reader) { $reader.Dispose() }
+    if ($progressPipe) { $progressPipe.Dispose() }
     if ($parent -and !$parent.HasExited) { $parent.Kill() }
     if ($server -and !$server.HasExited) { $server.Kill() }
     $desktopPath = Join-Path $install 'PocketAgent.Desktop.exe'

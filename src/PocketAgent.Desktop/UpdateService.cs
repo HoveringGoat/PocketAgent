@@ -44,7 +44,7 @@ public static class UpdateService
         return new DesktopUpdate(version, tag, assetUri, checksum.ValueKind == JsonValueKind.Undefined ? null : checksum.GetProperty("browser_download_url").GetString(), releasePage, notes.Trim());
     }
 
-    public static Process? Launch(DesktopUpdate update, int parentProcessId)
+    public static Process? Launch(DesktopUpdate update, int parentProcessId, string progressPipe)
     {
         var updater = Path.Combine(AppContext.BaseDirectory, "PocketAgent.Updater.exe");
         var executable = Environment.ProcessPath;
@@ -64,7 +64,7 @@ public static class UpdateService
                 // the desktop process/job that is about to exit. The previous direct
                 // child launch reliably died at the handoff point on installed builds.
                 UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
+                WindowStyle = ProcessWindowStyle.Normal,
                 WorkingDirectory = Path.GetDirectoryName(launchCopy) ?? Path.GetTempPath()
             };
             info.ArgumentList.Add("--asset-url"); info.ArgumentList.Add(update.Asset.ToString());
@@ -75,6 +75,7 @@ public static class UpdateService
             info.ArgumentList.Add("--version"); info.ArgumentList.Add(update.Version.ToString(3));
             info.ArgumentList.Add("--health-file"); info.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "PocketAgent-update-health-" + Guid.NewGuid().ToString("N")));
             info.ArgumentList.Add("--log-file"); info.ArgumentList.Add(logFile);
+            info.ArgumentList.Add("--progress-pipe"); info.ArgumentList.Add(progressPipe);
             var process = Process.Start(info);
             DesktopDiagnostics.Log($"UPDATE launch version={update.Version} pid={parentProcessId} updater={Path.GetFileName(updater)}");
             return process;

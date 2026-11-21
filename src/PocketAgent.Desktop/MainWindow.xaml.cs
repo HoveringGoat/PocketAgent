@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private string qrRendered = "";
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning, loadingHistory;
     private DesktopUpdate? pendingUpdate;
+    private bool installingUpdate;
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
     private string? providerModel;
@@ -430,36 +431,52 @@ public partial class MainWindow : Window
 
     private async Task InstallUpdateCore(bool userRequested)
     {
-        if (pendingUpdate is null)
+        if (installingUpdate || closing) return;
+        installingUpdate = true;
+        try { await InstallPendingUpdate(userRequested); }
+        finally { installingUpdate = false; }
+    }
+
+    private async Task InstallPendingUpdate(bool userRequested)
+    {
+        if (pendingUpdate is not { } update)
         {
             UpdateStatus.Text = "Check for updates before installing.";
             return;
         }
-        if (pendingUpdate.Sha256 is null)
+        if (update.Sha256 is null)
         {
             UpdateStatus.Text = "This release does not publish a checksum, so PocketAgent will not install it automatically.";
             return;
         }
-        if (relay is not null)
+        if (!await CanInstallUpdate())
         {
-            var sessions = await Conversations.List();
-            if (sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain"))
-            {
-                UpdateStatus.Text = "Update waiting for all conversations to become idle.";
-                if (userRequested) AppDialogs.Show(this, UpdateStatus.Text, "Update waiting");
-                return;
-            }
+            UpdateStatus.Text = "Update waiting for all conversations to become idle.";
+            if (userRequested) AppDialogs.Show(this, UpdateStatus.Text, "Update waiting");
+            return;
         }
-        var updater = UpdateService.Launch(pendingUpdate, Environment.ProcessId);
-        if (updater is null)
+        if (closing) return;
+        var deferred = false;
+        if (!UpdateDownloadDialog.Show(this, update, async () =>
         {
-            UpdateStatus.Text = "The updater is not included in this development build. Install the packaged desktop release to update automatically.";
+            deferred = !await CanInstallUpdate();
+            return !deferred;
+        }))
+        {
+            UpdateStatus.Text = deferred ? "Update waiting for all conversations to become idle." : "The update did not start.";
             return;
         }
         closing = true;
         timer.Stop(); updateTimer.Stop();
-        await Shutdown();
-        Close();
+        try { await Shutdown(); }
+        finally { Close(); }
+    }
+
+    private async Task<bool> CanInstallUpdate()
+    {
+        if (relay is null) return true;
+        var sessions = await Conversations.List();
+        return !sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain");
     }
     private async Task<bool> ConfirmStop()
     {

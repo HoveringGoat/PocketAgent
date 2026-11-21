@@ -23,6 +23,11 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
+            if (Environment.GetCommandLineArgs().Contains("--update-ui", StringComparer.OrdinalIgnoreCase))
+            {
+                UpdateUiChecks.Run();
+                return 0;
+            }
             if (Environment.GetCommandLineArgs().Contains("--relay-setup", StringComparer.OrdinalIgnoreCase))
             {
                 RelaySetupChecks.Run(root);
