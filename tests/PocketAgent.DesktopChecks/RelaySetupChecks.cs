@@ -22,7 +22,6 @@ using PocketAgent.Desktop;
 internal static class RelaySetupChecks
 {
     private const string SavedLanAddress = "192.168.254.253";
-    private const string SavedPublicOrigin = "https://198.51.100.77:9443";
 
     public static void Run(string repository)
     {
@@ -77,8 +76,9 @@ internal static class RelaySetupChecks
             await CheckLayout(node, output, "host", cancellation);
 
             remote = OpenDesktop(repository, remoteDirectory);
+            var savedPublicOrigin = $"https://198.51.100.77:{Control<TextBox>(remote, "PortSetting").Text}";
             Control<TextBox>(remote, "AddressSetting").Text = SavedLanAddress;
-            Control<TextBox>(remote, "DirectOriginSetting").Text = SavedPublicOrigin;
+            Control<TextBox>(remote, "DirectOriginSetting").Text = savedPublicOrigin;
             Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "client";
             CheckMode(remote, "client");
             var input = Control<PasswordBox>(remote, "RelayEnrollmentSetting");
@@ -125,7 +125,7 @@ internal static class RelaySetupChecks
                 .Services.GetRequiredService<HostSettings>();
             var savedNetwork = DesktopSettings.Load().Host;
             if (clientSettings.ListenAddress != "127.0.0.1" || clientSettings.ClientOrigin != $"http://127.0.0.1:{clientSettings.Port}" ||
-                savedNetwork.ListenAddress != SavedLanAddress || savedNetwork.DirectOrigin != SavedPublicOrigin || !savedNetwork.PinnedCertificate)
+                savedNetwork.ListenAddress != SavedLanAddress || savedNetwork.DirectOrigin != savedPublicOrigin || !savedNetwork.PinnedCertificate)
                 throw new InvalidOperationException("Relay client startup must use loopback without discarding the saved LAN and direct settings.");
             await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Connected to relay.", cancellation);
             if (Control<FrameworkElement>(remote, "RelayEnrollmentPanel").Visibility != Visibility.Collapsed ||
