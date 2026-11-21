@@ -33,7 +33,4 @@ if ($Publish -and $Target -ne 'Android') {
     Remove-Item -LiteralPath $updaterDirectory -Recurse -Force
     New-Item -ItemType Directory -Force -Path (Join-Path $publishDirectory 'documentation') | Out-Null
     Copy-Item -LiteralPath documentation/SETUP.md,documentation/ARCHITECTURE.md,documentation/PROJECT.md -Destination (Join-Path $publishDirectory 'documentation')
-    $archive = "$releaseDirectory/PocketAgent-$version-desktop.zip"
-    Compress-Archive -LiteralPath $publishDirectory -DestinationPath $archive -Force
-    (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path $archive -Leaf) | Set-Content -LiteralPath ($archive + '.sha256')
 }

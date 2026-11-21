@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.30 - 2026-11-21
+
+- Distribute the desktop installer as the only desktop package and have the automatic updater run it silently with checksum verification.
+
 ## 0.3.29 - 2026-11-21
 
 - Add optional startup and manual updates for the installed VS Code Codex extension, with idle-session protection and explicit-executable opt-out handling.

@@ -7,15 +7,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $releaseDirectory = [IO.Path]::GetFullPath($ReleaseDirectory)
-$archive = Join-Path $releaseDirectory "PocketAgent-$Version-desktop.zip"
-$checksum = "$archive.sha256"
+$installer = Join-Path $releaseDirectory "PocketAgent-$Version-Setup.exe"
+$checksum = "$installer.sha256"
 $packageDirectory = Join-Path $releaseDirectory 'desktop'
 $updaterPath = Join-Path $packageDirectory 'PocketAgent.Updater.exe'
-foreach ($path in @($archive, $checksum, $packageDirectory, $updaterPath)) {
+foreach ($path in @($installer, $checksum, $packageDirectory, $updaterPath)) {
     if (!(Test-Path -LiteralPath $path)) { throw "Updater artifact check input was not found: $path" }
 }
-$hiddenPackageDirectories = @(Get-ChildItem -LiteralPath $packageDirectory -Directory -Force | Where-Object Name -like '.*')
-if ($hiddenPackageDirectories.Count -gt 0) { throw "Desktop package contains unsupported hidden directories: $($hiddenPackageDirectories.Name -join ', ')" }
 
 $root = Join-Path $projectRoot ('.local/updater-check-' + [Guid]::NewGuid().ToString('N'))
 $install = Join-Path $root 'install'
@@ -39,13 +37,6 @@ function Wait-ForFile([string]$path, [int]$seconds) {
 try {
     New-Item -ItemType Directory -Force -Path $install | Out-Null
     Get-ChildItem -LiteralPath $packageDirectory -Force | Copy-Item -Destination $install -Recurse -Force
-    $staleTransaction = Join-Path $install '.PocketAgent-update-stale\backup'
-    New-Item -ItemType Directory -Force -Path $staleTransaction | Out-Null
-    for ($depth = 0; $depth -lt 12; $depth++) {
-        $staleTransaction = Join-Path $staleTransaction '.PocketAgent-update-stale\backup'
-        New-Item -ItemType Directory -Force -Path $staleTransaction | Out-Null
-    }
-    Set-Content -LiteralPath (Join-Path $staleTransaction 'stale-marker.txt') -Value 'stale transaction'
 
     $portListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $portListener.Start(); $port = ([Net.IPEndPoint]$portListener.LocalEndpoint).Port; $portListener.Stop()
@@ -63,8 +54,8 @@ try {
 
     $health = Join-Path $root 'health.txt'
     $log = Join-Path $root 'update.log'
-    $assetUrl = "http://127.0.0.1:$port/PocketAgent-$Version-desktop.zip"
-    $checksumUrl = "http://127.0.0.1:$port/PocketAgent-$Version-desktop.zip.sha256"
+    $assetUrl = "http://127.0.0.1:$port/PocketAgent-$Version-Setup.exe"
+    $checksumUrl = "http://127.0.0.1:$port/PocketAgent-$Version-Setup.exe.sha256"
     $arguments = @(
         '--asset-url', $assetUrl, '--sha256-url', $checksumUrl,
         '--install-root', $install, '--restart-path', (Join-Path $install 'PocketAgent.Desktop.exe'),
@@ -90,8 +81,8 @@ try {
     if ($staging.Count -gt 0) { throw "Updater staging directories were left behind: $($staging.Name -join ', ')`n$logText" }
     $staleInstallTransactions = @(Get-ChildItem $install -Directory -Filter '.PocketAgent-update-*' -ErrorAction SilentlyContinue)
     if ($staleInstallTransactions.Count -gt 0) { Write-Output "INFO stale hidden install transactions were ignored: $($staleInstallTransactions.Name -join ', ')" }
-    if (!(Test-Path -LiteralPath (Join-Path $install 'PocketAgent.Desktop.exe'))) { throw 'The updated desktop executable is missing after replacement.' }
-    Write-Output "PASS updater artifact handoff, replacement, restart health check, and staging cleanup ($Version)."
+    if (!(Test-Path -LiteralPath (Join-Path $install 'PocketAgent.Desktop.exe'))) { throw 'The updated desktop executable is missing after installer update.' }
+    Write-Output "PASS updater installer handoff, silent install, restart health check, and staging cleanup ($Version)."
 }
 finally {
     if ($updater -and !$updater.HasExited) { $updater.Kill() }

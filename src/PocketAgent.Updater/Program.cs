@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 
@@ -12,10 +11,6 @@ var installRoot = Path.GetFullPath(arguments["install-root"]);
 var restartPath = Path.GetFullPath(arguments["restart-path"]);
 var installParent = Directory.GetParent(installRoot)?.FullName ?? throw new InvalidOperationException("The install root must have a parent directory.");
 var staging = Path.Combine(installParent, ".PocketAgent-update-" + Guid.NewGuid().ToString("N"));
-var archive = Path.Combine(staging, "package.zip");
-var extracted = Path.Combine(staging, "extracted");
-var backup = Path.Combine(staging, "backup");
-var replacementStarted = false;
 var parentExited = false;
 var healthFile = arguments.GetValueOrDefault("health-file");
 try
@@ -24,28 +19,36 @@ try
     Directory.CreateDirectory(staging);
     using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PocketAgent.Updater", "0.2.0"));
+    var installer = Path.Combine(staging, "PocketAgent-Setup.exe");
     await using (var input = await client.GetStreamAsync(arguments["asset-url"]))
-    await using (var output = File.Create(archive)) await input.CopyToAsync(output);
+    await using (var output = File.Create(installer)) await input.CopyToAsync(output);
     if (arguments.TryGetValue("sha256-url", out var checksumUrl))
     {
         var checksumText = await client.GetStringAsync(checksumUrl);
         var expected = checksumText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        await using var archiveStream = File.OpenRead(archive);
-        var actual = Convert.ToHexString(await SHA256.HashDataAsync(archiveStream)).ToLowerInvariant();
+        await using var installerStream = File.OpenRead(installer);
+        var actual = Convert.ToHexString(await SHA256.HashDataAsync(installerStream)).ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(expected) || !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(expected), Convert.FromHexString(actual)))
-            return Fail("The downloaded desktop package failed checksum verification.", logFile);
+            return Fail("The downloaded desktop installer failed checksum verification.", logFile);
     }
     WriteLog(logFile, "Package downloaded and checksum verified.");
     await WaitForExit(int.Parse(arguments["wait-pid"], System.Globalization.CultureInfo.InvariantCulture));
     parentExited = true;
     WriteLog(logFile, "Parent application exited.");
-    ZipFile.ExtractToDirectory(archive, extracted);
-    var executable = Directory.EnumerateFiles(extracted, "PocketAgent.Desktop.exe", SearchOption.AllDirectories).SingleOrDefault();
-    if (executable is null) return Fail("The update package did not contain the desktop executable.", logFile);
-    var replacement = Directory.GetParent(executable)!.FullName;
-    BackupDirectory(installRoot, backup);
-    replacementStarted = true;
-    ReplaceDirectoryContents(replacement, installRoot);
+    var installerInfo = new ProcessStartInfo(installer)
+    {
+        UseShellExecute = true,
+        WindowStyle = ProcessWindowStyle.Hidden,
+        WorkingDirectory = staging
+    };
+    installerInfo.ArgumentList.Add("/VERYSILENT");
+    installerInfo.ArgumentList.Add("/SUPPRESSMSGBOXES");
+    installerInfo.ArgumentList.Add("/NORESTART");
+    installerInfo.ArgumentList.Add("/DIR=" + installRoot);
+    using var installerProcess = Process.Start(installerInfo) ?? throw new InvalidOperationException("The desktop installer could not be started.");
+    await installerProcess.WaitForExitAsync();
+    if (installerProcess.ExitCode != 0) return Fail($"The desktop installer exited with code {installerProcess.ExitCode}.", logFile);
+    WriteLog(logFile, "Desktop installer completed.");
     var restart = new ProcessStartInfo(restartPath)
     {
         UseShellExecute = false,
@@ -61,25 +64,15 @@ try
     if (!healthy)
     {
         try { if (!process.HasExited) process.Kill(true); } catch { }
-        ReplaceDirectoryContents(backup, installRoot);
-        replacementStarted = false;
-        var rollbackRestart = new ProcessStartInfo(restartPath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = installRoot };
-        if (!string.IsNullOrWhiteSpace(healthFile)) { rollbackRestart.ArgumentList.Add("--health-file"); rollbackRestart.ArgumentList.Add(healthFile); }
-        Process.Start(rollbackRestart);
-        return Fail("The update failed its startup check and was rolled back.", logFile);
+        return Fail("The installed update failed its startup check.", logFile);
     }
     WriteLog(logFile, "Update completed successfully.");
     return 0;
 }
 catch (Exception exception)
 {
-    try
-    {
-        if (replacementStarted && Directory.Exists(backup)) ReplaceDirectoryContents(backup, installRoot);
-    }
-    catch (Exception rollbackException) { WriteLog(logFile, $"Rollback failed: {rollbackException}"); }
     if (parentExited) TryStart(restartPath);
-    return Fail($"Update failed: {exception}", logFile);
+    return Fail($"Installer update failed: {exception}", logFile);
 }
 finally
 {
@@ -110,60 +103,6 @@ static async Task<bool> WaitForFile(string? path, TimeSpan timeout)
         await Task.Delay(250);
     }
     return false;
-}
-
-static void BackupDirectory(string source, string backup)
-{
-    Directory.CreateDirectory(backup);
-    // A previous interrupted update can leave a transaction directory inside
-    // the live install. Never copy those transactions into a new backup: they
-    // can contain their own backup and recurse until Windows hits PathTooLong.
-    CopyDirectory(source, backup, skipUpdateTransactions: true);
-}
-
-static void ReplaceDirectoryContents(string source, string target)
-{
-    Directory.CreateDirectory(target);
-    // Hidden directories are not valid desktop artifact content. They may be
-    // stale updater transactions with recursively nested backups, so never
-    // traverse them while clearing the live install.
-    foreach (var file in EnumerateFilesSkippingUpdateTransactions(target)) File.Delete(file);
-    foreach (var directory in EnumerateDirectoriesSkippingUpdateTransactions(target).OrderByDescending(path => path.Length)) Directory.Delete(directory);
-    CopyDirectory(source, target);
-}
-
-static IEnumerable<string> EnumerateFilesSkippingUpdateTransactions(string root)
-{
-    foreach (var file in Directory.EnumerateFiles(root)) yield return file;
-    foreach (var directory in Directory.EnumerateDirectories(root))
-    {
-        if (IsHiddenDirectory(directory)) continue;
-        foreach (var file in EnumerateFilesSkippingUpdateTransactions(directory)) yield return file;
-    }
-}
-
-static IEnumerable<string> EnumerateDirectoriesSkippingUpdateTransactions(string root)
-{
-    foreach (var directory in Directory.EnumerateDirectories(root))
-    {
-        if (IsHiddenDirectory(directory)) continue;
-        foreach (var nested in EnumerateDirectoriesSkippingUpdateTransactions(directory)) yield return nested;
-        yield return directory;
-    }
-}
-
-static bool IsHiddenDirectory(string path) =>
-    Path.GetFileName(path).StartsWith(".", StringComparison.OrdinalIgnoreCase);
-
-static void CopyDirectory(string source, string target, bool skipUpdateTransactions = false)
-{
-    Directory.CreateDirectory(target);
-    foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
-    foreach (var directory in Directory.EnumerateDirectories(source))
-    {
-        if (skipUpdateTransactions && IsHiddenDirectory(directory)) continue;
-        CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)), skipUpdateTransactions);
-    }
 }
 
 static void TryStart(string path)

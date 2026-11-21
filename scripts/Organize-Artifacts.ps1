@@ -14,7 +14,7 @@ foreach ($item in Get-ChildItem -LiteralPath $artifactRoot) {
         if ($inUse) { Write-Warning "Preserving running artifact folder at $($item.FullName). Close that app before organizing it."; continue }
         $destination = if ($suffix -eq '-desktop') { Join-Path $release 'desktop' } else { Join-Path $release "legacy/$($item.Name)" }
     } elseif ($suffix -like '-android.apk*') { $destination = Join-Path $release "android/$($item.Name)" }
-    elseif ($suffix -like '-desktop.zip*') { $destination = Join-Path $release $item.Name }
+    elseif ($suffix -like '-Setup.exe*') { $destination = Join-Path $release $item.Name }
     else { continue }
     $source = [IO.Path]::GetFullPath($item.FullName)
     $target = [IO.Path]::GetFullPath($destination)

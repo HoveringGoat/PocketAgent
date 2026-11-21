@@ -348,15 +348,11 @@ if ($SkipAndroid) { $buildParameters.SkipAndroid = $true }
 if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
 
 $desktopDirectory = Join-Path $releaseDirectory 'desktop'
-$desktopArchive = Join-Path $releaseDirectory "PocketAgent-$Version-desktop.zip"
 $buildDesktop = $Target -in @('All', 'Desktop')
 $buildAndroid = $Target -eq 'Android' -or ($Target -eq 'All' -and !$SkipAndroid)
 if ($buildDesktop) {
     if (!(Test-Path -LiteralPath $desktopDirectory)) { throw "Desktop publish directory was not created: $desktopDirectory" }
-    if (!(Test-Path -LiteralPath $desktopArchive)) { throw "Desktop archive was not created: $desktopArchive" }
     Assert-PackageHasNoPrivateFiles $desktopDirectory
-    Write-Output 'Running disposable installed-app updater test.'
-    Invoke-UpdaterArtifactCheck $releaseDirectory $Version
 }
 
 $androidAssets = @()
@@ -374,7 +370,7 @@ if ($buildAndroid) {
 if ($buildDesktop -and !$SkipInstaller) {
     $iscc = Resolve-InnoSetup
     if (!$iscc) {
-        throw 'Inno Setup 6 (ISCC.exe) is required for the installer. Install it or rerun with -SkipInstaller to build the portable/Android assets only.'
+        throw 'Inno Setup 6 (ISCC.exe) is required for the installer. Install it or rerun with -SkipInstaller to build Android assets only.'
     }
     $installerArguments = @(
         "/DAppVersion=$Version",
@@ -387,6 +383,11 @@ if ($buildDesktop -and !$SkipInstaller) {
     Invoke-Checked $iscc $installerArguments 'Inno Setup failed to create the desktop installer.'
     $installer = Join-Path $releaseDirectory "PocketAgent-$Version-Setup.exe"
     if (!(Test-Path -LiteralPath $installer)) { throw "Installer output was not created: $installer" }
+    (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path $installer -Leaf) | Set-Content -LiteralPath ($installer + '.sha256')
+}
+if ($buildDesktop -and !$SkipInstaller) {
+    Write-Output 'Running disposable installed-app updater test.'
+    Invoke-UpdaterArtifactCheck $releaseDirectory $Version
 }
 
 $manifest = Write-ChecksumManifest $releaseDirectory $androidAssets

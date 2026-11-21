@@ -15,6 +15,8 @@ Two failures were independently verified:
 
 Other findings below are confirmed source paths; timing, Windows file-lock behavior, and real-device performance have not been reproduced end to end.
 
+The ZIP extraction/replacement findings in A2 and A3 describe the historical updater that preceded the installer-only route. Current releases download a checksum-verified Inno Setup installer, run it silently after the desktop exits, and validate restart health in `tests/updater-artifact-check.ps1`; they no longer perform directory replacement or updater-managed rollback.
+
 ## Flow map
 
 | Flow | Current implementation | Main boundary or failure mode |
@@ -24,7 +26,7 @@ Other findings below are confirmed source paths; timing, Windows file-lock behav
 | Send | Client adds a pending bubble; server checks usage and current activity, then starts a turn | Unknown delivery must be reviewed. Pending UI records are not correlated to canonical messages by a request ID. |
 | Steer | Client includes expected active-turn ID; server uses `turn/steer` | A stale turn is rejected instead of being silently converted into new work. |
 | Schedule | Persist pending job; wait for idle/provider/usage; atomically claim; send; mark submitted | Restarted in-flight jobs become uncertain rather than being replayed. Unexpected worker exceptions are not contained per job. |
-| Update | Check GitHub; launch bundled updater; close desktop; download/checksum/extract/replace/restart/health check | Packaging, restart health arguments, replacement recovery, and pre-exit readiness are incomplete. |
+| Update | Check GitHub; launch bundled updater; close desktop; download/checksum/run silent installer/restart/health check | Installer exit status, restart health, and staging cleanup are covered by the disposable release check; installer signing and failure recovery remain separate concerns. |
 | Release | Optional local commit; build/sign/package; create GitHub release with notes and assets | Release creation neither pushes the commit nor binds the tag explicitly to it. Platform versions still share one release channel. |
 
 ## Findings

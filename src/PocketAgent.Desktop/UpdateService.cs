@@ -33,7 +33,7 @@ public static class UpdateService
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         if (!TryDesktopVersion(tag, out var version) || version <= Version.Parse(BuildInfo.Version)) return null;
         var assets = root.GetProperty("assets").EnumerateArray().ToArray();
-        var desktop = assets.FirstOrDefault(asset => asset.GetProperty("name").GetString()?.EndsWith("-desktop.zip", StringComparison.OrdinalIgnoreCase) == true);
+        var desktop = assets.FirstOrDefault(asset => asset.GetProperty("name").GetString()?.EndsWith("-Setup.exe", StringComparison.OrdinalIgnoreCase) == true);
         if (desktop.ValueKind == JsonValueKind.Undefined) return null;
         var checksum = assets.FirstOrDefault(asset => asset.GetProperty("name").GetString()?.Equals(desktop.GetProperty("name").GetString() + ".sha256", StringComparison.OrdinalIgnoreCase) == true);
         var assetUrl = desktop.GetProperty("browser_download_url").GetString();
