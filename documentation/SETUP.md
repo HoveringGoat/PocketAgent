@@ -20,7 +20,7 @@ Only the selected HTTPS chat port needs forwarding. No public CA, port 80/443, C
 
 1. Stop the server and open Settings > Set up direct internet.
 2. Select the desktop LAN address and router public IPv4. Public-IP lookup is explicit and credential-free.
-3. Choose an external port and save. PocketAgent creates a persistent local certificate identity.
+3. Confirm the selected listener port; PocketAgent uses this same port for the public address and creates a persistent local certificate identity.
 4. Forward that TCP port to the desktop and approve the one-time Windows Firewall rule named `PocketAgent inbound TCP <port>`.
 5. Start the server, open Devices and pair the phone. Test cellular reachability with Wi-Fi disabled.
 

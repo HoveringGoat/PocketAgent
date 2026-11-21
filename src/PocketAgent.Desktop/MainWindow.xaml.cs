@@ -271,15 +271,13 @@ public partial class MainWindow : Window
         var detect = new Button { Content = "Detect public IP", Margin = new Thickness(16, 0, 16, 6), HorizontalAlignment = HorizontalAlignment.Left };
         var detectionStatus = new TextBlock { Text = "Queries api.ipify.org for your IPv4 address. No chat, credentials or pairing code is sent. You can also enter the address manually.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 10) };
         using var lookupCancellation = new CancellationTokenSource();
-        var externalPort = new TextBox { Text = settings.Host.DirectOrigin.Length > 0 ? new Uri(settings.Host.DirectOrigin).Port.ToString(System.Globalization.CultureInfo.InvariantCulture) : PortSetting.Text, Margin = new Thickness(16, 4, 16, 10) };
         var apply = new Button { Content = "Save direct connection", Margin = new Thickness(16) };
         var panel = new StackPanel();
         panel.Children.Add(new TextBlock { Text = "Use your router's public/WAN IPv4 address. No domain, tunnel, relay, or PocketAgent hosting is used. You must configure port forwarding and the firewall yourself.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) });
         panel.Children.Add(new TextBlock { Text = "Desktop LAN address (forward traffic here)", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(interfaces);
         panel.Children.Add(new TextBlock { Text = "Choose your physical Wi-Fi/Ethernet adapter, not a VPN or virtual adapter. For the first connection test, disconnect the VPN and use your router's WAN address; a VPN can change both detected IP and reply routing.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 0, 16, 10) });
         panel.Children.Add(new TextBlock { Text = "Router public IPv4 address", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(publicIp); panel.Children.Add(detect); panel.Children.Add(detectionStatus);
-        panel.Children.Add(new TextBlock { Text = "External chat TCP port", Margin = new Thickness(16, 0, 16, 0) }); panel.Children.Add(externalPort);
-        panel.Children.Add(new TextBlock { Text = "Forward only the chat port to this desktop and allow it through Windows Firewall. After starting, scan the QR under Devices or copy its pairing string. Ports 80/443 and Caddy changes are not needed.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) }); panel.Children.Add(apply);
+        panel.Children.Add(new TextBlock { Text = $"Use TCP port {PortSetting.Text} for the router, this desktop listener, and Windows Firewall. Forward the router's public port {PortSetting.Text} to this desktop on the same port. After starting, scan the QR under Devices or copy its pairing string. Ports 80/443 and Caddy changes are not needed.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16) }); panel.Children.Add(apply);
         var dialog = new Window { Title = "Direct internet setup", Owner = this, Content = new ScrollViewer { Content = panel }, Width = 620, MaxHeight = SystemParameters.WorkArea.Height - 60, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         dialog.Closed += (_, _) => lookupCancellation.Cancel();
         detect.Click += async (_, _) =>
@@ -299,15 +297,16 @@ public partial class MainWindow : Window
         apply.Click += (_, _) => dialog.DialogResult = true;
         if (dialog.ShowDialog() != true) return;
         var localIp = ((string)interfaces.SelectedItem).Split(' ')[0];
-        var origin = $"https://{publicIp.Text.Trim()}:{int.Parse(externalPort.Text, System.Globalization.CultureInfo.InvariantCulture)}";
-        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = localIp, Port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture), DirectOrigin = origin, CertificatePath = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "device", "server.pfx"), PinnedCertificate = true };
+        var port = int.Parse(PortSetting.Text, System.Globalization.CultureInfo.InvariantCulture);
+        var origin = $"https://{publicIp.Text.Trim()}:{port}";
+        var candidate = new HostSettings { RepositoryPath = RepositorySetting.Text.Trim(), DataDirectory = DesktopSettings.DirectoryPath, ListenAddress = localIp, Port = port, DirectOrigin = origin, CertificatePath = Path.Combine(DesktopSettings.DirectoryPath, "certificates", "device", "server.pfx"), PinnedCertificate = true };
         candidate.Validate();
         using var setupLease = new HostLease(candidate); setupLease.Acquire();
         await Task.Run(() => PeerCertificates.Provision(candidate));
         AddressSetting.Text = localIp; CertificateSetting.Text = candidate.CertificatePath; DirectOriginSetting.Text = candidate.DirectOrigin;
         settings.Host.PinnedCertificate = true; settings.Host.CertificatePath = candidate.CertificatePath;
         SaveConfiguration();
-        AppDialogs.Show(this, $"Direct connection saved: {candidate.ClientOrigin}\n\nForward external TCP {new Uri(candidate.DirectOrigin).Port} to {localIp} TCP {candidate.Port}, and allow the listener through Windows Firewall. Start the server, then use Devices to scan the pairing QR or copy its pairing string. No certificate installation or ports 80/443 are needed.", "Direct internet setup");
+        AppDialogs.Show(this, $"Direct connection saved: {candidate.ClientOrigin}\n\nForward public TCP {candidate.Port} to {localIp} TCP {candidate.Port}, and allow inbound TCP {candidate.Port} through Windows Firewall. Start the server, then use Devices to scan the pairing QR or copy its pairing string. No certificate installation or ports 80/443 are needed.", "Direct internet setup");
     });
     private async void CheckConnectivity(object sender, RoutedEventArgs e) => await Act(async () =>
     {

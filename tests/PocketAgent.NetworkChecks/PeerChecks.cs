@@ -15,6 +15,9 @@ internal static class PeerChecks
     {
         var directory = Path.Combine(Directory.GetCurrentDirectory(), ".local", "qr-fixture-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
         var settings = new HostSettings { RepositoryPath = Directory.GetCurrentDirectory(), DataDirectory = directory, ListenAddress = "127.0.0.1", DirectOrigin = "https://203.0.113.10:5147", CertificatePath = Path.Combine(directory, "certificates", "device", "server.pfx"), PinnedCertificate = true };
+        var mismatched = new HostSettings { RepositoryPath = Directory.GetCurrentDirectory(), DataDirectory = directory, ListenAddress = "192.168.1.20", Port = 5147, DirectOrigin = "https://203.0.113.10:5148", CertificatePath = Path.Combine(directory, "certificates", "device", "server.pfx"), PinnedCertificate = true };
+        try { mismatched.Validate(false); throw new InvalidOperationException("Direct internet setup must reject mismatched public and listener ports."); }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("must match", StringComparison.Ordinal)) { }
         PeerCertificates.Provision(settings);
         using var first = X509CertificateLoader.LoadPkcs12FromFile(settings.CertificatePath, null, X509KeyStorageFlags.EphemeralKeySet);
         var pin = PeerCertificates.Fingerprint(first);

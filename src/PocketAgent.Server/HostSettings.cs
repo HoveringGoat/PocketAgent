@@ -60,7 +60,9 @@ public sealed class HostSettings
             if (!Uri.TryCreate(DirectOrigin, UriKind.Absolute, out var direct) || direct.Scheme != "https" ||
                 direct.UserInfo.Length > 0 || direct.AbsolutePath != "/" || direct.Query.Length > 0 || direct.Fragment.Length > 0 || direct.Port is < 1 or > 65535 ||
                 !IPAddress.TryParse(direct.Host, out var publicIp) || !IsPublicIPv4(publicIp))
-                throw new InvalidOperationException("Direct internet address must be https://<public-IPv4>:<external-port> without a path or credentials. Use your router's WAN address, not a private or carrier-grade NAT address.");
+                throw new InvalidOperationException("Direct internet address must be https://<public-IPv4>:<listener-port> without a path or credentials. Use your router's WAN address, not a private or carrier-grade NAT address.");
+            if (direct.Port != Port)
+                throw new InvalidOperationException($"Direct internet port {direct.Port} must match the PocketAgent listener port {Port}. This setup does not assume router port translation.");
             if (PublicOrigin.Length > 0 || !UseHttps && !creatingCertificate)
                 throw new InvalidOperationException("Direct internet requires a server certificate and cannot be combined with proxy/tunnel mode.");
             DirectOrigin = direct.GetLeftPart(UriPartial.Authority);
