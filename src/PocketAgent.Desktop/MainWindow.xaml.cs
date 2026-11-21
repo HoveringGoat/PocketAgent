@@ -312,7 +312,7 @@ public partial class MainWindow : Window
     private async void CheckConnectivity(object sender, RoutedEventArgs e) => await Act(async () =>
     {
         if (relay is null) throw new InvalidOperationException("Start the server before running connection diagnostics.");
-        var report = await relay.Services.GetRequiredService<ConnectivityDiagnostics>().Check();
+            var report = await relay.Services.GetRequiredService<ConnectivityDiagnostics>().Check(WindowsFirewall.IsConfigured);
         var text = new TextBox { Text = string.Join("\n\n", report.Checks), IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(16) };
         new Window { Title = report.LocalConnectionVerified ? "Connection diagnostics - local HTTPS verified" : "Connection diagnostics - setup needs attention", Owner = this, Content = text, Width = 760, Height = 580, WindowStartupLocation = WindowStartupLocation.CenterOwner }.ShowDialog();
     });

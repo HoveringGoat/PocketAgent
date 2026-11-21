@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.27 - 2026-11-21
+
+- Expand desktop network diagnostics with local listener reachability and exact selected-port Windows Firewall status.
+
 ## 0.3.26 - 2026-11-21
 
 - Verify that an existing Windows Firewall rule actually matches the selected inbound TCP port before skipping setup.

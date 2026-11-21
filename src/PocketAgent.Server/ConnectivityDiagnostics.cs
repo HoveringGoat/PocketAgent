@@ -10,7 +10,7 @@ public sealed record ConnectivityReport(bool LocalConnectionVerified, string Add
 
 public sealed class ConnectivityDiagnostics(HostSettings settings)
 {
-    public async Task<ConnectivityReport> Check()
+    public async Task<ConnectivityReport> Check(Func<int, bool>? firewallRuleChecker = null)
     {
         var checks = new List<string>();
         var address = settings.ClientOrigin;
@@ -23,8 +23,30 @@ public sealed class ConnectivityDiagnostics(HostSettings settings)
             if (!adapter.GetIPProperties().GatewayAddresses.Any(gateway => gateway.Address.AddressFamily == AddressFamily.InterNetwork && !gateway.Address.Equals(IPAddress.Any)))
                 checks.Add("WARNING: this adapter has no IPv4 LAN gateway and may be a VPN/virtual interface. Router forwarding normally targets the physical Wi-Fi/Ethernet address. Disconnect a VPN for the first test; it can also change the detected public IP and reply routing.");
         }
-        if (IPAddress.IsLoopback(IPAddress.Parse(settings.ListenAddress))) checks.Add("Listener is desktop-only. A router forward cannot reach a loopback listener.");
-        if (!direct) { checks.Add("Direct internet is not configured. Use Set up direct internet while stopped."); return new(false, address, checks.ToArray()); }
+        var loopback = IPAddress.IsLoopback(IPAddress.Parse(settings.ListenAddress));
+        if (loopback) checks.Add("Listener is desktop-only. A router forward cannot reach a loopback listener.");
+        var listenerVerified = false;
+        try
+        {
+            using var listener = new TcpClient();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await listener.ConnectAsync(IPAddress.Parse(settings.ListenAddress), settings.Port, timeout.Token);
+            listenerVerified = true;
+            checks.Add($"PASS: TCP listener accepted a local connection on {settings.ListenAddress}:{settings.Port}.");
+        }
+        catch (Exception exception) when (exception is SocketException or OperationCanceledException)
+        { checks.Add($"FAIL: TCP listener could not be reached locally on {settings.ListenAddress}:{settings.Port}: {exception.Message}"); }
+        if (loopback) checks.Add("Windows firewall: not applicable to a loopback-only listener.");
+        else if (firewallRuleChecker is null) checks.Add($"Windows firewall: not inspected by this diagnostics host. Expected rule: '{DesktopRuleName(settings.Port)}'.");
+        else checks.Add(await Task.Run(() => firewallRuleChecker(settings.Port))
+            ? $"PASS: Windows Firewall has an enabled inbound TCP allow rule for local port {settings.Port}."
+            : $"FAIL: Windows Firewall has no matching enabled inbound TCP allow rule for local port {settings.Port}. Expected rule: '{DesktopRuleName(settings.Port)}'.");
+        if (!direct)
+        {
+            checks.Add("Direct internet is not configured. Use Set up direct internet while stopped.");
+            checks.Add("Phone path: local listener and firewall prerequisites are reported above, but only the phone can verify the LAN route and pairing request.");
+            return new(listenerVerified, address, checks.ToArray());
+        }
         var origin = new Uri(settings.DirectOrigin);
         checks.Add($"Router: forward external TCP {origin.Port} to {settings.ListenAddress} TCP {settings.Port}. Reserve the desktop LAN address.");
         checks.Add($"Windows firewall: allow inbound TCP {settings.Port} for this desktop on the appropriate network profile. This diagnostic does not change or certify firewall/router rules.");
@@ -63,4 +85,6 @@ public sealed class ConnectivityDiagnostics(HostSettings settings)
         checks.Add("No domain, central PocketAgent host or traffic relay is required. If the public IP changes, rerun direct setup and pair the phone at the new address; existing tokens are never forwarded to a different origin.");
         return new(verified, address, checks.ToArray());
     }
+
+    private static string DesktopRuleName(int port) => $"PocketAgent inbound TCP {port}";
 }
