@@ -93,7 +93,7 @@ Use .NET SDK 10.0.404, JDK 17/21, Android SDK 34/build-tools 35.0.0 and the pinn
 .\scripts\Build.ps1 -Target All -Publish
 ```
 
-For a release, run the platform-specific release script with an explicit version. The release gate restores/builds the solution and focused checks before packaging or publishing, then exercises the packaged updater against a disposable installation. A failed gate stops the release.
+For a release, run the platform-specific release script with an explicit version. The release gate restores/builds the solution and focused checks before packaging or publishing, then exercises the packaged updater against a disposable installation. The test installer is compiled from the same setup script and payload with a separate app ID, no Windows uninstall registration, and no shortcuts. The release uploads the production installer and checksums. A failed gate stops the release.
 
 Desktop updates keep the main window open under a modal while the installer downloads and its SHA-256 checksum is verified. The modal shows a percentage when the download server supplies a content length. `UpdateDownloadDialog` receives progress over a per-update, current-user named pipe. The separately launched updater displays its own window before signaling readiness. The desktop checks again for active work before authorizing installation and closing. The updater window stays visible during silent installation and restart, then closes after the launched desktop writes its version-matched startup confirmation. Preparation failures leave the desktop open. Install and startup failures leave a dismissible updater window with the log location documented below.
 

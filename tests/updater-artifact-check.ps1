@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ReleaseDirectory,
-    [Parameter(Mandatory = $true)][string]$Version
+    [Parameter(Mandatory = $true)][string]$Version,
+    [string]$PackageDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,7 +10,7 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 $releaseDirectory = [IO.Path]::GetFullPath($ReleaseDirectory)
 $installer = Join-Path $releaseDirectory "PocketAgent-$Version-Setup.exe"
 $checksum = "$installer.sha256"
-$packageDirectory = Join-Path $releaseDirectory 'desktop'
+$packageDirectory = if ($PackageDirectory) { [IO.Path]::GetFullPath($PackageDirectory) } else { Join-Path $releaseDirectory 'desktop' }
 $updaterPath = Join-Path $packageDirectory 'PocketAgent.Updater.exe'
 foreach ($path in @($installer, $checksum, $packageDirectory, $updaterPath)) {
     if (!(Test-Path -LiteralPath $path)) { throw "Updater artifact check input was not found: $path" }
@@ -25,6 +26,16 @@ $reader = $null
 $writer = $null
 $previousDesktopData = $env:POCKETAGENT_DESKTOP_DATA
 $previousDesktopLogs = $env:POCKETAGENT_DESKTOP_LOG_DIRECTORY
+$runKeyPath = 'Software\Microsoft\Windows\CurrentVersion\Run'
+$runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runKeyPath)
+$previousStartupValue = $null
+if ($runKey) {
+    try {
+        $previousStartupValue = $runKey.GetValue('PocketAgent', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($null -ne $previousStartupValue) { $previousStartupKind = $runKey.GetValueKind('PocketAgent') }
+    }
+    finally { $runKey.Dispose() }
+}
 function Quote-Argument([string]$value) { return '"' + $value.Replace('"', '\"') + '"' }
 function Set-ProcessArguments([Diagnostics.ProcessStartInfo]$info, [string[]]$arguments) {
     # The release test runs under Windows PowerShell 5.1, whose ProcessStartInfo
@@ -142,6 +153,11 @@ finally {
     $uninstaller = Join-Path $install 'unins000.exe'
     if (Test-Path -LiteralPath $uninstaller) {
         try { Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -WindowStyle Hidden | Out-Null } catch { Write-Output "WARNING disposable installer cleanup failed: $($_.Exception.Message)" }
+    }
+    if ($null -ne $previousStartupValue) {
+        $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($runKeyPath)
+        try { $runKey.SetValue('PocketAgent', $previousStartupValue, $previousStartupKind) }
+        finally { $runKey.Dispose() }
     }
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }

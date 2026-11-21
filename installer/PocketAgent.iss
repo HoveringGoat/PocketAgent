@@ -15,8 +15,13 @@
 #endif
 
 [Setup]
+#ifdef UpdaterTest
+AppId=PocketAgentUpdaterArtifactTest
+AppName=PocketAgent Updater Artifact Test
+#else
 AppId={{B8AA1AB3-0C6E-4E3E-BF54-6A6E4D8FC7BB}
 AppName=PocketAgent
+#endif
 AppVersion={#AppVersion}
 AppPublisher=PocketAgent
 DefaultDirName={localappdata}\Programs\PocketAgent
@@ -27,8 +32,13 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile={#ProjectRoot}\src\PocketAgent.Desktop\Assets\PocketAgent.ico
+#ifdef UpdaterTest
+Compression=none
+CreateUninstallRegKey=no
+#else
 Compression=lzma2
 SolidCompression=yes
+#endif
 WizardStyle=modern
 DisableProgramGroupPage=yes
 CloseApplications=yes
@@ -38,6 +48,7 @@ Uninstallable=yes
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+#ifndef UpdaterTest
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
@@ -50,3 +61,4 @@ Filename: "{app}\PocketAgent.Desktop.exe"; Description: "Launch PocketAgent"; Fl
 
 [UninstallRun]
 Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v PocketAgent /f"; Flags: runhidden; RunOnceId: "RemovePocketAgentStartup"
+#endif

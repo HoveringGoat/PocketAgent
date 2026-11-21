@@ -288,15 +288,26 @@ function Invoke-ReleaseTestGate([string]$dotnetCommand) {
     }
 }
 
-function Invoke-UpdaterArtifactCheck([string]$releaseDirectory, [string]$version) {
+function Invoke-UpdaterArtifactCheck([string]$releaseDirectory, [string]$version, [string]$iscc, [string]$desktopDirectory) {
     $script = Join-Path $projectRoot 'tests/updater-artifact-check.ps1'
     if (!(Test-Path -LiteralPath $script)) { throw "Updater artifact check script was not found: $script" }
     $powershellCommand = Get-Command powershell.exe -ErrorAction SilentlyContinue
     if (!$powershellCommand) { $powershellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue }
     if (!$powershellCommand) { throw 'The disposable updater test requires a PowerShell host.' }
     $powershell = $powershellCommand.Source
+    # The test installer uses the same payload and setup script with isolated
+    # Windows registration. Its subdirectory is excluded from release uploads.
+    $fixtureDirectory = Join-Path $releaseDirectory 'updater-test'
+    Invoke-Checked $iscc @(
+        '/DUpdaterTest=1', "/DAppVersion=$version", "/DSourceDir=$desktopDirectory",
+        "/DOutputDir=$fixtureDirectory", "/DOutputBaseFilename=PocketAgent-$version-Setup",
+        "/DProjectRoot=$projectRoot", (Join-Path $projectRoot 'installer/PocketAgent.iss')
+    ) 'Inno Setup failed to create the isolated updater test installer.'
+    $fixtureInstaller = Join-Path $fixtureDirectory "PocketAgent-$version-Setup.exe"
+    (Get-FileHash -LiteralPath $fixtureInstaller -Algorithm SHA256).Hash | Set-Content -LiteralPath ($fixtureInstaller + '.sha256')
     Invoke-Checked $powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script,
-        '-ReleaseDirectory', $releaseDirectory, '-Version', $version) 'Disposable updater install test failed.'
+        '-ReleaseDirectory', $fixtureDirectory, '-PackageDirectory', $desktopDirectory,
+        '-Version', $version) 'Disposable updater install test failed.'
 }
 
 $desktopVersion = Get-ProjectVersion
@@ -387,7 +398,7 @@ if ($buildDesktop -and !$SkipInstaller) {
 }
 if ($buildDesktop -and !$SkipInstaller) {
     Write-Output 'Running disposable installed-app updater test.'
-    Invoke-UpdaterArtifactCheck $releaseDirectory $Version
+    Invoke-UpdaterArtifactCheck $releaseDirectory $Version $iscc $desktopDirectory
 }
 
 $manifest = Write-ChecksumManifest $releaseDirectory $androidAssets
