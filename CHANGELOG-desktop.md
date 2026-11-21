@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.33 - 2026-11-21
+
+- Fix the VS Code Codex Marketplace lookup and report empty responses in Settings and the desktop log.
+
 ## 0.3.32 - 2026-11-21
 
 - Show desktop update download progress and keep a separate installer window visible until the updated app confirms startup.

@@ -232,7 +232,10 @@ public partial class MainWindow : Window
             if (result.Updated) ResolveCodex();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
-        { CodexUpdateStatus.Text = $"Codex extension update unavailable: {exception.Message}"; }
+        {
+            DesktopDiagnostics.LogException("codex-extension-update", exception);
+            CodexUpdateStatus.Text = $"Codex extension update unavailable: {exception.Message}";
+        }
     }
     private void UiScaleChanged(object sender, SelectionChangedEventArgs e)
     {

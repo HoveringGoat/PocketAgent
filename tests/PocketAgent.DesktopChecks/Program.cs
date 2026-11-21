@@ -23,6 +23,18 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
+            if (Environment.GetCommandLineArgs().Contains("--codex-update", StringComparer.OrdinalIgnoreCase))
+            {
+                CodexUpdateChecks.Run();
+                return 0;
+            }
+            if (Environment.GetCommandLineArgs().Contains("--codex-update-live", StringComparer.OrdinalIgnoreCase))
+            {
+                var update = Task.Run(() => CodexExtensionUpdateService.CheckAsync(new HostSettings(), install: false)).GetAwaiter().GetResult();
+                Console.WriteLine(update.Message);
+                Console.WriteLine($"Installed version: {update.InstalledVersion}; Marketplace version: {update.LatestVersion}");
+                return update.LatestVersion is null || update.Updated ? 1 : 0;
+            }
             if (Environment.GetCommandLineArgs().Contains("--update-ui", StringComparer.OrdinalIgnoreCase))
             {
                 UpdateUiChecks.Run();
