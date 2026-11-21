@@ -91,6 +91,9 @@ internal static class Program
             var firewallRule = WindowsFirewall.AddRuleArguments(5147);
             if (WindowsFirewall.RuleName(5147) != "PocketAgent inbound TCP 5147" || !firewallRule.Contains("localport=5147") || firewallRule.Contains(Environment.ProcessPath ?? ""))
                 throw new InvalidOperationException("Firewall setup must use a stable port rule rather than the versioned executable path.");
+            var firewallOutput = "Rule Name:                            PocketAgent inbound TCP 5147\nEnabled:                               Yes\nDirection:                             In\nProtocol:                              TCP\nLocalPort:                             5147\nAction:                                Allow\n";
+            if (!WindowsFirewall.IsMatchingRuleOutput(5147, firewallOutput) || WindowsFirewall.IsMatchingRuleOutput(59991, firewallOutput))
+                throw new InvalidOperationException("Firewall detection must verify the selected port in the existing rule.");
             var fixtureDirectory = Path.Combine(root, ".local", "qr-fixture"); Directory.CreateDirectory(fixtureDirectory);
             var fixturePayload = "pocketagent://pair?v=1&origin=https%3A%2F%2F127.0.0.1%3A5147&spki=" + new string('A', 64) + "&ticket=" + new string('B', 64);
             using (var data = QRCoder.QRCodeGenerator.GenerateQrCode(fixturePayload, QRCoder.QRCodeGenerator.ECCLevel.M))
