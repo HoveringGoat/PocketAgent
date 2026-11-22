@@ -38,7 +38,7 @@ internal static class UpdateStatusChecks
             window.Close();
             if (startupValue is not null) startup.SetValue("PocketAgent", startupValue, startupKind);
         }
-        Console.WriteLine("PASS update feedback, header-only navigation, and the idle Codex executable switch at minimum and larger window sizes.");
+        Console.WriteLine("PASS update feedback, startup prompts and deferral, header-only navigation, and the idle Codex switch at both window sizes.");
 
         async Task Check()
         {
@@ -82,6 +82,16 @@ internal static class UpdateStatusChecks
             finishDesktop.SetException(new HttpRequestException("Release service unavailable"));
             await desktop;
             Idle(desktopStatus, desktopButton, desktopProgress, "Release service unavailable");
+            settings.CheckUpdatesOnStartup = true;
+            window.Width = 800;
+            window.Height = 580;
+            await CheckStartupOffer(window, 100, "Later");
+            window.Width = 1150;
+            window.Height = 820;
+            await CheckStartupOffer(window, 101, "Install update");
+            settings.AutomaticUpdates = true;
+            await CheckStartupOffer(window, 102, null);
+            settings.AutomaticUpdates = false;
             await CheckCodexRestart(window);
         }
 
@@ -90,6 +100,81 @@ internal static class UpdateStatusChecks
         Task Invoke(string name, params object[] arguments) =>
             (Task)typeof(MainWindow).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, arguments)!;
     }
+
+    private static async Task CheckStartupOffer(MainWindow window, int version, string? choice, bool alreadyQueued = false)
+    {
+        var release = StartupRelease(version);
+        var promptCount = 0;
+        var installerCount = 0;
+        Exception? dialogError = null;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            var dialog = window.OwnedWindows.Cast<Window>().FirstOrDefault(owned => owned.IsVisible);
+            if (dialog is null) return;
+            try
+            {
+                if (dialog.Title == "Updating PocketAgent")
+                {
+                    var close = Descendants(dialog).OfType<Button>().FirstOrDefault(button => Equals(button.Content, "Close"));
+                    if (close is null) return;
+                    installerCount++;
+                    dialog.Close();
+                    return;
+                }
+                promptCount++;
+                if (choice is null) throw new InvalidOperationException("An automatic update displayed a confirmation.");
+                var viewport = (ScrollViewer)dialog.Content;
+                var buttons = Descendants(viewport).OfType<Button>().ToArray();
+                if (buttons.Select(button => button.Content?.ToString()).SequenceEqual(new[] { "Install update", "Later" }) == false ||
+                    !Descendants(viewport).OfType<TextBlock>().Any(label => label.Text.Contains(release.Version.ToString())))
+                    throw new InvalidOperationException("The update prompt must show its version and both choices.");
+                foreach (var button in buttons)
+                {
+                    var bounds = button.TransformToAncestor(viewport).TransformBounds(new Rect(button.RenderSize));
+                    if (!button.IsVisible || bounds.IsEmpty || !new Rect(viewport.RenderSize).Contains(bounds))
+                        throw new InvalidOperationException($"Update prompt button {button.Content} is outside the dialog.");
+                }
+                buttons.Single(button => Equals(button.Content, choice)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            catch (Exception exception) { dialogError = exception; dialog.Close(); }
+        };
+        timer.Start();
+        try
+        {
+            if (alreadyQueued)
+                await (Task)typeof(MainWindow).GetMethod("OfferQueuedUpdate", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
+            else
+                await InvokeStartupCheck(window, release);
+            await InvokeStartupCheck(window, release);
+            if (dialogError is not null) throw dialogError;
+            if (promptCount != (choice is null ? 0 : 1) || installerCount != (choice == "Later" ? 0 : 1))
+                throw new InvalidOperationException("Startup must offer the update once and only start installation when accepted or automatic.");
+            if (choice == "Later" && ((Button)window.FindName("UpdateNotesButton")).Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Later must keep the update available in Settings.");
+        }
+        finally { timer.Stop(); }
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
+    }
+
+    private static DesktopUpdate StartupRelease(int major)
+    {
+        var url = new Uri("https://example.invalid/fixture");
+        return new(new Version(major, 0, 0), "fixture", url, url.ToString(), url, "");
+    }
+
+    private static Task InvokeStartupCheck(MainWindow window, DesktopUpdate release) =>
+        (Task)typeof(MainWindow).GetMethod("CheckForUpdatesCore", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(window, [true, false, (Func<Task<DesktopUpdate?>>)(() => Task.FromResult<DesktopUpdate?>(release))])!;
 
     private static void CheckHeaderNavigation(MainWindow window)
     {
@@ -170,6 +255,10 @@ internal static class UpdateStatusChecks
             var conversations = first.Services.GetRequiredService<Conversations>();
             var conversation = await conversations.Create("Codex restart fixture");
             await conversations.StartTurn(conversation.Id, "hold");
+            await InvokeStartupCheck(window, StartupRelease(103));
+            if (window.OwnedWindows.Cast<Window>().Any(dialog => dialog.IsVisible) ||
+                !((TextBlock)window.FindName("UpdateStatus")).Text.Contains("waiting for conversations"))
+                throw new InvalidOperationException("A startup update must stay queued while a conversation is active.");
             Install("2.0.0");
             var navigation = (TabControl)window.FindName("Navigation");
             navigation.SelectedIndex = 0;
@@ -185,6 +274,7 @@ internal static class UpdateStatusChecks
             await conversations.Interrupt(conversation.Id);
             for (var i = 0; i < 50 && (await conversations.List()).Any(entry => Conversations.IsActiveStatus(entry.Status)); i++) await Task.Delay(20);
             await Invoke("Refresh");
+            await CheckStartupOffer(window, 103, "Later", alreadyQueued: true);
             if (!button.IsEnabled) throw new InvalidOperationException("The Codex restart must be enabled after the turn ends.");
             await Invoke("SwitchToUpdatedCodex");
             var current = (WebApplication)relay.GetValue(window)!;

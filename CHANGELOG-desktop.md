@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.37 - 2026-11-21
+
+- Offer desktop updates found at startup once conversations are idle, with Install update and Later choices.
+
 ## 0.3.36 - 2026-11-21
 
 - Show the selected reasoning label in the desktop model picker.

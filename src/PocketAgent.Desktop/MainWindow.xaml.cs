@@ -47,6 +47,9 @@ public partial class MainWindow : Window
     private string qrRendered = "";
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning, loadingHistory;
     private DesktopUpdate? pendingUpdate;
+    private (Version Version, bool Accepted)? queuedUpdateOffer;
+    private readonly HashSet<Version> handledUpdateOffers = [];
+    private bool offeringUpdate;
     private bool installingUpdate;
     private bool codexIdle;
     private CodexExecutable? nextCodexExecutable;
@@ -96,6 +99,7 @@ public partial class MainWindow : Window
         ResolveCodex();
         UpdateNavigationButtons();
         timer.Tick += async (_, _) => { UpdateElapsedDisplay(); UpdateRelaySetup(); await Refresh(); };
+        timer.Tick += async (_, _) => await OfferQueuedUpdate();
         timer.Start();
         updateTimer.Tick += async (_, _) => await CheckForUpdatesCore(false);
         updateTimer.Start();
@@ -518,7 +522,7 @@ public partial class MainWindow : Window
 
     private async Task CheckForUpdatesCore(bool startup, bool userRequested = false, Func<Task<DesktopUpdate?>>? check = null)
     {
-        if (closing || installingUpdate || !DesktopUpdateCheckButton.IsEnabled) return;
+        if (closing || installingUpdate || offeringUpdate || !DesktopUpdateCheckButton.IsEnabled) return;
         if (startup && !settings.CheckUpdatesOnStartup) return;
         if (!startup && !userRequested && !settings.CheckUpdatesPeriodically) return;
         DesktopUpdateCheckButton.IsEnabled = false;
@@ -532,10 +536,16 @@ public partial class MainWindow : Window
             var update = await (check is null ? UpdateService.CheckAsync() : check());
             DesktopUpdateProgress.Visibility = Visibility.Collapsed;
             pendingUpdate = update;
+            if (queuedUpdateOffer?.Version != update?.Version || string.IsNullOrWhiteSpace(update?.Sha256)) queuedUpdateOffer = null;
             UpdateNotesButton.Visibility = update is null ? Visibility.Collapsed : Visibility.Visible;
             UpdateStatus.Text = update is null ? $"You are running the latest available desktop version ({BuildInfo.Version})." : $"Desktop update {update.Version} is available.";
-            if (update is not null && settings.AutomaticUpdates)
-                await InstallUpdateCore(false);
+            if (update is not null && (startup || settings.AutomaticUpdates) && !handledUpdateOffers.Contains(update.Version))
+            {
+                if (string.IsNullOrWhiteSpace(update.Sha256))
+                    UpdateStatus.Text += " This release does not publish an installer checksum.";
+                else
+                    queuedUpdateOffer ??= (update.Version, false);
+            }
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -548,37 +558,84 @@ public partial class MainWindow : Window
             DesktopUpdateCheckButton.IsEnabled = true;
             DesktopUpdateInstallButton.IsEnabled = true;
         }
+        await OfferQueuedUpdate();
+    }
+
+    private async Task OfferQueuedUpdate()
+    {
+        if (queuedUpdateOffer is not { } offer || pendingUpdate?.Version != offer.Version || offeringUpdate ||
+            installingUpdate || transitioning || closing || !DesktopUpdateCheckButton.IsEnabled) return;
+        offeringUpdate = true;
+        try
+        {
+            if (!await CanInstallUpdate())
+            {
+                UpdateStatus.Text = $"Desktop update {offer.Version} is waiting for conversations to become idle.";
+                return;
+            }
+            if (closing || transitioning || installingUpdate || queuedUpdateOffer != offer || !DesktopUpdateCheckButton.IsEnabled) return;
+            if (!offer.Accepted && !settings.AutomaticUpdates)
+            {
+                if (!IsVisible || WindowState == WindowState.Minimized) return;
+                var choice = AppDialogs.Show(this,
+                    $"PocketAgent {offer.Version} is available. Install it now and restart PocketAgent?",
+                    "PocketAgent update available", MessageBoxButton.YesNo, yesLabel: "Install update", noLabel: "Later");
+                if (choice != MessageBoxResult.Yes)
+                {
+                    FinishUpdateOffer(offer.Version);
+                    UpdateStatus.Text = $"Desktop update {offer.Version} is available to install from Settings.";
+                    return;
+                }
+            }
+            queuedUpdateOffer = (offer.Version, true);
+            await InstallUpdateCore(false);
+        }
+        finally { offeringUpdate = false; }
+    }
+
+    private void FinishUpdateOffer(Version version)
+    {
+        handledUpdateOffers.Add(version);
+        if (queuedUpdateOffer?.Version == version) queuedUpdateOffer = null;
     }
 
     private async void InstallUpdate(object sender, RoutedEventArgs e) => await InstallUpdateCore(true);
 
     private async Task InstallUpdateCore(bool userRequested)
     {
-        if (installingUpdate || closing) return;
+        if (installingUpdate || closing || transitioning) return;
+        var version = pendingUpdate?.Version;
         installingUpdate = true;
-        try { await InstallPendingUpdate(userRequested); }
+        try
+        {
+            var deferred = await InstallPendingUpdate(userRequested);
+            if (version is null) return;
+            if (!deferred) FinishUpdateOffer(version);
+            else if (queuedUpdateOffer?.Version == version) queuedUpdateOffer = (version, true);
+        }
         finally { installingUpdate = false; }
     }
 
-    private async Task InstallPendingUpdate(bool userRequested)
+    private async Task<bool> InstallPendingUpdate(bool userRequested)
     {
         if (pendingUpdate is not { } update)
         {
             UpdateStatus.Text = "Check for updates before installing.";
-            return;
+            return false;
         }
-        if (update.Sha256 is null)
+        if (string.IsNullOrWhiteSpace(update.Sha256))
         {
             UpdateStatus.Text = "This release does not publish a checksum, so PocketAgent will not install it automatically.";
-            return;
+            return false;
         }
         if (!await CanInstallUpdate())
         {
             UpdateStatus.Text = "Update waiting for all conversations to become idle.";
             if (userRequested) AppDialogs.Show(this, UpdateStatus.Text, "Update waiting");
-            return;
+            return true;
         }
-        if (closing) return;
+        if (closing) return false;
+        if (transitioning) return true;
         var deferred = false;
         if (!UpdateDownloadDialog.Show(this, update, async () =>
         {
@@ -587,19 +644,20 @@ public partial class MainWindow : Window
         }))
         {
             UpdateStatus.Text = deferred ? "Update waiting for all conversations to become idle." : "The update did not start.";
-            return;
+            return deferred;
         }
         closing = true;
         timer.Stop(); updateTimer.Stop();
         try { await Shutdown(); }
         finally { Close(); }
+        return false;
     }
 
     private async Task<bool> CanInstallUpdate()
     {
-        if (relay is null) return true;
-        var sessions = await Conversations.List();
-        return !sessions.Any(session => PocketAgent.Conversations.IsActiveStatus(session.Status));
+        if (relay is not { } running) return true;
+        var sessions = await running.Services.GetRequiredService<Conversations>().List();
+        return relay == running && !sessions.Any(session => PocketAgent.Conversations.IsActiveStatus(session.Status));
     }
     private async Task<bool> ConfirmStop()
     {
