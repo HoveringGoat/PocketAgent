@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.9 - 2026-11-22
+
+- Preserve Android upgrade compatibility by keeping the release signing identity in a durable user-level location outside the repository and refusing to silently generate a replacement key.
+
 ## 0.4.8 - 2026-11-22
 
 - Add a confirmed **Reset conversation** action that starts a clean Codex thread with the current conversation settings and keeps the previous transcript in Archived History.

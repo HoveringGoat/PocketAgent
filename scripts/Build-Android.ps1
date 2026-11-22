@@ -3,6 +3,7 @@ param(
     [string]$JavaDirectory = $env:JAVA_HOME,
     [string]$GradleCommand,
     [string]$Version,
+    [string]$SigningDirectory = $env:POCKETAGENT_ANDROID_SIGNING_DIRECTORY,
     [switch]$DebugOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -23,31 +24,28 @@ $tasks = if ($DebugOnly) { @(':app:assembleDebug', ':app:lintDebug') } else { @(
 if ($LASTEXITCODE -ne 0) { throw 'Android build or lint failed.' }
 if ($DebugOnly) { return }
 $version = $Version
-$signingDirectory = Join-Path $projectRoot '.local/android-signing'
-New-Item -ItemType Directory -Force -Path $signingDirectory | Out-Null
+$signingDirectory = if ($SigningDirectory) {
+    [IO.Path]::GetFullPath($SigningDirectory)
+} elseif ($env:APPDATA) {
+    Join-Path $env:APPDATA 'PocketAgent/secrets/android-signing'
+} else {
+    throw 'APPDATA is unavailable. Set POCKETAGENT_ANDROID_SIGNING_DIRECTORY to the durable Android signing directory.'
+}
 $keystore = Join-Path $signingDirectory 'pocketagent.jks'
 $passwordFile = Join-Path $signingDirectory 'password.dpapi'
 if (!(Test-Path -LiteralPath $keystore)) {
-    if (Test-Path -LiteralPath $passwordFile) { throw 'Signing password exists without its key. Recover the original key before generating another identity.' }
-    $passwordBytes = New-Object byte[] 32
-    $passwordGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
-    $passwordGenerator.GetBytes($passwordBytes)
-    $passwordGenerator.Dispose()
-    $password = [Convert]::ToBase64String($passwordBytes)
-    $password | ConvertTo-SecureString -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -LiteralPath $passwordFile
-    $env:POCKETAGENT_SIGNING_PASSWORD = $password
-    & (Join-Path $JavaDirectory 'bin/keytool.exe') -genkeypair -keystore $keystore -storepass:env POCKETAGENT_SIGNING_PASSWORD -keypass:env POCKETAGENT_SIGNING_PASSWORD -alias pocketagent -keyalg RSA -keysize 3072 -validity 7300 -dname 'CN=PocketAgent Local Distribution' -noprompt
-    if ($LASTEXITCODE -ne 0) { throw 'Could not create the local Android signing identity.' }
-} else {
-    if (!(Test-Path -LiteralPath $passwordFile)) { throw 'Restore the password file for the existing Android signing key.' }
-    $securePassword = (Get-Content -LiteralPath $passwordFile -Raw).Trim() | ConvertTo-SecureString
-    $env:POCKETAGENT_SIGNING_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
+    throw "Android signing keystore was not found at $keystore. Restore the original pocketagent.jks or set POCKETAGENT_ANDROID_SIGNING_DIRECTORY; a replacement identity will not be generated automatically."
 }
+if (!(Test-Path -LiteralPath $passwordFile)) {
+    throw "Android signing password was not found at $passwordFile. Restore the DPAPI-protected password for the original key."
+}
+$securePassword = (Get-Content -LiteralPath $passwordFile -Raw).Trim() | ConvertTo-SecureString
+$env:POCKETAGENT_SIGNING_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
 try {
     $outputDirectory = Join-Path $projectRoot "artifacts/releases/$version/android"
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
     $unsigned = Join-Path $androidProject 'app/build/outputs/apk/release/app-release-unsigned.apk'
-    $aligned = Join-Path $projectRoot '.local/android-signing/aligned.apk'
+    $aligned = Join-Path $signingDirectory 'aligned.apk'
     $apk = Join-Path $outputDirectory "PocketAgent-$version-android.apk"
     $tools = Join-Path $SdkDirectory 'build-tools/35.0.0'
     & (Join-Path $tools 'zipalign.exe') -f 4 $unsigned $aligned
