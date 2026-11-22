@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
   private EditText composer;
   private Button send, schedule;
   private ImageButton stop;
-  private ImageButton renameAction, pinAction, modelAction, archiveAction, archivedAction;
+  private ImageButton renameAction, pinAction, modelAction, archiveAction, resetAction, archivedAction;
   private final java.util.ArrayList<JSONObject> orderedSessions = new java.util.ArrayList<>();
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
@@ -635,6 +635,10 @@ public final class MainActivity extends Activity {
                 archive(selected);
               }
 
+              public void resetConversation() {
+                resetSelectedConversation();
+              }
+
               public void showArchived() {
                 MainActivity.this.showArchived();
               }
@@ -671,6 +675,7 @@ public final class MainActivity extends Activity {
     pinAction = screen.pinAction;
     modelAction = screen.modelAction;
     archiveAction = screen.archiveAction;
+    resetAction = screen.resetAction;
     archivedAction = screen.archivedAction;
     scroll = screen.transcriptScroll;
     setContentView(root);
@@ -1240,6 +1245,7 @@ public final class MainActivity extends Activity {
     if (pinAction != null) pinAction.setVisibility(visibility);
     if (modelAction != null) modelAction.setVisibility(visibility);
     if (archiveAction != null) archiveAction.setVisibility(visibility);
+    if (resetAction != null) resetAction.setVisibility(visibility);
   }
 
   private void renameSelectedConversation() {
@@ -1686,6 +1692,46 @@ public final class MainActivity extends Activity {
                             new JSONObject()),
                     ignored -> {
                       if (selected.equals(id)) select("");
+                    },
+                    false))
+        .show();
+  }
+
+  private void resetSelectedConversation() {
+    if (api == null || conversation == null || selected.isEmpty()) return;
+    if (!conversation.isNull("activeTurnId")
+        || "starting".equals(conversation.optString("status"))
+        || "uncertain".equals(conversation.optString("status"))
+        || "disconnected".equals(conversation.optString("status"))) {
+      notice("Finish or stop active work before resetting this conversation.");
+      return;
+    }
+    ApiClient client = api;
+    String id = selected;
+    new AlertDialog.Builder(this)
+        .setTitle("Reset conversation?")
+        .setMessage(
+            "Start fresh with the same name, folder, model, and reasoning? The current conversation will be archived and remain available in Archived History.")
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton(
+            "Reset",
+            (dialog, which) ->
+                action(
+                    () ->
+                        client.request(
+                            "/conversations/" + ApiClient.segment(id) + "/reset", new JSONObject()),
+                    result -> {
+                      if (!(result instanceof JSONObject)) {
+                        problem("The desktop returned an invalid reset response. Refresh and try again.");
+                        return;
+                      }
+                      String replacement = ((JSONObject) result).optString("id");
+                      if (replacement.isEmpty()) {
+                        problem("The desktop returned no replacement conversation. Refresh and try again.");
+                        return;
+                      }
+                      select(replacement);
+                      notice("Conversation reset. The previous transcript is available in Archived History.");
                     },
                     false))
         .show();

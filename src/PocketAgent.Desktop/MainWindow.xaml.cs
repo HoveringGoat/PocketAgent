@@ -877,6 +877,7 @@ public partial class MainWindow : Window
             var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
             ModelButton.ToolTip = $"Model: {modelLabel}\nReasoning: {reasoningLabel}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
+            ResetConversationButton.IsEnabled = ModelButton.IsEnabled;
             ConversationMeta.Text = FormatConversationMeta(snapshot);
             ConversationMetaSurface.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(snapshot.ActiveTurnId is null ? "#47604B" : "#A7BAA7"));
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
@@ -1132,6 +1133,19 @@ public partial class MainWindow : Window
         var id = conversation.Id;
         if (AppDialogs.Show(this, "Archive this conversation and cancel its pending scheduled messages? You can restore it from Archived.", "Archive conversation", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         await Conversations.Archive(id, true); await Refresh();
+    });
+    private async void ResetConversation(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (relay is null || conversation is not { } current) return;
+        if (AppDialogs.Show(this, "Start a fresh conversation with the same name, folder, model, and reasoning? The current conversation will be archived and remain available in Archived History.", "Reset conversation", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        var replacement = await Conversations.Reset(current.Id);
+        selected = replacement.Id;
+        RememberSelectedConversation(selected);
+        conversation = replacement;
+        rendered = "";
+        settingDraft = true; Composer.Clear(); settingDraft = false;
+        await Refresh();
+        Composer.Focus();
     });
     private async void ShowArchived(object sender, RoutedEventArgs e) => await Act(async () =>
     {

@@ -65,6 +65,7 @@ public final class ConversationScreenView {
   public final ImageButton pinAction;
   public final ImageButton modelAction;
   public final ImageButton archiveAction;
+  public final ImageButton resetAction;
   public final ImageButton archivedAction;
   public final ScrollView transcriptScroll;
 
@@ -84,6 +85,8 @@ public final class ConversationScreenView {
     void selectModel();
 
     void archiveConversation();
+
+    void resetConversation();
 
     void showArchived();
 
@@ -187,11 +190,13 @@ public final class ConversationScreenView {
     pinAction = iconButton(R.drawable.ic_pin, v -> actions.togglePin(), "Pin conversation");
     modelAction = iconButton(R.drawable.ic_robot, v -> actions.selectModel(), "Model and reasoning");
     archiveAction = iconButton(R.drawable.ic_archive, v -> actions.archiveConversation(), "Archive conversation");
+    resetAction = iconButton(R.drawable.ic_restart, v -> actions.resetConversation(), "Reset conversation");
     archivedAction = iconButton(R.drawable.ic_unarchive, v -> actions.showArchived(), "View archived conversations");
     metadata.addView(renameAction);
     metadata.addView(pinAction);
     metadata.addView(modelAction);
     metadata.addView(archiveAction);
+    metadata.addView(resetAction);
     metadata.addView(archivedAction);
     LinearLayout.LayoutParams metadataLayout = match();
     metadataLayout.setMargins(dp(12), 0, dp(12), 0);

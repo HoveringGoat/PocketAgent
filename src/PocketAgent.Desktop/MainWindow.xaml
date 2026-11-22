@@ -71,6 +71,7 @@
                 <Button x:Name="EditConversationButton" Content="" ContentTemplate="{StaticResource EditIconTemplate}" ToolTip="Edit conversation" AutomationProperties.Name="Edit conversation" Click="EditConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ModelButton" Content="" ContentTemplate="{StaticResource RobotIconTemplate}" ToolTip="Model and reasoning" AutomationProperties.Name="Model and reasoning" Click="ChangeModel" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ArchiveButton" Content="" ContentTemplate="{StaticResource ArchiveIconTemplate}" ToolTip="Archive conversation" AutomationProperties.Name="Archive conversation" Click="ArchiveConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
+                <Button x:Name="ResetConversationButton" Content="" ContentTemplate="{StaticResource ResetIconTemplate}" ToolTip="Reset conversation" AutomationProperties.Name="Reset conversation" Click="ResetConversation" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
                 <Button x:Name="ArchivedButton" Content="" ContentTemplate="{StaticResource UnarchiveIconTemplate}" ToolTip="View archived conversations" AutomationProperties.Name="View archived conversations" Click="ShowArchived" MinWidth="34" Height="32" Padding="4,2" Foreground="#C1DAA6"/>
               </StackPanel>
             </StackPanel>

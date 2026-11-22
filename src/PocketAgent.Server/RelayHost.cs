@@ -216,6 +216,7 @@ public static class RelayHost
         });
         api.MapGet("/conversations", (bool? archived, HttpContext context, Conversations conversations) => conversations.List(archived ?? false, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations", async (CreateInput input, HttpContext context, Conversations conversations) => Results.Ok(await conversations.Create(input.Title ?? "", input.WorkingDirectory, input.Model, input.ReasoningEffort, context.User.FindFirstValue(ClaimTypes.NameIdentifier))));
+        api.MapPost("/conversations/{id}/reset", async (string id, HttpContext context, Conversations conversations) => Results.Ok(await conversations.Reset(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier))));
         api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, HttpContext context, Conversations conversations) => conversations.Rename(id, input.Title ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/model", (string id, ModelInput input, HttpContext context, Conversations conversations) => conversations.SetModel(id, input.Model ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, HttpContext context, Conversations conversations) => conversations.SetReasoning(id, input.Effort, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));

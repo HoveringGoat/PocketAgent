@@ -31,6 +31,8 @@ public final class PreviewActivity extends Activity {
 
               public void archiveConversation() {}
 
+              public void resetConversation() {}
+
               public void showArchived() {}
 
               public void stopWork() {}

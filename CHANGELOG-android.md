@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.8 - 2026-11-22
+
+- Add a confirmed **Reset conversation** action that starts a clean Codex thread with the current conversation settings and keeps the previous transcript in Archived History.
+- Fix the Android pin action icon so it renders as a push pin instead of a malformed wand shape.
+
 ## 0.4.7 - 2026-11-21
 
 - Expand Android connection errors with DNS, route, TCP timeout/refusal, TLS, and server-response diagnostics.

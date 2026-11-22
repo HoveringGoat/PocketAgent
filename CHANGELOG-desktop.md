@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.41 - 2026-11-22
+
+- Add a confirmed **Reset conversation** action that starts a clean Codex thread with the current conversation settings and archives the previous transcript.
+
 ## 0.3.40 - 2026-11-22
 
 - Preserve the saved conversation and window placement when automatic startup saves desktop configuration.

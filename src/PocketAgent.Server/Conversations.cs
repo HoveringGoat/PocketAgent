@@ -124,6 +124,48 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { gate.Release(); await publisher.Changed(); }
     }
 
+    public async Task<ConversationSnapshot> Reset(string id, string? deviceId = null)
+    {
+        RequireAccess(id, deviceId);
+        var oldState = await GetState(id).ConfigureAwait(false);
+        string? newId = null;
+        await gate.WaitAsync();
+        try
+        {
+            await oldState.Gate.WaitAsync();
+            try
+            {
+                RequireUnarchived(oldState);
+                RequireIdle(oldState);
+                RequireAcceptingWork();
+                await codex.EnsureStarted();
+                var parameters = CodexPermissions.Apply(settings, new { cwd = oldState.Reference.WorkingDirectory });
+                if (oldState.Reference.Model is not null) parameters["model"] = oldState.Reference.Model;
+                var result = await codex.Request("thread/start", parameters);
+                var thread = result.GetProperty("thread");
+                var replacementId = thread.Text("id");
+                if (replacementId.Length == 0)
+                    throw new ApiException(502, "Codex returned a reset conversation without an ID.");
+
+                store.ResetConversation(id, replacementId, oldState.Reference);
+                newId = replacementId;
+                oldState.Reference = oldState.Reference with { Archived = true };
+                var newState = new State(new(replacementId, oldState.Reference.Title, DateTimeOffset.UtcNow, oldState.Reference.WorkingDirectory,
+                    oldState.Reference.Model, false, oldState.Reference.ReasoningEffort, oldState.Reference.Pinned)) { Resumed = true };
+                CapturePermissions(newState, result);
+                states[replacementId] = newState;
+                return Snapshot(newState);
+            }
+            finally { oldState.Gate.Release(); }
+        }
+        finally
+        {
+            gate.Release();
+            await publisher.Changed(id);
+            if (newId is not null) await publisher.Changed(newId);
+        }
+    }
+
     public async Task<ConversationSnapshot> Get(string id, string? deviceId = null)
     {
         RequireAccess(id, deviceId);

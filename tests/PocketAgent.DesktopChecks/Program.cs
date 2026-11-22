@@ -33,6 +33,11 @@ internal static class Program
                 SessionRestoreChecks.Run();
                 return 0;
             }
+            if (Environment.GetCommandLineArgs().Contains("--conversation-reset", StringComparer.OrdinalIgnoreCase))
+            {
+                ConversationResetChecks.Run(root);
+                return 0;
+            }
             if (Environment.GetCommandLineArgs().Contains("--update-status", StringComparer.OrdinalIgnoreCase))
             {
                 UpdateStatusChecks.Run();
@@ -104,7 +109,7 @@ internal static class Program
                 return RunAccessPreview(window, root);
             RelaySetupChecks.Run(root);
             ConversationUiChecks.Run(new MainWindow(), root);
-            foreach (var name in new[] { "EditConversationButton", "ModelButton", "ArchiveButton", "ArchivedButton" })
+            foreach (var name in new[] { "EditConversationButton", "ModelButton", "ArchiveButton", "ResetConversationButton", "ArchivedButton" })
                 if (((Button)window.FindName(name)!).ContentTemplate is null)
                     throw new InvalidOperationException($"Desktop conversation action {name} must use a vector icon template.");
             var serverToggle = (System.Windows.Controls.Primitives.ToggleButton)window.FindName("ServerToggle")!;

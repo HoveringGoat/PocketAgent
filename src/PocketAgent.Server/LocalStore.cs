@@ -187,6 +187,51 @@ public sealed class LocalStore
         ServerDiagnostics.Log("conversation", LogLevel.Information, $"conversation_saved conversation_id={id} owner={(deviceId is null ? "desktop" : "device")}");
     }
 
+    public void ResetConversation(string oldId, string newId, ConversationReference source)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO conversations (id,title,created_at,repository,model,archived,reasoning_effort,pinned,last_message_at)
+            SELECT $new,$title,$created,$repository,$model,0,$reasoning,$pinned,NULL
+            FROM conversations
+            WHERE id=$old AND archived=0
+              AND NOT EXISTS (SELECT 1 FROM scheduled_messages WHERE conversation_id=$old AND status='dispatching');
+            """;
+        command.Parameters.AddWithValue("$new", newId);
+        command.Parameters.AddWithValue("$old", oldId);
+        command.Parameters.AddWithValue("$title", source.Title);
+        command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        command.Parameters.AddWithValue("$repository", source.WorkingDirectory);
+        command.Parameters.AddWithValue("$model", (object?)source.Model ?? DBNull.Value);
+        command.Parameters.AddWithValue("$reasoning", (object?)source.ReasoningEffort ?? DBNull.Value);
+        command.Parameters.AddWithValue("$pinned", source.Pinned ? 1 : 0);
+        if (command.ExecuteNonQuery() != 1)
+            throw new ApiException(409, "Finish scheduled delivery before resetting this conversation.");
+
+        command.CommandText = "INSERT INTO conversation_access(conversation_id,device_id,granted_at) SELECT $new,device_id,$granted FROM conversation_access WHERE conversation_id=$old";
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$new", newId);
+        command.Parameters.AddWithValue("$old", oldId);
+        command.Parameters.AddWithValue("$granted", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        command.ExecuteNonQuery();
+
+        command.CommandText = "UPDATE conversations SET archived=1 WHERE id=$old AND archived=0";
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$old", oldId);
+        if (command.ExecuteNonQuery() != 1)
+            throw new ApiException(409, "This conversation changed before it could be reset.");
+
+        command.CommandText = "UPDATE scheduled_messages SET status='canceled',error='Conversation reset.' WHERE conversation_id=$old AND status='pending'";
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$old", oldId);
+        command.ExecuteNonQuery();
+        transaction.Commit();
+        ServerDiagnostics.Log("conversation", LogLevel.Information, $"conversation_reset old_conversation_id={oldId} new_conversation_id={newId}");
+    }
+
     public ConversationReference[] Conversations(bool includeArchived = false, string? deviceId = null)
     {
         using var connection = Open();

@@ -65,13 +65,13 @@ While stopped, choose a private interface under Wi-Fi setup and start the server
 
 ## Android servers and conversations
 
-Android stores each server's origin, pin and bearer token in its encrypted vault. Servers keep separate tabs, drafts, usage and uncertain-delivery state. The selected conversation exposes Rename, Model/reasoning, Pin, Archive and archived-history actions. Devices are paired globally; conversation access is granted separately by the desktop. Ungranted devices cannot see a conversation.
+Android stores each server's origin, pin and bearer token in its encrypted vault. Servers keep separate tabs, drafts, usage and uncertain-delivery state. The selected conversation exposes Rename, Model/reasoning, Pin, Archive, Reset and archived-history actions. Reset confirms before creating a clean conversation with the same name, folder, model, reasoning, pin state and device access; the previous transcript is archived rather than deleted. Devices are paired globally; conversation access is granted separately by the desktop. Ungranted devices cannot see a conversation.
 
 Messages preserve user, assistant and activity roles. Commands and provider activity remain collapsed. History is bounded and cursor-paginated; refreshing does not replay a prompt. Images are fetched through the authenticated conversation image endpoint.
 
 ## Desktop conversations
 
-Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
+Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The **Reset conversation** icon starts a clean Codex thread with the same name, folder, model, reasoning, pin state and device access after confirmation, then archives the old transcript. Reset is unavailable while work or scheduled delivery is active. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
 
 When the desktop starts its local server, it opens the Sessions page and restores the last conversation selected on that desktop after the session list loads. If that conversation was archived, removed, or unavailable during configuration migration, the desktop opens the non-archived conversation with the newest activity instead. The desktop remembers its normal window position and size, restores maximized state, and ignores saved bounds that are no longer visible on any monitor.
 
