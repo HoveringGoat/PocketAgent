@@ -42,7 +42,7 @@ public static partial class CodexExtensionUpdateService
             return new(false, extension.Value.Version, latest, $"VS Code Codex extension update {latest} is available, but the VS Code command-line tool was not found.");
         installationProgress?.Report(latest);
         await InstallVersion(cli, latest, cancellationToken);
-        return new(true, extension.Value.Version, latest, $"VS Code Codex extension update {latest} was installed. Restart the PocketAgent server to use it.");
+        return new(true, extension.Value.Version, latest, $"VS Code Codex extension update {latest} was installed.");
     }
 
     private static async Task<Version> FindLatestVersion(CancellationToken cancellationToken)

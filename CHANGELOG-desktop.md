@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.35 - 2026-11-21
+
+- Load the updated Codex executable on startup and offer an idle-only restart when a newer extension is available.
+- Show desktop navigation only in the header.
+
 ## 0.3.34 - 2026-11-21
 
 - Show immediate progress for PocketAgent and VS Code Codex update checks, including when VS Code is installing an extension update.

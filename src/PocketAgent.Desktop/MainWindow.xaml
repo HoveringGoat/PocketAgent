@@ -58,7 +58,7 @@
         </ToggleButton.Style>
       </ToggleButton></StackPanel>
     </Grid>
-    <TabControl x:Name="Navigation" Grid.Row="1" Background="Transparent" BorderThickness="0"
+    <TabControl x:Name="Navigation" Grid.Row="1" Background="Transparent" BorderThickness="0" IsTabStop="False"
                 HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
                 SelectionChanged="NavigationSelectionChanged">
       <TabItem Header="Sessions">
@@ -150,6 +150,8 @@
           <TextBlock x:Name="CodexUpdateStatus" Foreground="#A7BAA7" Margin="0,0,0,4" TextWrapping="Wrap"/>
           <ProgressBar x:Name="CodexUpdateProgress" Height="5" Width="150" HorizontalAlignment="Left" Margin="0,0,0,4" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="Codex extension update in progress"/>
           <Button x:Name="CodexUpdateCheckButton" Content="Check for Codex extension updates now" Click="CheckCodexExtensionUpdate" HorizontalAlignment="Left" Margin="0,0,0,14"/>
+          <TextBlock x:Name="CodexVersionStatus" Foreground="#A7BAA7" Margin="0,0,0,4" Visibility="Collapsed"/>
+          <Button x:Name="CodexRestartButton" Content="Restart using updated Codex version" Click="RestartUsingUpdatedCodex" HorizontalAlignment="Left" Margin="0,0,0,14" Visibility="Collapsed"/>
           <TextBlock Text="Codex Platform API key" FontSize="20" Margin="0,10,0,4"/>
           <TextBlock Text="Optional. PocketAgent stores this key in Windows Credential Manager and passes it to the selected Codex executable only when it starts. The key is never saved in desktop.json or shown in diagnostics." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,6"/>
           <PasswordBox x:Name="CodexApiKeySetting" AutomationProperties.Name="OpenAI Platform API key" Margin="0,3,0,6"/>

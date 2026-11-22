@@ -46,9 +46,34 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     }
 
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly object turnAdmission = new();
+    private int turnsStarting;
+    private bool restarting;
     private readonly Dictionary<string, State> states = [];
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<State>> readHydrations = [];
     private long lastPublished;
+
+    public static bool IsActiveStatus(string status) => status is "running" or "awaiting-input" or "starting" or "uncertain";
+
+    public async Task<bool> TryPrepareIdleRestart()
+    {
+        if (!await gate.WaitAsync(0)) return false;
+        try
+        {
+            lock (turnAdmission)
+            {
+                if (restarting || turnsStarting != 0 || states.Values.Any(state => IsActiveStatus(state.Status))) return false;
+                restarting = true;
+                return true;
+            }
+        }
+        finally { gate.Release(); }
+    }
+
+    private void RequireAcceptingWork()
+    {
+        if (restarting) throw new ApiException(409, "PocketAgent is restarting to use the updated Codex version. Try again when the server is back.");
+    }
 
     public async Task<ConversationSummary[]> List(bool archived = false, string? deviceId = null)
     {
@@ -71,6 +96,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         await gate.WaitAsync();
         try
         {
+            RequireAcceptingWork();
             if (string.IsNullOrWhiteSpace(title))
             {
                 var baseName = Path.GetFileName(Path.TrimEndingDirectorySeparator(directory));
@@ -393,6 +419,17 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     }
 
     public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null)
+    {
+        lock (turnAdmission)
+        {
+            RequireAcceptingWork();
+            turnsStarting++;
+        }
+        try { await StartTurnCore(id, text, expectedTurnId, sourceDeviceId, scheduledMessageId, clientMessageId); }
+        finally { lock (turnAdmission) turnsStarting--; }
+    }
+
+    private async Task StartTurnCore(string id, string text, string? expectedTurnId, string? sourceDeviceId, string? scheduledMessageId, string? clientMessageId)
     {
         RequireAccess(id, sourceDeviceId);
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)

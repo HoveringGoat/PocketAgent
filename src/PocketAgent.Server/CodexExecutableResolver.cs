@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace PocketAgent;
 
-public sealed record CodexExecutable(string Path, string Source);
+public sealed record CodexExecutable(string Path, string Source, Version? ExtensionVersion = null);
 
 public static partial class CodexExecutableResolver
 {
@@ -30,7 +30,7 @@ public static partial class CodexExecutableResolver
             {
                 var binary = Path.Combine(candidate.Directory, "bin", architecture, "codex.exe");
                 if (File.Exists(binary))
-                    return new(binary, $"VS Code extension {candidate.Version}");
+                    return new(binary, $"VS Code extension {candidate.Version}", candidate.Version);
             }
         }
         foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))

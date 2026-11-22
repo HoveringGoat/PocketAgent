@@ -48,6 +48,8 @@ public partial class MainWindow : Window
     private bool refreshing, sending, settingDraft, changingList, closing, transitioning, loadingHistory;
     private DesktopUpdate? pendingUpdate;
     private bool installingUpdate;
+    private bool codexIdle;
+    private CodexExecutable? nextCodexExecutable;
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
     private string? providerModel;
@@ -102,8 +104,36 @@ public partial class MainWindow : Window
 
     private void ResolveCodex()
     {
-        try { var executable = CodexExecutableResolver.Resolve(settings.Host); CodexResolved.Text = $"{executable.Source}\n{executable.Path}"; }
-        catch (Exception exception) { CodexResolved.Text = exception.Message; }
+        try
+        {
+            nextCodexExecutable = CodexExecutableResolver.Resolve(relay?.Services.GetRequiredService<HostSettings>() ?? settings.Host);
+            CodexResolved.Text = $"{nextCodexExecutable.Source}\n{nextCodexExecutable.Path}";
+        }
+        catch (Exception exception)
+        {
+            nextCodexExecutable = null;
+            CodexResolved.Text = exception.Message;
+        }
+        UpdateCodexSwitch();
+    }
+
+    private static bool HasNewerCodexExecutable(HostSettings host, CodexExecutable? running, CodexExecutable? candidate) =>
+        string.IsNullOrWhiteSpace(host.CodexExecutable) && running is not null && candidate?.ExtensionVersion is { } version &&
+        !string.Equals(running.Path, candidate.Path, StringComparison.OrdinalIgnoreCase) &&
+        (running.ExtensionVersion is null || version > running.ExtensionVersion);
+
+    private void UpdateCodexSwitch()
+    {
+        var connection = relay?.Services.GetRequiredService<CodexConnection>();
+        var active = connection?.Executable;
+        var available = relay is not null && HasNewerCodexExecutable(relay.Services.GetRequiredService<HostSettings>(), active, nextCodexExecutable);
+        CodexRestartButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        CodexRestartButton.IsEnabled = available && codexIdle && !transitioning && CodexUpdateCheckButton.IsEnabled;
+        CodexVersionStatus.Visibility = active is null ? Visibility.Collapsed : Visibility.Visible;
+        var runningLabel = connection is { IsReady: true } ? "Running" : "Last selected";
+        CodexVersionStatus.Text = active is null ? "" : available
+            ? $"{runningLabel}: {active.Source}. Available: {nextCodexExecutable!.Source}.\n{(codexIdle ? "Restart the PocketAgent server to switch." : "Waiting for active work to finish.")}"
+            : $"{runningLabel}: {active.Source}.";
     }
 
     private void UpdateCodexCredentialStatus()
@@ -122,7 +152,12 @@ public partial class MainWindow : Window
         if (sender is Button { Tag: string tag } && int.TryParse(tag, out var index)) Navigation.SelectedIndex = index;
     }
 
-    private void NavigationSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateNavigationButtons();
+    private void NavigationSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.Source, Navigation)) return;
+        UpdateNavigationButtons();
+        if (Navigation.SelectedIndex == 2 && CodexResolved is not null) ResolveCodex();
+    }
 
     private void UpdateNavigationButtons()
     {
@@ -140,12 +175,15 @@ public partial class MainWindow : Window
         WriteUpdateHealth();
         try { StartupRegistration.SetEnabled(settings.LaunchOnWindowsStartup); }
         catch (Exception exception) { UpdateStatus.Text = $"Windows startup registration unavailable: {exception.Message}"; }
-        if (settings.StartServerOnLaunch && settings.Host.RepositoryPath.Length > 0)
+        if (settings.UpdateCodexExtensionOnStartup)
+        {
+            await CheckCodexExtensionUpdateCore();
+            await SwitchToUpdatedCodex();
+        }
+        if (!closing && settings.StartServerOnLaunch && settings.Host.RepositoryPath.Length > 0)
             await StartServerCore();
         if (settings.CheckUpdatesOnStartup)
             await CheckForUpdatesCore(true);
-        if (settings.UpdateCodexExtensionOnStartup)
-            await CheckCodexExtensionUpdateCore();
     }
 
     private void WriteUpdateHealth()
@@ -218,6 +256,7 @@ public partial class MainWindow : Window
     {
         if (closing || !CodexUpdateCheckButton.IsEnabled) return;
         CodexUpdateCheckButton.IsEnabled = false;
+        UpdateCodexSwitch();
         CodexUpdateStatus.Text = "Checking for Codex extension updates…";
         CodexUpdateProgress.Visibility = Visibility.Visible;
         var running = true;
@@ -239,7 +278,6 @@ public partial class MainWindow : Window
                 ? Task.Run(() => CodexExtensionUpdateService.CheckAsync(host, install: true, installationProgress: progress))
                 : check(progress));
             CodexUpdateStatus.Text = result.Message;
-            if (result.Updated) ResolveCodex();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException or IOException or UnauthorizedAccessException or Win32Exception)
         {
@@ -251,6 +289,7 @@ public partial class MainWindow : Window
             running = false;
             CodexUpdateProgress.Visibility = Visibility.Collapsed;
             CodexUpdateCheckButton.IsEnabled = true;
+            if (!closing) ResolveCodex();
         }
     }
     private void UiScaleChanged(object sender, SelectionChangedEventArgs e)
@@ -397,24 +436,75 @@ public partial class MainWindow : Window
                 if (choice == MessageBoxResult.Yes && !await Task.Run(() => WindowsFirewall.TryConfigure(host.Port)))
                     throw new InvalidOperationException("Windows Firewall rule was not created. The server was not started.");
             }
-            var candidate = RelayHost.Create([], host);
-            try { await candidate.StartAsync(); }
-            catch { await candidate.DisposeAsync(); throw; }
-            relay = candidate;
-            sessionSignature = "";
-            ConnectionAddress.Text = host.ClientOrigin;
-            SetDevicesRelayClientMode(host.Relay.ConnectsUpstream);
-            SetServerToggle(true, "Starting...", false); SaveButton.IsEnabled = false;
-            PermissionModeSetting.IsEnabled = false;
-            try
-            {
-                var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
-                providerModel = status.ConfiguredModel ?? status.DefaultModel;
-            }
-            catch { providerModel = null; }
-            await Refresh();
+            await StartServer(host);
         });
         transitioning = false; SetServerToggle(relay is not null);
+        UpdateCodexSwitch();
+    }
+
+    private async Task StartServer(HostSettings host)
+    {
+        var candidate = RelayHost.Create([], host);
+        try { await candidate.StartAsync(); }
+        catch { await candidate.DisposeAsync(); throw; }
+        relay = candidate;
+        sessionSignature = "";
+        ConnectionAddress.Text = host.ClientOrigin;
+        SetDevicesRelayClientMode(host.Relay.ConnectsUpstream);
+        SetServerToggle(true, "Starting...", false); SaveButton.IsEnabled = false;
+        PermissionModeSetting.IsEnabled = false;
+        try
+        {
+            var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
+            providerModel = status.ConfiguredModel ?? status.DefaultModel;
+        }
+        catch { providerModel = null; }
+        ResolveCodex();
+        await Refresh();
+    }
+
+    private async void RestartUsingUpdatedCodex(object sender, RoutedEventArgs e) => await SwitchToUpdatedCodex();
+
+    private async Task SwitchToUpdatedCodex()
+    {
+        if (relay is not { } running || transitioning || closing || installingUpdate || !CodexUpdateCheckButton.IsEnabled) return;
+        ResolveCodex();
+        var host = running.Services.GetRequiredService<HostSettings>();
+        if (!HasNewerCodexExecutable(host, running.Services.GetRequiredService<CodexConnection>().Executable, nextCodexExecutable)) return;
+        var expected = nextCodexExecutable!;
+        transitioning = true;
+        SetServerToggle(true, "Restarting…", false);
+        UpdateCodexSwitch();
+        try
+        {
+            if (!await running.Services.GetRequiredService<Conversations>().TryPrepareIdleRestart())
+            {
+                codexIdle = false;
+                return;
+            }
+            CodexUpdateStatus.Text = $"Restarting PocketAgent to use {expected.Source}…";
+            CodexUpdateProgress.Visibility = Visibility.Visible;
+            CodexUpdateCheckButton.IsEnabled = false;
+            await Shutdown();
+            await StartServer(host);
+            var connection = relay?.Services.GetRequiredService<CodexConnection>();
+            CodexUpdateStatus.Text = connection is { IsReady: true } && connection.Executable?.Path.Equals(expected.Path, StringComparison.OrdinalIgnoreCase) == true
+                ? $"Now using {expected.Source}."
+                : "The server restarted, but could not confirm the updated Codex executable. Check the Codex connection for details.";
+        }
+        catch (Exception exception)
+        {
+            DesktopDiagnostics.LogException("codex-update-restart", exception);
+            CodexUpdateStatus.Text = $"Could not restart with the updated Codex version: {exception.Message}";
+        }
+        finally
+        {
+            transitioning = false;
+            SetServerToggle(relay is not null);
+            CodexUpdateProgress.Visibility = Visibility.Collapsed;
+            CodexUpdateCheckButton.IsEnabled = true;
+            UpdateCodexSwitch();
+        }
     }
 
     private async void CheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesCore(false, true);
@@ -509,7 +599,7 @@ public partial class MainWindow : Window
     {
         if (relay is null) return true;
         var sessions = await Conversations.List();
-        return !sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain");
+        return !sessions.Any(session => PocketAgent.Conversations.IsActiveStatus(session.Status));
     }
     private async Task<bool> ConfirmStop()
     {
@@ -522,6 +612,8 @@ public partial class MainWindow : Window
     private async Task Shutdown()
     {
         var running = relay; relay = null;
+        codexIdle = false;
+        UpdateCodexSwitch();
         if (running is not null)
         {
             try { await running.StopAsync(); }
@@ -584,7 +676,10 @@ public partial class MainWindow : Window
             DirectPairingPanel.Visibility = isRelayClient && !canPair ? Visibility.Collapsed : Visibility.Visible;
             var sessions = await Conversations.List();
             if (relay != running) return;
+            codexIdle = !sessions.Any(session => PocketAgent.Conversations.IsActiveStatus(session.Status));
+            UpdateCodexSwitch();
             var usage = await running.Services.GetRequiredService<ProviderUsage>().Check();
+            if (relay != running) return;
             UsageDisplay.Text = usage.Available
                 ? $"5hr: {UsageText(usage.FiveHour, true)} | weekly: {UsageText(usage.Weekly, false)}"
                 : usage.UnavailableReason ?? "Usage limits unavailable.";
