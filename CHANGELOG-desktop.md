@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.39 - 2026-11-21
+
+- Explicitly open the Sessions page during configured desktop startup and record session-restore diagnostics.
+- Remember and restore the desktop window position, size, and maximized state when the saved bounds remain visible.
+
 ## 0.3.38 - 2026-11-21
 
 - Restore the last selected conversation when the desktop starts and the conversation is still available.

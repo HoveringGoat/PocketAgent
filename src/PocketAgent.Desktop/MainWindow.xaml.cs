@@ -68,6 +68,7 @@ public partial class MainWindow : Window
         BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
+        RestoreWindowPlacement();
         RepositorySetting.Text = settings.Host.RepositoryPath;
         var arguments = Environment.GetCommandLineArgs();
         var healthArgument = Array.IndexOf(arguments, "--health-file");
@@ -176,6 +177,8 @@ public partial class MainWindow : Window
     private async Task WindowReady()
     {
         if (Environment.GetCommandLineArgs().Contains("--background", StringComparer.OrdinalIgnoreCase)) WindowState = WindowState.Minimized;
+        if (settings.Host.RepositoryPath.Length > 0) Navigation.SelectedIndex = 0;
+        DesktopDiagnostics.Log($"desktop ready start_server_on_launch={settings.StartServerOnLaunch} repository_configured={settings.Host.RepositoryPath.Length > 0} saved_conversation={settings.LastSelectedConversationId is not null}");
         WriteUpdateHealth();
         try { StartupRegistration.SetEnabled(settings.LaunchOnWindowsStartup); }
         catch (Exception exception) { UpdateStatus.Text = $"Windows startup registration unavailable: {exception.Message}"; }
@@ -700,6 +703,38 @@ public partial class MainWindow : Window
         if (!client) CertificateStatus.Text = "";
     }
 
+    private void RestoreWindowPlacement()
+    {
+        if (settings.WindowWidth is not { } width || settings.WindowHeight is not { } height ||
+            width < MinWidth || height < MinHeight || double.IsNaN(width) || double.IsNaN(height)) return;
+        Width = width;
+        Height = height;
+        if (settings.WindowLeft is not { } left || settings.WindowTop is not { } top || double.IsNaN(left) || double.IsNaN(top)) return;
+        var visible = left + width > SystemParameters.VirtualScreenLeft &&
+            left < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth &&
+            top + height > SystemParameters.VirtualScreenTop &&
+            top < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight;
+        if (!visible) return;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = left;
+        Top = top;
+        if (settings.WindowMaximized) WindowState = WindowState.Maximized;
+    }
+
+    private void SaveWindowPlacement()
+    {
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+        if (double.IsNaN(bounds.Left) || double.IsNaN(bounds.Top) || double.IsNaN(bounds.Width) || double.IsNaN(bounds.Height) ||
+            bounds.Width < MinWidth || bounds.Height < MinHeight) return;
+        settings.WindowLeft = bounds.Left;
+        settings.WindowTop = bounds.Top;
+        settings.WindowWidth = bounds.Width;
+        settings.WindowHeight = bounds.Height;
+        settings.WindowMaximized = WindowState == WindowState.Maximized;
+        try { settings.Save(); }
+        catch (Exception exception) { DesktopDiagnostics.LogException("window-placement-save", exception); }
+    }
+
     private void RememberSelectedConversation(string? conversationId)
     {
         settings.LastSelectedConversationId = conversationId;
@@ -724,6 +759,7 @@ public partial class MainWindow : Window
         await Act(async () =>
         {
             if (!await ConfirmStop()) return;
+            SaveWindowPlacement();
             timer.Stop(); await Shutdown(); closing = true;
             _ = Dispatcher.BeginInvoke(Close);
         });
@@ -769,7 +805,12 @@ public partial class MainWindow : Window
                 settingDraft = true; Composer.Clear(); settingDraft = false;
                 RememberSelectedConversation(null);
             }
+            var hadNoSelection = selected is null;
             selected ??= RestoreLastSelectedConversation(sessions);
+            if (hadNoSelection && selected is not null)
+                DesktopDiagnostics.Log($"conversation selection restored sessions={sessions.Length}");
+            else if (sessionSignature.Length == 0)
+                DesktopDiagnostics.Log($"conversation sessions loaded count={sessions.Length} selected={selected is not null}");
             if (signature != sessionSignature)
             {
                 changingList = true;

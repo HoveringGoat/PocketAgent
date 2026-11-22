@@ -13,6 +13,11 @@ public sealed class DesktopSettings
     public bool StartServerOnLaunch { get; set; } = true;
     public bool LaunchOnWindowsStartup { get; set; }
     public string? LastSelectedConversationId { get; set; }
+    public double? WindowLeft { get; set; }
+    public double? WindowTop { get; set; }
+    public double? WindowWidth { get; set; }
+    public double? WindowHeight { get; set; }
+    public bool WindowMaximized { get; set; }
     public string UiScale { get; set; } = "comfortable";
     public static string DirectoryPath => Environment.GetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA") is { Length: > 0 } configured ? Path.GetFullPath(configured) :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PocketAgent");
