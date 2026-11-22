@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.36 - 2026-11-21
+
+- Show the selected reasoning label in the desktop model picker.
+
 ## 0.3.35 - 2026-11-21
 
 - Load the updated Codex executable on startup and offer an idle-only restart when a newer extension is available.
