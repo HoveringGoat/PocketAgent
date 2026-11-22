@@ -221,6 +221,12 @@ public partial class MainWindow : Window
             CheckUpdatesPeriodically = CheckUpdatesPeriodicallySetting.IsChecked == true,
             AutomaticUpdates = AutomaticUpdatesSetting.IsChecked == true,
             UpdateCodexExtensionOnStartup = UpdateCodexExtensionOnStartupSetting.IsChecked == true,
+            LastSelectedConversationId = settings.LastSelectedConversationId,
+            WindowLeft = settings.WindowLeft,
+            WindowTop = settings.WindowTop,
+            WindowWidth = settings.WindowWidth,
+            WindowHeight = settings.WindowHeight,
+            WindowMaximized = settings.WindowMaximized,
             UiScale = UiScaleSetting.SelectedValue as string ?? "comfortable",
             Host = new HostSettings
             {
@@ -750,10 +756,13 @@ public partial class MainWindow : Window
     private string? RestoreLastSelectedConversation(ConversationSummary[] sessions)
     {
         var saved = settings.LastSelectedConversationId;
-        if (string.IsNullOrWhiteSpace(saved)) return null;
-        if (sessions.Any(session => session.Id == saved)) return saved;
-        RememberSelectedConversation(null);
-        return null;
+        if (!string.IsNullOrWhiteSpace(saved) && sessions.Any(session => session.Id == saved)) return saved;
+        if (!string.IsNullOrWhiteSpace(saved)) RememberSelectedConversation(null);
+        return sessions
+            .OrderByDescending(session => session.LastMessageAt ?? DateTimeOffset.MinValue)
+            .ThenByDescending(session => session.CreatedAt)
+            .Select(session => session.Id)
+            .FirstOrDefault();
     }
 
     private async void WindowClosing(object? sender, CancelEventArgs e)
@@ -813,7 +822,10 @@ public partial class MainWindow : Window
             var hadNoSelection = selected is null;
             selected ??= RestoreLastSelectedConversation(sessions);
             if (hadNoSelection && selected is not null)
+            {
+                RememberSelectedConversation(selected);
                 DesktopDiagnostics.Log($"conversation selection restored sessions={sessions.Length}");
+            }
             else if (sessionSignature.Length == 0)
                 DesktopDiagnostics.Log($"conversation sessions loaded count={sessions.Length} selected={selected is not null}");
             if (signature != sessionSignature)

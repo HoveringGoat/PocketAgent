@@ -10,6 +10,15 @@ internal static class SessionRestoreChecks
         var window = new MainWindow();
         var settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
         settings.LastSelectedConversationId = "restore-me";
+        settings.WindowLeft = 123;
+        settings.WindowTop = 234;
+        settings.WindowWidth = 987;
+        settings.WindowHeight = 654;
+        ((System.Windows.Controls.TextBox)window.FindName("RepositorySetting")!).Text = Directory.GetCurrentDirectory();
+        typeof(MainWindow).GetMethod("SaveConfiguration", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, [false]);
+        settings = (DesktopSettings)typeof(MainWindow).GetField("settings", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+        if (settings.LastSelectedConversationId != "restore-me" || settings.WindowLeft != 123 || settings.WindowTop != 234 || settings.WindowWidth != 987 || settings.WindowHeight != 654)
+            throw new InvalidOperationException("Automatic startup configuration must preserve the saved conversation and window placement.");
         settings.Save();
         if (DesktopSettings.Load().LastSelectedConversationId != "restore-me")
             throw new InvalidOperationException("The last selected conversation must survive desktop settings persistence.");
@@ -24,11 +33,9 @@ internal static class SessionRestoreChecks
             throw new InvalidOperationException("Desktop startup must restore the last selected conversation when it still exists.");
 
         settings.LastSelectedConversationId = "archived-or-deleted";
-        var missing = restore.Invoke(window, [new[] { Summary("other") }]);
-        if (missing is not null || settings.LastSelectedConversationId is not null)
-            throw new InvalidOperationException("Desktop startup must clear a saved conversation that is no longer available.");
-        if (DesktopSettings.Load().LastSelectedConversationId is not null)
-            throw new InvalidOperationException("Clearing a stale conversation selection must be persisted.");
+        var missing = restore.Invoke(window, [new[] { Summary("older", DateTimeOffset.UtcNow.AddHours(-1)), Summary("other", DateTimeOffset.UtcNow) }]);
+        if (!Equals(missing, "other") || settings.LastSelectedConversationId is not null)
+            throw new InvalidOperationException("Desktop startup must fall back to the most recently active conversation when the saved selection is unavailable.");
 
         settings.Host.RepositoryPath = Directory.GetCurrentDirectory();
         settings.StartServerOnLaunch = false;
@@ -57,9 +64,9 @@ internal static class SessionRestoreChecks
         if (restoredWindow.Left != 123 || restoredWindow.Top != 234 || restoredWindow.Width != 987 || restoredWindow.Height != 654)
             throw new InvalidOperationException("Desktop window placement must be restored on startup.");
 
-        Console.WriteLine("PASS last selected desktop conversation restore and stale-selection cleanup.");
+        Console.WriteLine("PASS last selected/recent desktop conversation restore, startup configuration preservation, and window placement.");
     }
 
-    private static ConversationSummary Summary(string id) =>
-        new(id, id, DateTimeOffset.UtcNow, "saved", "repo", "repo", "host", null, false);
+    private static ConversationSummary Summary(string id, DateTimeOffset? lastMessageAt = null) =>
+        new(id, id, DateTimeOffset.UtcNow, "saved", "repo", "repo", "host", null, false, LastMessageAt: lastMessageAt);
 }

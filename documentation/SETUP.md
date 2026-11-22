@@ -73,7 +73,7 @@ Messages preserve user, assistant and activity roles. Commands and provider acti
 
 Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
 
-When the desktop starts its local server, it opens the Sessions page and restores the last conversation selected on that desktop after the session list loads. If that conversation was archived or removed, the saved selection is cleared and no conversation is opened automatically. The desktop remembers its normal window position and size, restores maximized state, and ignores saved bounds that are no longer visible on any monitor.
+When the desktop starts its local server, it opens the Sessions page and restores the last conversation selected on that desktop after the session list loads. If that conversation was archived, removed, or unavailable during configuration migration, the desktop opens the non-archived conversation with the newest activity instead. The desktop remembers its normal window position and size, restores maximized state, and ignores saved bounds that are no longer visible on any monitor.
 
 Open **Model and reasoning** to choose the conversation model and reasoning effort. The desktop dropdown displays the human-readable choice in both its collapsed and expanded states, such as **Extra high** or **Use model default**. The shared combo box template applies the item's display binding, and the underlying reasoning value is passed to the server when you save the selection.
 

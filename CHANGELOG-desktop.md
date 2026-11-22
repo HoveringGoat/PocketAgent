@@ -4,6 +4,11 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.40 - 2026-11-22
+
+- Preserve the saved conversation and window placement when automatic startup saves desktop configuration.
+- Restore the most recently active conversation when the saved selection is unavailable.
+
 ## 0.3.39 - 2026-11-21
 
 - Explicitly open the Sessions page during configured desktop startup and record session-restore diagnostics.
