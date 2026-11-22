@@ -699,6 +699,23 @@ public partial class MainWindow : Window
         DevicesHeading.Text = client ? "Pair your phone through the relay" : "Connect your phone";
         if (!client) CertificateStatus.Text = "";
     }
+
+    private void RememberSelectedConversation(string? conversationId)
+    {
+        settings.LastSelectedConversationId = conversationId;
+        try { settings.Save(); }
+        catch (Exception exception) { DesktopDiagnostics.LogException("conversation-selection-save", exception); }
+    }
+
+    private string? RestoreLastSelectedConversation(ConversationSummary[] sessions)
+    {
+        var saved = settings.LastSelectedConversationId;
+        if (string.IsNullOrWhiteSpace(saved)) return null;
+        if (sessions.Any(session => session.Id == saved)) return saved;
+        RememberSelectedConversation(null);
+        return null;
+    }
+
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
         if (closing) return;
@@ -750,7 +767,9 @@ public partial class MainWindow : Window
                 selected = null; conversation = null; rendered = ""; renderedConversation = null; JumpToLatestButton.Visibility = Visibility.Collapsed;
                 ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); ScheduledSummaryButton.Visibility = Visibility.Collapsed;
                 settingDraft = true; Composer.Clear(); settingDraft = false;
+                RememberSelectedConversation(null);
             }
+            selected ??= RestoreLastSelectedConversation(sessions);
             if (signature != sessionSignature)
             {
                 changingList = true;
@@ -914,6 +933,7 @@ public partial class MainWindow : Window
     {
         if (changingList || SessionList.SelectedItem is not SessionEntry entry) return;
         selected = entry.Id; conversation = null; rendered = ""; InterruptButton.Visibility = Visibility.Hidden; ConversationMeta.Text = "Loading conversation..."; historyCursors.Remove(selected); olderHistory.Remove(selected);
+        RememberSelectedConversation(selected);
         settingDraft = true; Composer.Text = drafts.GetValueOrDefault(selected, ""); settingDraft = false;
         await Refresh();
     }
@@ -976,7 +996,7 @@ public partial class MainWindow : Window
         var dialog = new Window { Title = "New conversation", Owner = this, Content = panel, Width = 560, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         create.Click += (_, _) => dialog.DialogResult = true;
         if (dialog.ShowDialog() != true) return;
-        var created = await Conversations.Create("", directory.Text, ((ModelChoice)choices.SelectedItem).Model); selected = created.Id; conversation = created; rendered = "";
+        var created = await Conversations.Create("", directory.Text, ((ModelChoice)choices.SelectedItem).Model); selected = created.Id; RememberSelectedConversation(selected); conversation = created; rendered = "";
         settingDraft = true; Composer.Text = ""; settingDraft = false;
         await Refresh(); Composer.Focus();
     });

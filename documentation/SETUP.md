@@ -73,6 +73,8 @@ Messages preserve user, assistant and activity roles. Commands and provider acti
 
 Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
 
+When the desktop starts its local server, it restores the last conversation selected on that desktop after the session list loads. If that conversation was archived or removed, the saved selection is cleared and no conversation is opened automatically.
+
 Open **Model and reasoning** to choose the conversation model and reasoning effort. The desktop dropdown displays the human-readable choice in both its collapsed and expanded states, such as **Extra high** or **Use model default**. The shared combo box template applies the item's display binding, and the underlying reasoning value is passed to the server when you save the selection.
 
 Scroll up to read earlier messages while work continues and select **Jump to latest** to follow new output again. Expand an activity group to see the individual actions. Select text in messages, formatted agent replies, activity details, or conversation errors and press **Ctrl+C** to copy it. Select an image thumbnail to open the image at a larger size.

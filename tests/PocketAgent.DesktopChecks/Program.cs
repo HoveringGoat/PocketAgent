@@ -28,6 +28,11 @@ internal static class Program
                 ReasoningPickerChecks.Run();
                 return 0;
             }
+            if (Environment.GetCommandLineArgs().Contains("--session-restore", StringComparer.OrdinalIgnoreCase))
+            {
+                SessionRestoreChecks.Run();
+                return 0;
+            }
             if (Environment.GetCommandLineArgs().Contains("--update-status", StringComparer.OrdinalIgnoreCase))
             {
                 UpdateStatusChecks.Run();
