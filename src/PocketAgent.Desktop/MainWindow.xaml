@@ -143,11 +143,13 @@
           <CheckBox x:Name="UpdateCodexExtensionOnStartupSetting" Content="Update the VS Code Codex extension when PocketAgent starts"/>
            <CheckBox x:Name="HeartbeatSetting" Content="Send a hidden progress update every five minutes while a conversation is working"/>
           <TextBlock x:Name="UpdateStatus" Foreground="#A7BAA7" Margin="0,4,0,4" TextWrapping="Wrap"/>
-          <WrapPanel><Button Content="Check for updates now" Click="CheckForUpdates"/><Button Content="View release notes" x:Name="UpdateNotesButton" Visibility="Collapsed" Click="ViewReleaseNotes"/><Button Content="Download and install update" Click="InstallUpdate"/></WrapPanel>
+          <ProgressBar x:Name="DesktopUpdateProgress" Height="5" Width="150" HorizontalAlignment="Left" Margin="0,0,0,4" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="Checking for PocketAgent updates"/>
+          <WrapPanel><Button x:Name="DesktopUpdateCheckButton" Content="Check for updates now" Click="CheckForUpdates"/><Button Content="View release notes" x:Name="UpdateNotesButton" Visibility="Collapsed" Click="ViewReleaseNotes"/><Button x:Name="DesktopUpdateInstallButton" Content="Download and install update" Click="InstallUpdate"/></WrapPanel>
           <TextBlock Text="Default working folder (new conversations can choose another)"/><DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseRepository"/><TextBox x:Name="RepositorySetting" MinWidth="430"/></DockPanel>
           <TextBlock Text="Codex executable override (leave blank to prefer VS Code)"/><TextBox x:Name="CodexSetting"/><TextBlock x:Name="CodexResolved" Foreground="#A7BAA7" Margin="0,0,0,14" TextWrapping="Wrap"/>
           <TextBlock x:Name="CodexUpdateStatus" Foreground="#A7BAA7" Margin="0,0,0,4" TextWrapping="Wrap"/>
-          <Button Content="Check for Codex extension updates now" Click="CheckCodexExtensionUpdate" HorizontalAlignment="Left" Margin="0,0,0,14"/>
+          <ProgressBar x:Name="CodexUpdateProgress" Height="5" Width="150" HorizontalAlignment="Left" Margin="0,0,0,4" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="Codex extension update in progress"/>
+          <Button x:Name="CodexUpdateCheckButton" Content="Check for Codex extension updates now" Click="CheckCodexExtensionUpdate" HorizontalAlignment="Left" Margin="0,0,0,14"/>
           <TextBlock Text="Codex Platform API key" FontSize="20" Margin="0,10,0,4"/>
           <TextBlock Text="Optional. PocketAgent stores this key in Windows Credential Manager and passes it to the selected Codex executable only when it starts. The key is never saved in desktop.json or shown in diagnostics." Foreground="#A7BAA7" TextWrapping="Wrap" Margin="0,0,0,6"/>
           <PasswordBox x:Name="CodexApiKeySetting" AutomationProperties.Name="OpenAI Platform API key" Margin="0,3,0,6"/>

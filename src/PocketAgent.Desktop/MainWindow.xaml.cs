@@ -214,27 +214,43 @@ public partial class MainWindow : Window
     private async void SaveSettings(object sender, RoutedEventArgs e) => await Act(() => { SaveConfiguration(); ErrorDisplay.Text = "Settings saved."; return Task.CompletedTask; });
     private async void CheckCodexExtensionUpdate(object sender, RoutedEventArgs e) => await CheckCodexExtensionUpdateCore();
 
-    private async Task CheckCodexExtensionUpdateCore()
+    private async Task CheckCodexExtensionUpdateCore(Func<IProgress<Version>, Task<CodexExtensionUpdateResult>>? check = null)
     {
-        if (relay is not null)
+        if (closing || !CodexUpdateCheckButton.IsEnabled) return;
+        CodexUpdateCheckButton.IsEnabled = false;
+        CodexUpdateStatus.Text = "Checking for Codex extension updates…";
+        CodexUpdateProgress.Visibility = Visibility.Visible;
+        var running = true;
+        try
         {
-            var sessions = await Conversations.List();
-            if (sessions.Any(session => session.Status is "running" or "awaiting-input" or "starting" or "uncertain"))
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (closing) return;
+            if (!await CanInstallUpdate())
             {
                 CodexUpdateStatus.Text = "Codex extension update waiting for all conversations to become idle.";
                 return;
             }
-        }
-        try
-        {
-            var result = await CodexExtensionUpdateService.CheckAsync(settings.Host, install: true);
+            var progress = new Progress<Version>(version =>
+            {
+                if (running) CodexUpdateStatus.Text = $"Installing Codex extension {version}…";
+            });
+            var host = settings.Host;
+            var result = await (check is null
+                ? Task.Run(() => CodexExtensionUpdateService.CheckAsync(host, install: true, installationProgress: progress))
+                : check(progress));
             CodexUpdateStatus.Text = result.Message;
             if (result.Updated) ResolveCodex();
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException or IOException or UnauthorizedAccessException or Win32Exception)
         {
             DesktopDiagnostics.LogException("codex-extension-update", exception);
             CodexUpdateStatus.Text = $"Codex extension update unavailable: {exception.Message}";
+        }
+        finally
+        {
+            running = false;
+            CodexUpdateProgress.Visibility = Visibility.Collapsed;
+            CodexUpdateCheckButton.IsEnabled = true;
         }
     }
     private void UiScaleChanged(object sender, SelectionChangedEventArgs e)
@@ -410,13 +426,21 @@ public partial class MainWindow : Window
         AppDialogs.Show(this, notes, $"PocketAgent {pendingUpdate.Version} release notes");
     }
 
-    private async Task CheckForUpdatesCore(bool startup, bool userRequested = false)
+    private async Task CheckForUpdatesCore(bool startup, bool userRequested = false, Func<Task<DesktopUpdate?>>? check = null)
     {
+        if (closing || installingUpdate || !DesktopUpdateCheckButton.IsEnabled) return;
         if (startup && !settings.CheckUpdatesOnStartup) return;
         if (!startup && !userRequested && !settings.CheckUpdatesPeriodically) return;
+        DesktopUpdateCheckButton.IsEnabled = false;
+        DesktopUpdateInstallButton.IsEnabled = false;
+        UpdateStatus.Text = "Checking for PocketAgent updates…";
+        DesktopUpdateProgress.Visibility = Visibility.Visible;
         try
         {
-            var update = await UpdateService.CheckAsync();
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (closing) return;
+            var update = await (check is null ? UpdateService.CheckAsync() : check());
+            DesktopUpdateProgress.Visibility = Visibility.Collapsed;
             pendingUpdate = update;
             UpdateNotesButton.Visibility = update is null ? Visibility.Collapsed : Visibility.Visible;
             UpdateStatus.Text = update is null ? $"You are running the latest available desktop version ({BuildInfo.Version})." : $"Desktop update {update.Version} is available.";
@@ -427,6 +451,12 @@ public partial class MainWindow : Window
         {
             UpdateNotesButton.Visibility = Visibility.Collapsed;
             UpdateStatus.Text = $"Update check unavailable: {exception.Message}";
+        }
+        finally
+        {
+            DesktopUpdateProgress.Visibility = Visibility.Collapsed;
+            DesktopUpdateCheckButton.IsEnabled = true;
+            DesktopUpdateInstallButton.IsEnabled = true;
         }
     }
 

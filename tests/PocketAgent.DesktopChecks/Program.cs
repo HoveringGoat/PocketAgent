@@ -23,6 +23,11 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
         try
         {
+            if (Environment.GetCommandLineArgs().Contains("--update-status", StringComparer.OrdinalIgnoreCase))
+            {
+                UpdateStatusChecks.Run();
+                return 0;
+            }
             if (Environment.GetCommandLineArgs().Contains("--codex-update", StringComparer.OrdinalIgnoreCase))
             {
                 CodexUpdateChecks.Run();

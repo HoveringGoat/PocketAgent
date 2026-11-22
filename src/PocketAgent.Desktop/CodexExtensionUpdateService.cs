@@ -21,7 +21,7 @@ public static partial class CodexExtensionUpdateService
 
     public static bool IsNewer(Version installed, Version latest) => latest > installed;
 
-    public static async Task<CodexExtensionUpdateResult> CheckAsync(HostSettings host, bool install, CancellationToken cancellationToken = default)
+    public static async Task<CodexExtensionUpdateResult> CheckAsync(HostSettings host, bool install, CancellationToken cancellationToken = default, IProgress<Version>? installationProgress = null)
     {
         if (!string.IsNullOrWhiteSpace(host.CodexExecutable))
             return new(false, null, null, "A Codex executable override is configured, so the VS Code Codex extension was not updated.");
@@ -40,6 +40,7 @@ public static partial class CodexExtensionUpdateService
         var cli = FindVsCodeCli();
         if (cli is null)
             return new(false, extension.Value.Version, latest, $"VS Code Codex extension update {latest} is available, but the VS Code command-line tool was not found.");
+        installationProgress?.Report(latest);
         await InstallVersion(cli, latest, cancellationToken);
         return new(true, extension.Value.Version, latest, $"VS Code Codex extension update {latest} was installed. Restart the PocketAgent server to use it.");
     }
