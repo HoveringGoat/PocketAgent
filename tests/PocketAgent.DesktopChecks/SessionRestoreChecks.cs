@@ -33,9 +33,13 @@ internal static class SessionRestoreChecks
         settings.Host.RepositoryPath = Directory.GetCurrentDirectory();
         settings.StartServerOnLaunch = false;
         settings.CheckUpdatesOnStartup = false;
+        var navigation = (System.Windows.Controls.TabControl)window.FindName("Navigation")!;
+        navigation.SelectedIndex = 2;
+        typeof(MainWindow).GetMethod("OpenSessionsOnStartup", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
+        if (navigation.SelectedIndex != 0)
+            throw new InvalidOperationException("Desktop startup must open the Sessions page when a repository is configured.");
         var ready = (Task)typeof(MainWindow).GetMethod("WindowReady", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
         ready.GetAwaiter().GetResult();
-        var navigation = (System.Windows.Controls.TabControl)window.FindName("Navigation")!;
         if (navigation.SelectedIndex != 0)
             throw new InvalidOperationException("Desktop startup must open the Sessions page when a repository is configured.");
 

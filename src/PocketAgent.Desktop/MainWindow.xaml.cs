@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         try { settings = DesktopSettings.Load(); }
         catch (Exception) { ErrorDisplay.Text = "Saved settings could not be read. Review and save the setup again."; }
         RestoreWindowPlacement();
+        OpenSessionsOnStartup();
         RepositorySetting.Text = settings.Host.RepositoryPath;
         var arguments = Environment.GetCommandLineArgs();
         var healthArgument = Array.IndexOf(arguments, "--health-file");
@@ -177,7 +178,6 @@ public partial class MainWindow : Window
     private async Task WindowReady()
     {
         if (Environment.GetCommandLineArgs().Contains("--background", StringComparer.OrdinalIgnoreCase)) WindowState = WindowState.Minimized;
-        if (settings.Host.RepositoryPath.Length > 0) Navigation.SelectedIndex = 0;
         DesktopDiagnostics.Log($"desktop ready start_server_on_launch={settings.StartServerOnLaunch} repository_configured={settings.Host.RepositoryPath.Length > 0} saved_conversation={settings.LastSelectedConversationId is not null}");
         WriteUpdateHealth();
         try { StartupRegistration.SetEnabled(settings.LaunchOnWindowsStartup); }
@@ -701,6 +701,11 @@ public partial class MainWindow : Window
     {
         DevicesHeading.Text = client ? "Pair your phone through the relay" : "Connect your phone";
         if (!client) CertificateStatus.Text = "";
+    }
+
+    private void OpenSessionsOnStartup()
+    {
+        if (settings.Host.RepositoryPath.Length > 0) Navigation.SelectedIndex = 0;
     }
 
     private void RestoreWindowPlacement()
