@@ -1,8 +1,10 @@
+using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using PocketAgent;
 using PocketAgent.Desktop;
@@ -38,10 +40,19 @@ internal static class ReasoningPickerChecks
                 model.IsDropDownOpen = true;
                 dialog.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
                 var modelPopup = Descendants(model).OfType<Popup>().Single();
+                var field = (Border)model.Template.FindName("Field", model);
+                var menu = (Border)modelPopup.Child;
+                if (field.CornerRadius.TopLeft <= 0 || menu.CornerRadius.TopLeft <= 0 ||
+                    ((SolidColorBrush)menu.Background).Color != Color.FromRgb(24, 39, 31) ||
+                    Math.Abs(menu.ActualWidth - model.ActualWidth) > 1)
+                    throw new InvalidOperationException("The themed menu did not match the picker width and palette.");
                 if (!Descendants(modelPopup.Child).OfType<TextBlock>().Any(item => item.Text == models[1].DisplayName))
                     throw new InvalidOperationException("The model dropdown did not render the long model name.");
+                Capture(menu, $"desktop-model-menu-{size.Width}.png");
                 model.IsDropDownOpen = false;
                 model.SelectedIndex = 0;
+                dialog.UpdateLayout();
+                Capture(dialog, $"desktop-model-picker-{size.Width}.png");
                 var choices = combo.Items.Cast<object>().ToArray();
                 for (var index = 0; index < choices.Length; index++)
                 {
@@ -65,6 +76,18 @@ internal static class ReasoningPickerChecks
         }
         finally { dialog.Close(); owner.Close(); }
         Console.WriteLine("PASS model and reasoning editor preselection, dependent choices and dropdown layout at both window sizes.");
+    }
+
+    private static void Capture(FrameworkElement element, string filename)
+    {
+        var directory = Path.Combine(Directory.GetCurrentDirectory(), ".local", "previews");
+        Directory.CreateDirectory(directory);
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth), (int)Math.Ceiling(element.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(element);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var output = File.Create(Path.Combine(directory, filename));
+        encoder.Save(output);
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

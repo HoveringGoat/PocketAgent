@@ -9,6 +9,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -18,6 +20,7 @@ import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
@@ -51,6 +54,8 @@ public final class MainActivity extends Activity {
       CARD = Color.rgb(31, 47, 37),
       TEXT = Color.rgb(235, 241, 234),
       ACCENT = Color.rgb(193, 218, 166);
+  private static final int PICKER_OUTLINE = Color.rgb(71, 96, 75);
+  private static final int PICKER_ACTIVE = Color.rgb(41, 67, 51);
   private static final String RELEASE_LIST_ENDPOINT = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases?per_page=30";
   private final Handler ui = new Handler(Looper.getMainLooper());
   private final ExecutorService network = Executors.newCachedThreadPool();
@@ -1629,42 +1634,18 @@ public final class MainActivity extends Activity {
     }
 
     LinearLayout panel = column();
-    panel.setPadding(dp(16), dp(8), dp(16), 0);
-    Spinner modelPicker = new Spinner(this, Spinner.MODE_DROPDOWN);
-    modelPicker.setContentDescription("Model");
-    ArrayAdapter<String> modelAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names) {
-      @Override
-      public View getView(int position, View convertView, android.view.ViewGroup parent) {
-        return wrapChoice(super.getView(position, convertView, parent));
-      }
-
-      @Override
-      public View getDropDownView(int position, View convertView, android.view.ViewGroup parent) {
-        return wrapChoice(super.getDropDownView(position, convertView, parent));
-      }
-
-      private View wrapChoice(View view) {
-        TextView text = (TextView) view;
-        text.setSingleLine(false);
-        text.setEllipsize(null);
-        android.view.ViewGroup.LayoutParams layout = text.getLayoutParams();
-        if (layout != null) layout.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
-        text.setMinHeight(dp(48));
-        int width = modelPicker.getWidth() - modelPicker.getPaddingLeft() - modelPicker.getPaddingRight();
-        if (width > 0) text.setMaxWidth(width);
-        return text;
-      }
-    };
-    modelPicker.setAdapter(modelAdapter);
-    modelPicker.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-      if (right - left != oldRight - oldLeft) modelPicker.post(modelAdapter::notifyDataSetChanged);
-    });
+    panel.setPadding(dp(20), dp(4), dp(20), dp(8));
+    Spinner modelPicker = modelPicker("Model");
+    modelPicker.setAdapter(new ModelPickerAdapter(modelPicker, names));
     modelPicker.setSelection(initial);
-    Spinner effortPicker = new Spinner(this, Spinner.MODE_DROPDOWN);
-    effortPicker.setContentDescription("Reasoning");
-    panel.addView(label("Model", 15));
+    Spinner effortPicker = modelPicker("Reasoning");
+    TextView modelLabel = label("Model", 14);
+    modelLabel.setPadding(0, 0, 0, dp(6));
+    panel.addView(modelLabel);
     panel.addView(modelPicker, match());
-    panel.addView(label("Reasoning", 15));
+    TextView effortLabel = label("Reasoning", 14);
+    effortLabel.setPadding(0, dp(14), 0, dp(6));
+    panel.addView(effortLabel);
     panel.addView(effortPicker, match());
 
     android.widget.ScrollView scroll = new android.widget.ScrollView(this);
@@ -1676,6 +1657,10 @@ public final class MainActivity extends Activity {
         .create();
     dialog.setCanceledOnTouchOutside(false);
     dialog.show();
+    if (dialog.getWindow() != null) {
+      dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(
+          pickerSurface(BG, PICKER_OUTLINE), dp(12), dp(8), dp(12), dp(8)));
+    }
     java.util.ArrayList<String> efforts = new java.util.ArrayList<>();
     Runnable refreshEfforts = () -> {
       JSONObject model = models.get(modelPicker.getSelectedItemPosition());
@@ -1696,7 +1681,7 @@ public final class MainActivity extends Activity {
       }
       java.util.ArrayList<String> labels = new java.util.ArrayList<>();
       for (String effort : efforts) labels.add(reasoningLabel(effort));
-      effortPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+      effortPicker.setAdapter(new ModelPickerAdapter(effortPicker, labels));
       effortPicker.setEnabled(model != null && (efforts.size() > 1 || !efforts.get(0).isEmpty()));
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(model != null);
     };
@@ -1727,6 +1712,95 @@ public final class MainActivity extends Activity {
           },
           false);
     });
+  }
+
+  private Spinner modelPicker(String name) {
+    Spinner picker = new Spinner(this, Spinner.MODE_DROPDOWN);
+    picker.setContentDescription(name);
+    StateListDrawable surface = new StateListDrawable();
+    surface.addState(new int[] { -android.R.attr.state_enabled }, pickerSurface(BG, PICKER_OUTLINE));
+    surface.addState(new int[] { android.R.attr.state_pressed }, pickerSurface(PICKER_ACTIVE, ACCENT));
+    surface.addState(new int[] { android.R.attr.state_focused }, pickerSurface(CARD, ACCENT));
+    surface.addState(new int[0], pickerSurface(CARD, PICKER_OUTLINE));
+    android.graphics.drawable.Drawable chevron = getDrawable(R.drawable.ic_chevron_down).mutate();
+    chevron.setTint(ACCENT);
+    LayerDrawable background = new LayerDrawable(new android.graphics.drawable.Drawable[] { surface, chevron });
+    background.setLayerSize(1, dp(16), dp(16));
+    background.setLayerGravity(1, Gravity.END | Gravity.CENTER_VERTICAL);
+    background.setLayerInsetRelative(1, 0, 0, dp(12), 0);
+    picker.setBackground(background);
+    picker.setPaddingRelative(dp(12), dp(3), dp(40), dp(3));
+    picker.setPopupBackgroundDrawable(pickerSurface(CARD, PICKER_OUTLINE));
+    picker.setDropDownHorizontalOffset(-dp(12));
+    picker.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+      int width = right - left;
+      if (width > 0 && width != oldRight - oldLeft) {
+        picker.setDropDownWidth(width);
+        if (picker.getAdapter() instanceof ModelPickerAdapter)
+          picker.post(((ModelPickerAdapter) picker.getAdapter())::notifyDataSetChanged);
+      }
+    });
+    return picker;
+  }
+
+  private GradientDrawable pickerSurface(int fill, int stroke) {
+    GradientDrawable drawable = new GradientDrawable();
+    drawable.setColor(fill);
+    drawable.setCornerRadius(dp(8));
+    if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), stroke);
+    return drawable;
+  }
+
+  private final class ModelPickerAdapter extends ArrayAdapter<String> {
+    private final Spinner picker;
+
+    ModelPickerAdapter(Spinner picker, java.util.List<String> labels) {
+      super(MainActivity.this, android.R.layout.simple_spinner_dropdown_item, labels);
+      this.picker = picker;
+    }
+
+    @Override
+    public View getView(int position, View recycled, ViewGroup parent) {
+      return pickerRow((TextView) super.getView(position, recycled, parent), false, position);
+    }
+
+    @Override
+    public View getDropDownView(int position, View recycled, ViewGroup parent) {
+      LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : column();
+      if (row.getChildCount() == 0) row.addView(new TextView(MainActivity.this), match());
+      TextView text = (TextView) row.getChildAt(0);
+      text.setText(getItem(position));
+      pickerRow(text, true, position);
+      int width = picker.getWidth();
+      if (width > 0) text.setWidth(width - dp(2));
+      return row;
+    }
+
+    private TextView pickerRow(TextView text, boolean inMenu, int position) {
+      boolean selected = inMenu && position == picker.getSelectedItemPosition();
+      text.setSingleLine(false);
+      text.setHorizontallyScrolling(false);
+      text.setEllipsize(null);
+      text.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+      text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * uiScale);
+      text.setTextColor(selected ? ACCENT : TEXT);
+      text.setPaddingRelative(inMenu ? dp(10) : 0, dp(8), inMenu ? dp(10) : 0, dp(8));
+      text.setMinHeight(dp(44));
+      ViewGroup.LayoutParams layout = text.getLayoutParams();
+      if (layout != null) layout.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+      int width = picker.getWidth();
+      if (!inMenu) width -= picker.getPaddingStart() + picker.getPaddingEnd();
+      if (width > 0) text.setMaxWidth(width);
+      if (inMenu) {
+        StateListDrawable row = new StateListDrawable();
+        row.addState(new int[] { android.R.attr.state_pressed }, pickerSurface(PICKER_ACTIVE, ACCENT));
+        row.addState(new int[0], pickerSurface(selected ? PICKER_ACTIVE : Color.TRANSPARENT, Color.TRANSPARENT));
+        text.setBackground(row);
+      } else {
+        text.setBackground(null);
+      }
+      return text;
+    }
   }
 
   private void archive(String id) {

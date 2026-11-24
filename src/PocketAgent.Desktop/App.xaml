@@ -38,6 +38,83 @@
       </ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style TargetType="ComboBoxItem"><Setter Property="Foreground" Value="#C1DAA6"/><Setter Property="Padding" Value="10"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem"><Border x:Name="ItemSurface" Background="#213128" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="#34523C"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="#294333"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+    <Style x:Key="ModelPickerStyle" TargetType="ComboBox">
+      <Setter Property="Foreground" Value="#EBF1EA"/>
+      <Setter Property="Background" Value="#213128"/>
+      <Setter Property="BorderBrush" Value="#47604B"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="MinHeight" Value="40"/>
+      <Setter Property="MaxDropDownHeight" Value="250"/>
+      <Setter Property="ItemContainerStyle">
+        <Setter.Value>
+          <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#EBF1EA"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="4" Padding="9,8">
+                    <ContentPresenter/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsSelected" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#294333"/>
+                      <Setter Property="Foreground" Value="#C1DAA6"/>
+                    </Trigger>
+                    <Trigger Property="IsHighlighted" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#34523C"/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </Setter.Value>
+      </Setter>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <Border x:Name="Field" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <ContentPresenter VerticalAlignment="Center" Margin="0,0,12,0"
+                                    Content="{TemplateBinding SelectionBoxItem}"
+                                    ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                    ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+                  <Path Grid.Column="1" Width="12" Height="7" VerticalAlignment="Center"
+                        Data="M 1,1 L 6,6 11,1" Stroke="#C1DAA6" StrokeThickness="1.5"
+                        StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                </Grid>
+              </Border>
+              <ToggleButton Focusable="False" ClickMode="Press"
+                            IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent"/></ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                     AllowsTransparency="True" Focusable="False" VerticalOffset="4">
+                <Border x:Name="MenuSurface" Width="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                        Background="#18271F" BorderBrush="#47604B" BorderThickness="1" CornerRadius="6" Padding="3">
+                  <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}" HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto">
+                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Field" Property="Background" Value="#294333"/></Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Field" Property="BorderBrush" Value="#A7BAA7"/></Trigger>
+              <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="Field" Property="BorderBrush" Value="#C1DAA6"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Field" Property="Opacity" Value="0.55"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style TargetType="ListBox"><Setter Property="Background" Value="#18271F"/><Setter Property="Foreground" Value="#C1DAA6"/><Setter Property="BorderBrush" Value="#47604B"/></Style>
     <Style TargetType="ListBoxItem" x:Key="ReadableListItem"><Setter Property="Foreground" Value="#C1DAA6"/><Setter Property="Padding" Value="10"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><Border x:Name="ItemSurface" Background="#18271F" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="#34523C"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
     <Style TargetType="ListBoxItem" BasedOn="{StaticResource ReadableListItem}"/>

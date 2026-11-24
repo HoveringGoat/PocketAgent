@@ -86,7 +86,23 @@ test(
         resolve(root, '.local/previews', modelPickerOnly ? capture : 'native-android-chat.png'),
         screenshot.stdout,
       );
-      if (modelPickerOnly) return;
+      if (modelPickerOnly) {
+        const menu = await run(
+          adb,
+          [
+            '-s',
+            serial,
+            'exec-out',
+            'run-as',
+            'dev.pocketagent',
+            'cat',
+            'cache/model-picker-open.png',
+          ],
+          { windowsHide: true, encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 },
+        );
+        await writeFile(resolve(root, '.local/previews/model-picker-open.png'), menu.stdout);
+        return;
+      }
       await command('shell', 'am', 'force-stop', 'dev.pocketagent');
       const restored = await command(
         'shell',

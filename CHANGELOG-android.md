@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.11 - 2026-11-24
+
+- Match the model and reasoning dialog and dropdowns to the app theme.
+
 ## 0.4.10 - 2026-11-23
 
 - Edit a conversation's model and reasoning in one dropdown dialog and show the effective choices in the conversation status. Saving both settings requires desktop/server 0.3.42 or later.

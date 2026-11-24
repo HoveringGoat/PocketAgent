@@ -391,19 +391,29 @@ public final class SmokeInstrumentation extends Instrumentation {
     checkStage = "change model and reasoning";
     main(() -> description("Model and reasoning").performClick());
     await(() -> described(getUiAutomation().getRootInActiveWindow(), "Reasoning") != null);
-    Bitmap screenshot = getUiAutomation().takeScreenshot();
-    if (screenshot != null) {
-      try (FileOutputStream output = new FileOutputStream(new File(activity.getCacheDir(), "model-picker.png"))) {
-        screenshot.compress(Bitmap.CompressFormat.PNG, 100, output);
-      }
-    }
+    captureModelPicker("model-picker.png");
     dialogClickControl("Model");
+    await(() -> {
+      var root = getUiAutomation().getRootInActiveWindow();
+      return root != null && !root.findAccessibilityNodeInfosByText("GPT-5.6 Sol").isEmpty();
+    });
+    getUiAutomation().waitForIdle(250, 3000);
+    captureModelPicker("model-picker-open.png");
     dialogClick("GPT-5.6 Sol");
     dialogClickControl("Reasoning");
     dialogClick("High");
     check(containsPart("gpt-6-astra"), "A dropdown selection changed the model before OK.");
     dialogClick("OK");
     await(() -> containsPart("gpt-5.6-sol High"));
+  }
+
+  private void captureModelPicker(String filename) throws Exception {
+    Bitmap screenshot = getUiAutomation().takeScreenshot();
+    if (screenshot != null) {
+      try (FileOutputStream output = new FileOutputStream(new File(activity.getCacheDir(), filename))) {
+        screenshot.compress(Bitmap.CompressFormat.PNG, 100, output);
+      }
+    }
   }
 
   private void dialogClickControl(String description) throws Exception {

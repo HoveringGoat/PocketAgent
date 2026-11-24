@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.44 - 2026-11-24
+
+- Match the model and reasoning dropdowns to the desktop theme, including focus and selected-row styling.
+
 ## 0.3.43 - 2026-11-24
 
 - Save new and reset Codex threads before their first message so they can reopen after a server restart.

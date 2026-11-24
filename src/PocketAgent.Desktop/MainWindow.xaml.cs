@@ -1071,8 +1071,9 @@ public partial class MainWindow : Window
 
     private static (Window Dialog, ComboBox Model, ComboBox Effort) CreateModelEditor(string? currentModel, string? currentEffort, ModelOption[] models)
     {
-        var choices = new ComboBox { ItemsSource = models, DisplayMemberPath = nameof(ModelOption.DisplayName), MinHeight = 38, MaxDropDownHeight = 250 };
-        var effort = new ComboBox { DisplayMemberPath = nameof(EffortChoice.Label), MinHeight = 38, MaxDropDownHeight = 250 };
+        var pickerStyle = (Style)Application.Current.FindResource("ModelPickerStyle");
+        var choices = new ComboBox { Style = pickerStyle, ItemsSource = models, DisplayMemberPath = nameof(ModelOption.DisplayName) };
+        var effort = new ComboBox { Style = pickerStyle, DisplayMemberPath = nameof(EffortChoice.Label) };
         var save = new Button { Content = "OK", Margin = new Thickness(0, 16, 0, 0), IsDefault = true };
         System.Windows.Automation.AutomationProperties.SetName(choices, "Model");
         System.Windows.Automation.AutomationProperties.SetName(effort, "Reasoning");
@@ -1096,9 +1097,9 @@ public partial class MainWindow : Window
         choices.SelectionChanged += (_, _) => RefreshEffortChoices();
         RefreshEffortChoices();
         var panel = new StackPanel { Margin = new Thickness(16) };
-        panel.Children.Add(new TextBlock { Text = choices.SelectedItem is null ? "Model (current: " + (currentModel ?? "Unavailable") + ")" : "Model", TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = choices.SelectedItem is null ? "Model (current: " + (currentModel ?? "Unavailable") + ")" : "Model", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 5) });
         panel.Children.Add(choices);
-        panel.Children.Add(new TextBlock { Text = "Reasoning", Margin = new Thickness(0, 12, 0, 0) });
+        panel.Children.Add(new TextBlock { Text = "Reasoning", Margin = new Thickness(0, 12, 0, 5) });
         panel.Children.Add(effort);
         panel.Children.Add(save);
         var dialog = new Window { Title = "Model and reasoning", Content = panel, Width = 460, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
