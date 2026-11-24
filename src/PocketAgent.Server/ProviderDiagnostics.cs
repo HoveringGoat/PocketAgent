@@ -153,7 +153,10 @@ public sealed class ProviderDiagnostics(CodexConnection codex, HostSettings sett
         do
         {
             var page = await codex.Request("model/list", new { cursor, limit = 100, includeHidden = false });
-            foreach (var model in page.GetProperty("data").EnumerateArray())
+            var data = page.Field("data");
+            if (data.ValueKind != JsonValueKind.Array)
+                throw new ApiException(502, "Codex did not return a model catalog.");
+            foreach (var model in data.EnumerateArray())
             {
                 var slug = model.Text("model");
                 if (slug.Length > 0)

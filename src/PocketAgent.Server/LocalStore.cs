@@ -323,11 +323,14 @@ public sealed class LocalStore
         return [.. ids];
     }
 
-    public void SetModel(string id, string model)
+    public void SetModelSelection(string id, string model, string? effort)
     {
-        using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE conversations SET model=$model WHERE id=$id AND archived=0";
-        command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$model", model);
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE conversations SET model=$model, reasoning_effort=$reasoning WHERE id=$id AND archived=0";
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$model", model);
+        command.Parameters.AddWithValue("$reasoning", (object?)effort ?? DBNull.Value);
         if (command.ExecuteNonQuery() != 1) throw new ApiException(404, "Conversation not found.");
     }
 

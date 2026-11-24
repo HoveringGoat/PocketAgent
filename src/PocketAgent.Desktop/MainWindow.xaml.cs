@@ -55,7 +55,6 @@ public partial class MainWindow : Window
     private CodexExecutable? nextCodexExecutable;
     private string? updateHealthFile;
     private string? expectedUpdateVersion;
-    private string? providerModel;
     private string? renderedConversation;
     private bool followingLatest = true;
     private Conversations Conversations => relay!.Services.GetRequiredService<Conversations>();
@@ -466,12 +465,6 @@ public partial class MainWindow : Window
         SetDevicesRelayClientMode(host.Relay.ConnectsUpstream);
         SetServerToggle(true, "Starting...", false); SaveButton.IsEnabled = false;
         PermissionModeSetting.IsEnabled = false;
-        try
-        {
-            var status = await relay.Services.GetRequiredService<ProviderDiagnostics>().Check();
-            providerModel = status.ConfiguredModel ?? status.DefaultModel;
-        }
-        catch { providerModel = null; }
         ResolveCodex();
         await Refresh();
     }
@@ -687,7 +680,6 @@ public partial class MainWindow : Window
             finally { await running.DisposeAsync(); }
         }
         selected = null; conversation = null; rendered = ""; renderedConversation = null; JumpToLatestButton.Visibility = Visibility.Collapsed; SessionList.ItemsSource = null;
-        providerModel = null;
         ConversationPanel.IsEnabled = false; ConversationActions.IsEnabled = false; InterruptButton.Visibility = Visibility.Hidden; ConversationLocation.Text = ""; ConversationMeta.Text = "No active conversation"; Transcript.Children.Clear(); Composer.Text = ""; ScheduledSummaryButton.Visibility = Visibility.Collapsed;
         PairingQr.Source = null; qrRendered = "";
         SetDevicesRelayClientMode(false);
@@ -872,9 +864,8 @@ public partial class MainWindow : Window
             ConversationActions.IsEnabled = true;
             ServerNameDisplay.Text = snapshot.HostName;
             ConversationLocation.Text = snapshot.WorkingDirectory;
-            var effectiveModel = snapshot.Model ?? providerModel;
-            var modelLabel = effectiveModel is null ? "Codex settings" : effectiveModel;
-            var reasoningLabel = snapshot.ReasoningEffort ?? "model default";
+            var modelLabel = snapshot.Model ?? "Unavailable";
+            var reasoningLabel = snapshot.ReasoningEffort is { } effort ? ReasoningLabel(effort) : "Unavailable";
             ModelButton.ToolTip = $"Model: {modelLabel}\nReasoning: {reasoningLabel}";
             ModelButton.IsEnabled = snapshot.ActiveTurnId is null && snapshot.Status is not ("starting" or "uncertain" or "disconnected") && !sending;
             ResetConversationButton.IsEnabled = ModelButton.IsEnabled;
@@ -928,8 +919,8 @@ public partial class MainWindow : Window
         var work = snapshot.ActiveTurnStartedAt is { } start ? $" - {Elapsed((long)(DateTimeOffset.UtcNow - start).TotalMilliseconds)}" :
             snapshot.LastWorkDurationMs is { } duration ? $" - worked {Elapsed(duration)}" : "";
         var status = string.IsNullOrWhiteSpace(snapshot.Status) ? "idle" : snapshot.Status;
-        var modelLabel = snapshot.Model ?? "Codex";
-        var reasoningLabel = snapshot.ReasoningEffort ?? "default";
+        var modelLabel = snapshot.Model ?? "Unavailable";
+        var reasoningLabel = snapshot.ReasoningEffort is { } effort ? ReasoningLabel(effort) : "Unavailable";
         return $"{status}{work} - {modelLabel} {reasoningLabel}";
     }
 
@@ -1062,62 +1053,58 @@ public partial class MainWindow : Window
     private sealed record ModelChoice(string? Model, string DisplayName);
     private async void ChangeModel(object sender, RoutedEventArgs e) => await Act(async () =>
     {
-        if (relay is null || conversation is null) return;
-        var id = conversation.Id;
+        if (relay is null || conversation is not { } current) return;
+        var service = Conversations;
         var models = await relay.Services.GetRequiredService<ProviderDiagnostics>().Models();
-        var search = new TextBox { ToolTip = "Search by model name or ID", Margin = new Thickness(16, 8, 16, 4) };
-        var choices = new ListBox
-        {
-            Margin = new Thickness(16, 4, 16, 8),
-            Height = 260,
-            BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#47604B")),
-            ItemTemplate = (DataTemplate)FindResource("ModelOptionTemplate")
-        };
-        var selectedModelId = conversation.Model;
-        choices.ItemsSource = models;
-        choices.SelectedItem = models.FirstOrDefault(model => model.Model == selectedModelId);
-        var effort = new ComboBox { Margin = new Thickness(16, 4, 16, 8), MinHeight = 38 };
-        void RefreshEffortChoices()
-        {
-            var selected = choices.SelectedItem as ModelOption;
-            var options = new[] { new EffortChoice(null, "Use model default") }.Concat((selected?.SupportedReasoningEfforts ?? []).Select(value => new EffortChoice(value, ReasoningLabel(value)))).ToArray();
-            effort.ItemsSource = options;
-            effort.DisplayMemberPath = "Label";
-            effort.SelectedIndex = Array.FindIndex(options, option => string.Equals(option.Value, conversation.ReasoningEffort, StringComparison.OrdinalIgnoreCase));
-            if (effort.SelectedIndex < 0) effort.SelectedIndex = 0;
-        }
-        choices.SelectionChanged += (_, _) =>
-        {
-            if (choices.SelectedItem is ModelOption selected) selectedModelId = selected.Model;
-            RefreshEffortChoices();
-        };
-        search.TextChanged += (_, _) =>
-        {
-            var query = search.Text.Trim();
-            choices.ItemsSource = string.IsNullOrWhiteSpace(query)
-                ? models
-                : models.Where(model => model.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) || model.Model.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
-            choices.SelectedItem = models.FirstOrDefault(model => model.Model == selectedModelId && (string.IsNullOrWhiteSpace(query) || model.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) || model.Model.Contains(query, StringComparison.OrdinalIgnoreCase)));
-        };
-        RefreshEffortChoices();
-        var save = new Button { Content = "Use selected model", Margin = new Thickness(16), IsDefault = true };
-        var panel = new StackPanel();
-        panel.Children.Add(new TextBlock { Text = "Choose the model for future messages and scheduled work.", Margin = new Thickness(16, 16, 16, 4) });
-        panel.Children.Add(new TextBlock { Text = "Search models", Margin = new Thickness(16, 8, 16, 0) });
-        panel.Children.Add(search);
-        panel.Children.Add(choices);
-        panel.Children.Add(new TextBlock { Text = "Reasoning", Margin = new Thickness(16, 4, 16, 0) });
-        panel.Children.Add(effort);
-        panel.Children.Add(save);
-        var dialog = new Window { Title = "Choose conversation model", Owner = this, Content = panel, Width = 560, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        save.Click += (_, _) => { if (choices.SelectedItem is not null) dialog.DialogResult = true; };
+        if (conversation?.Id != current.Id || relay is null || !ReferenceEquals(service, Conversations)) return;
+        if (models.Length == 0) throw new ApiException(502, "Codex did not report any selectable models.");
+
+        var (dialog, choices, effort) = CreateModelEditor(current.Model, current.ReasoningEffort, models);
+        dialog.Owner = this;
         if (dialog.ShowDialog() == true && choices.SelectedItem is ModelOption selected && effort.SelectedItem is EffortChoice selectedEffort)
         {
-            await Conversations.SetModel(id, selected.Model);
-            await Conversations.SetReasoning(id, selectedEffort.Value);
+            if (selected.Model == current.Model && selectedEffort.Value == current.ReasoningEffort) return;
+            await service.SetModelSelection(current.Id, selected.Model, selectedEffort.Value);
             await Refresh();
         }
     });
+
+    private static (Window Dialog, ComboBox Model, ComboBox Effort) CreateModelEditor(string? currentModel, string? currentEffort, ModelOption[] models)
+    {
+        var choices = new ComboBox { ItemsSource = models, DisplayMemberPath = nameof(ModelOption.DisplayName), MinHeight = 38, MaxDropDownHeight = 250 };
+        var effort = new ComboBox { DisplayMemberPath = nameof(EffortChoice.Label), MinHeight = 38, MaxDropDownHeight = 250 };
+        var save = new Button { Content = "OK", Margin = new Thickness(0, 16, 0, 0), IsDefault = true };
+        System.Windows.Automation.AutomationProperties.SetName(choices, "Model");
+        System.Windows.Automation.AutomationProperties.SetName(effort, "Reasoning");
+
+        void RefreshEffortChoices()
+        {
+            var model = choices.SelectedItem as ModelOption;
+            var preferred = model is null || model.Model == currentModel ? currentEffort : null;
+            var fallback = model?.DefaultReasoningEffort;
+            var options = new[] { preferred, fallback }.Concat(model?.SupportedReasoningEfforts ?? [])
+                .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(value => new EffortChoice(value, ReasoningLabel(value!))).ToArray();
+            effort.ItemsSource = string.IsNullOrWhiteSpace(preferred) && string.IsNullOrWhiteSpace(fallback)
+                ? new[] { new EffortChoice(null, "Unavailable") }.Concat(options).ToArray() : options;
+            effort.SelectedIndex = 0;
+            effort.IsEnabled = model is not null && options.Length > 0;
+            save.IsEnabled = model is not null;
+        }
+
+        choices.SelectedItem = models.FirstOrDefault(model => model.Model == currentModel);
+        choices.SelectionChanged += (_, _) => RefreshEffortChoices();
+        RefreshEffortChoices();
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = choices.SelectedItem is null ? "Model (current: " + (currentModel ?? "Unavailable") + ")" : "Model", TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(choices);
+        panel.Children.Add(new TextBlock { Text = "Reasoning", Margin = new Thickness(0, 12, 0, 0) });
+        panel.Children.Add(effort);
+        panel.Children.Add(save);
+        var dialog = new Window { Title = "Model and reasoning", Content = panel, Width = 460, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        save.Click += (_, _) => dialog.DialogResult = true;
+        return (dialog, choices, effort);
+    }
     private static string ReasoningLabel(string value) => value.ToLowerInvariant() switch
     {
         "xhigh" => "Extra high",
@@ -1698,7 +1685,7 @@ public partial class MainWindow : Window
         if (relay is null) throw new InvalidOperationException("Start the server first.");
         var diagnostics = relay.Services.GetRequiredService<ProviderDiagnostics>();
         var status = await diagnostics.Check();
-        providerModel = status.ConfiguredModel ?? status.DefaultModel;
+
         var connection = relay.Services.GetRequiredService<CodexConnection>();
         var binary = connection.Executable;
         var fileVersion = binary is null ? null : TryFileVersion(binary.Path);

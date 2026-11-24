@@ -78,6 +78,18 @@ public final class SmokeInstrumentation extends Instrumentation {
                 new Intent(getTargetContext(), MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         await(this::connected);
+        if ("model-picker".equals(arguments.getString("phase"))) {
+          checkStage = "create model-picker fixture";
+          main(() -> description("New conversation").performClick());
+          dialogClick("Use Codex settings");
+          dialogClick("GPT-6 Astra");
+          dialogClick("Create conversation");
+          await(() -> containsPart("gpt-6-astra High"));
+          checkModelPicker();
+          result.putString("checks", "model and reasoning dropdowns applied together");
+          finish(Activity.RESULT_OK, result);
+          return;
+        }
         main(() -> description("New conversation").performClick());
         dialogClick("Create conversation");
         await(() -> main(() -> description("Conversation PocketAgent") != null));
@@ -226,18 +238,7 @@ public final class SmokeInstrumentation extends Instrumentation {
                     text(unicodePrompt).getBackground() != null
                         && text(unicodeReply).getBackground() == null),
             "Only user messages should have chat bubbles.");
-        main(() -> description("Connection options").performClick());
-        checkStage = "change model";
-        dialogClick("Choose model");
-        dialogClick("GPT-5.6 Sol");
-        await(() -> containsPart("gpt-5.6-sol"));
-        checkStage = "reasoning after model change";
-        dialogClick("high");
-        await(() -> contains("Reasoning effort selected for future messages."));
-        main(() -> description("Connection options").performClick());
-        dialogClick("Choose reasoning");
-        dialogClick("Use model default");
-        await(() -> contains("Reasoning effort selected for future messages."));
+        checkModelPicker();
         checkStage = "archive";
         main(() -> description("Connection options").performClick());
         dialogClick("Archive conversation");
@@ -384,6 +385,34 @@ public final class SmokeInstrumentation extends Instrumentation {
       if (found != null) return found;
     }
     return null;
+  }
+
+  private void checkModelPicker() throws Exception {
+    checkStage = "change model and reasoning";
+    main(() -> description("Model and reasoning").performClick());
+    await(() -> described(getUiAutomation().getRootInActiveWindow(), "Reasoning") != null);
+    Bitmap screenshot = getUiAutomation().takeScreenshot();
+    if (screenshot != null) {
+      try (FileOutputStream output = new FileOutputStream(new File(activity.getCacheDir(), "model-picker.png"))) {
+        screenshot.compress(Bitmap.CompressFormat.PNG, 100, output);
+      }
+    }
+    dialogClickControl("Model");
+    dialogClick("GPT-5.6 Sol");
+    dialogClickControl("Reasoning");
+    dialogClick("High");
+    check(containsPart("gpt-6-astra"), "A dropdown selection changed the model before OK.");
+    dialogClick("OK");
+    await(() -> containsPart("gpt-5.6-sol High"));
+  }
+
+  private void dialogClickControl(String description) throws Exception {
+    await(() -> {
+      android.view.accessibility.AccessibilityNodeInfo control =
+          described(getUiAutomation().getRootInActiveWindow(), description);
+      return control != null && control.performAction(
+          android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+    });
   }
 
   private void dialogSetText(String description, String value) throws Exception {

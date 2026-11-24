@@ -219,6 +219,7 @@ public static class RelayHost
         api.MapPost("/conversations/{id}/reset", async (string id, HttpContext context, Conversations conversations) => Results.Ok(await conversations.Reset(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier))));
         api.MapPost("/conversations/{id}/rename", (string id, CreateInput input, HttpContext context, Conversations conversations) => conversations.Rename(id, input.Title ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/model", (string id, ModelInput input, HttpContext context, Conversations conversations) => conversations.SetModel(id, input.Model ?? "", context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
+        api.MapPost("/conversations/{id}/model-selection", (string id, ModelSelectionInput input, HttpContext context, Conversations conversations) => conversations.SetModelSelection(id, input.Model ?? "", input.Effort, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/reasoning", (string id, ReasoningInput input, HttpContext context, Conversations conversations) => conversations.SetReasoning(id, input.Effort, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/pin", (string id, PinInput input, HttpContext context, Conversations conversations) => conversations.SetPinned(id, input.Pinned, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/archive", (string id, HttpContext context, Conversations conversations) => conversations.Archive(id, true, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
@@ -262,6 +263,7 @@ public sealed record RelayClientIdentity(Guid Id, string Token);
 public sealed record PairInput(string? Code, string? DeviceName);
 public sealed record CreateInput(string? Title, string? WorkingDirectory = null, string? Model = null, string? ReasoningEffort = null);
 public sealed record ModelInput(string? Model);
+public sealed record ModelSelectionInput(string? Model, string? Effort);
 public sealed record ReasoningInput(string? Effort);
 public sealed record PinInput(bool Pinned);
 public sealed record MessageInput(string? Text, string? ExpectedTurnId = null, string? ClientMessageId = null);

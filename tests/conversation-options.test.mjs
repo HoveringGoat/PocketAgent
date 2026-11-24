@@ -114,14 +114,32 @@ test('conversation folders and models remain independent across turns and restar
     assert.equal(first.title, basename(folder));
     assert.equal(first.workingDirectory, folder);
     assert.equal(second.workingDirectory, root);
-    assert.equal(second.model, null);
+    assert.equal(second.model, 'gpt-6.1-sol');
+    assert.equal(first.reasoningEffort, 'high');
     const path = `/conversations/${first.id}`;
+    assert.equal(
+      (
+        await relay.request(`${path}/model-selection`, {
+          model: models[1].model,
+          effort: 'invalid',
+        })
+      ).status,
+      400,
+    );
+    const unchanged = await (await relay.request(path)).json();
+    assert.equal(unchanged.model, models[0].model);
+    assert.equal(unchanged.reasoningEffort, 'high');
     await relay.request(`${path}/messages`, { text: 'hold' });
     const running = await until(async () => {
       const state = await (await relay.request(path)).json();
       return state.activeTurnId && state;
     });
     assert.equal((await relay.request(`${path}/model`, { model: models[1].model })).status, 409);
+    assert.equal(
+      (await relay.request(`${path}/model-selection`, { model: models[1].model, effort: 'low' }))
+        .status,
+      409,
+    );
     assert.equal((await relay.request(`${path}/archive`, {})).status, 409);
     const text = 'Keep the conversation\u2019s folder \u2014 caf\u00e9 \u6f22\u5b57 \ud83d\ude00';
     await relay.request(`${path}/messages`, { text, expectedTurnId: running.activeTurnId });
@@ -130,7 +148,14 @@ test('conversation folders and models remain independent across turns and restar
     );
     await relay.request(`${path}/interrupt`, {});
     await until(async () => (await (await relay.request(path)).json()).status === 'interrupted');
-    assert.equal((await relay.request(`${path}/model`, { model: models[1].model })).status, 200);
+    const updated = await relay.request(`${path}/model-selection`, {
+      model: models[1].model,
+      effort: 'low',
+    });
+    assert.equal(updated.status, 200);
+    const updatedSnapshot = await updated.json();
+    assert.equal(updatedSnapshot.model, models[1].model);
+    assert.equal(updatedSnapshot.reasoningEffort, 'low');
     const directory = relay.directory;
     await relay.stop();
     relay = await startRelay({
@@ -139,6 +164,7 @@ test('conversation folders and models remain independent across turns and restar
     });
     relay.authenticateBearer(paired.token);
     assert.equal((await (await relay.request('/conversations')).json()).length, 2);
+    assert.equal((await (await relay.request(path)).json()).reasoningEffort, 'low');
     assert.equal((await relay.request(`${path}/messages`, { text: 'hold' })).status, 202);
     const provider = JSON.parse(await readFile(resolve(directory, 'fixture-history.json'), 'utf8'));
     assert.equal(provider[first.id].cwd, folder);
@@ -228,13 +254,15 @@ test('legacy database migration retains conversation folders and saved history',
     const paired = await relay.pairNative();
     const accessDatabase = new DatabaseSync(resolve(directory, 'pocketagent.db'));
     accessDatabase
-      .prepare('INSERT INTO conversation_access(conversation_id,device_id,granted_at) VALUES (?,?,?)')
+      .prepare(
+        'INSERT INTO conversation_access(conversation_id,device_id,granted_at) VALUES (?,?,?)',
+      )
       .run(id, paired.deviceId, Math.floor(Date.now() / 1000));
     accessDatabase.close();
     const existing = await (await relay.request(`/conversations/${id}`)).json();
     assert.equal(existing.title, 'Existing conversation');
     assert.equal(existing.workingDirectory, root);
-    assert.equal(existing.model, null);
+    assert.equal(existing.model, 'gpt-6.1-sol');
     assert.equal(existing.archived, false);
     assert.equal(
       (await relay.request(`/conversations/${id}/messages`, { text: 'hold' })).status,

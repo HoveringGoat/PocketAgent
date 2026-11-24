@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.42 - 2026-11-23
+
+- Edit a conversation's model and reasoning in one dropdown dialog and show the effective choices in the conversation status.
+
 ## 0.3.41 - 2026-11-22
 
 - Add a confirmed **Reset conversation** action that starts a clean Codex thread with the current conversation settings and archives the previous transcript.

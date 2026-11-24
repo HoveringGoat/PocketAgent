@@ -96,8 +96,7 @@ internal static class Program
             }
             if (window.FindName("StartButton") is not null || window.FindName("StopButton") is not null || window.FindName("Menu") is not null)
                 throw new InvalidOperationException("Desktop navigation must use top-level destinations and one server switch.");
-            if (window.FindResource("ModelOptionTemplate") is not DataTemplate)
-                throw new InvalidOperationException("The model picker must render human-readable names with a technical ID template.");
+
             var reasoningLabel = typeof(MainWindow).GetMethod("ReasoningLabel", BindingFlags.NonPublic | BindingFlags.Static)!;
             if (!Equals(reasoningLabel.Invoke(null, ["xhigh"]), "Extra high"))
                 throw new InvalidOperationException("Reasoning choices must use readable labels.");
@@ -238,8 +237,8 @@ internal static class Program
             var idleMetaHeight = metaSurface.ActualHeight;
             var formatConversationMeta = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var conversationMeta = (string)formatConversationMeta.Invoke(window, [snapshot])!;
-            if (conversationMeta != "completed - fixture-model default" ||
-                !Equals(formatConversationMeta.Invoke(window, [snapshot with { Model = null }]), "completed - Codex default"))
+            if (conversationMeta != "completed - fixture-model Unavailable" ||
+                !Equals(formatConversationMeta.Invoke(window, [snapshot with { Model = "gpt-6-astra", ReasoningEffort = "high" }]), "completed - gpt-6-astra High"))
                 throw new InvalidOperationException("The conversation context must show status, model and reasoning like Android.");
             var sendButton = (Button)window.FindName("SendButton")!;
             if (!Equals(sendButton.Content, "Send"))

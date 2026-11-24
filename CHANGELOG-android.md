@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.10 - 2026-11-23
+
+- Edit a conversation's model and reasoning in one dropdown dialog and show the effective choices in the conversation status. Saving both settings requires desktop/server 0.3.42 or later.
+
 ## 0.4.9 - 2026-11-22
 
 - Preserve Android upgrade compatibility by keeping the release signing identity in a durable user-level location outside the repository and refusing to silently generate a replacement key.

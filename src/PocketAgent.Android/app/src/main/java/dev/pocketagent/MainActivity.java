@@ -956,10 +956,7 @@ public final class MainActivity extends Activity {
     } else if (!state.isNull("lastWorkDurationMs"))
       status += " - worked " + elapsed(state.optLong("lastWorkDurationMs"));
     String workingDirectory = state.optString("workingDirectory", "");
-    String model = state.isNull("model") ? "Codex" : state.optString("model");
-    String reasoning =
-        state.isNull("reasoningEffort") ? "default" : state.optString("reasoningEffort");
-    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
+    renderModelStatus(state, status);
     sessionLocation.setMaxLines(1);
     sessionLocation.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
     sessionLocation.setText(workingDirectory);
@@ -1107,12 +1104,23 @@ public final class MainActivity extends Activity {
       } catch (Exception ignored) {
       }
     } else if (!conversation.isNull("lastWorkDurationMs")) status += " - worked " + elapsed(conversation.optLong("lastWorkDurationMs"));
-    String model = conversation.isNull("model") ? "Codex" : conversation.optString("model");
-    String reasoning =
-        conversation.isNull("reasoningEffort")
-            ? "default"
-            : conversation.optString("reasoningEffort");
-    context.setText(getString(R.string.session_context_v2, status, model, reasoning));
+    renderModelStatus(conversation, status);
+  }
+
+  private void renderModelStatus(JSONObject state, String status) {
+    context.setText(getString(R.string.session_context_v2, status,
+        reasoningValue(state, "model", "Unavailable"),
+        reasoningLabel(reasoningValue(state, "reasoningEffort", ""))));
+  }
+
+  private static String reasoningValue(JSONObject data, String field, String fallback) {
+    return data.isNull(field) ? fallback : data.optString(field, fallback);
+  }
+
+  private static String reasoningLabel(String value) {
+    if ("xhigh".equals(value)) return "Extra high";
+    return value.isEmpty() ? "Unavailable"
+        : value.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + value.substring(1);
   }
 
   private JSONObject mergeOlderHistory(JSONObject state) {
@@ -1586,92 +1594,139 @@ public final class MainActivity extends Activity {
     }
     action(
         () -> client.request("/models", null),
-        result ->
-            modelChoices(
-                result instanceof JSONArray ? (JSONArray) result : null,
-                (slug, name) ->
-                    action(
-                        () ->
-                            client.request(
-                                "/conversations/" + ApiClient.segment(id) + "/model",
-                                new JSONObject().put("model", slug)),
-                        state -> {
-                          if (selected.equals(id) && state instanceof JSONObject)
-                            renderConversation((JSONObject) state);
-                          else if (!(state instanceof JSONObject))
-                            refresh();
-                          notice(
-                              "Model selected for future messages, including scheduled messages.");
-                          if (api == client && selected.equals(id)) showReasoning();
-                        },
-                        false)),
+        result -> {
+          if (api != client || !selected.equals(id) || conversation == null) return;
+          if (!(result instanceof JSONArray) || ((JSONArray) result).length() == 0) {
+            problem("The desktop returned no selectable models.");
+            return;
+          }
+          showModelEditor(client, id, (JSONArray) result, conversation);
+        },
         false);
   }
 
-  private void showReasoning() {
-    if (api == null || conversation == null || conversation.isNull("model")) {
-      problem("Choose a model before selecting reasoning effort.");
-      return;
+  private void showModelEditor(ApiClient client, String id, JSONArray catalog, JSONObject current) {
+    String currentModel = reasoningValue(current, "model", "");
+    String currentEffort = reasoningValue(current, "reasoningEffort", "");
+    java.util.ArrayList<JSONObject> models = new java.util.ArrayList<>();
+    java.util.ArrayList<String> names = new java.util.ArrayList<>();
+    int initial = -1;
+    for (int i = 0; i < catalog.length(); i++) {
+      JSONObject model = catalog.optJSONObject(i);
+      if (model == null || model.optString("model", "").trim().isEmpty()) {
+        problem("The desktop returned an invalid model response.");
+        return;
+      }
+      String slug = model.optString("model");
+      if (slug.equals(currentModel)) initial = i;
+      models.add(model);
+      names.add(model.optString("displayName", slug));
     }
-    ApiClient client = api;
-    String id = selected;
-    String model = conversation.optString("model");
-    String currentEffort = conversation.optString("reasoningEffort");
-    action(
-        () -> client.request("/models", null),
-        result -> {
-          if (api != client || !selected.equals(id) || conversation == null
-              || !model.equals(conversation.optString("model"))) return;
-          if (!(result instanceof JSONArray)) {
-            problem("The desktop returned an invalid model response. Refresh and try again.");
-            return;
-          }
-          JSONArray models = (JSONArray) result;
-          JSONObject selectedModel = null;
-          for (int i = 0; i < models.length(); i++) {
-            JSONObject candidate = models.optJSONObject(i);
-            if (candidate != null && model.equals(candidate.optString("model"))) {
-              selectedModel = candidate;
-              break;
-            }
-          }
-          JSONObject chosenModel = selectedModel;
-          JSONArray supported = chosenModel == null ? null : chosenModel.optJSONArray("supportedReasoningEfforts");
-          if (supported == null || supported.length() == 0) {
-            problem("This Codex version did not advertise reasoning levels for the selected model.");
-            return;
-          }
-          String[] labels = new String[supported.length() + 1];
-          labels[0] = "Use default";
-          int checked = 0;
-          for (int i = 0; i < supported.length(); i++) {
-            Object value = supported.opt(i);
-            if (!(value instanceof String) || ((String) value).trim().isEmpty()) {
-              problem("The server returned an invalid reasoning level. Refresh and try again.");
-              return;
-            }
-            labels[i + 1] = (String) value;
-            if (labels[i + 1].equalsIgnoreCase(currentEffort)) checked = i + 1;
-          }
-          new AlertDialog.Builder(this)
-              .setTitle("Reasoning effort")
-              .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                String effort = which == 0 ? null : labels[which];
-                action(
-                    () -> client.request("/conversations/" + ApiClient.segment(id) + "/reasoning", new JSONObject().put("effort", effort == null ? JSONObject.NULL : effort)),
-                    state -> {
-                      if (selected.equals(id) && state instanceof JSONObject)
-                        renderConversation((JSONObject) state);
-                      else if (!(state instanceof JSONObject)) refresh();
-                      notice("Reasoning effort selected for future messages.");
-                      dialog.dismiss();
-                    },
-                    false);
-              })
-              .setNegativeButton("Cancel", null)
-              .show();
-        },
-        false);
+    if (initial < 0) {
+      initial = names.size();
+      names.add(currentModel.isEmpty() ? "Unavailable" : currentModel);
+      models.add(null);
+    }
+
+    LinearLayout panel = column();
+    panel.setPadding(dp(16), dp(8), dp(16), 0);
+    Spinner modelPicker = new Spinner(this, Spinner.MODE_DROPDOWN);
+    modelPicker.setContentDescription("Model");
+    ArrayAdapter<String> modelAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names) {
+      @Override
+      public View getView(int position, View convertView, android.view.ViewGroup parent) {
+        return wrapChoice(super.getView(position, convertView, parent));
+      }
+
+      @Override
+      public View getDropDownView(int position, View convertView, android.view.ViewGroup parent) {
+        return wrapChoice(super.getDropDownView(position, convertView, parent));
+      }
+
+      private View wrapChoice(View view) {
+        TextView text = (TextView) view;
+        text.setSingleLine(false);
+        text.setEllipsize(null);
+        android.view.ViewGroup.LayoutParams layout = text.getLayoutParams();
+        if (layout != null) layout.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+        text.setMinHeight(dp(48));
+        int width = modelPicker.getWidth() - modelPicker.getPaddingLeft() - modelPicker.getPaddingRight();
+        if (width > 0) text.setMaxWidth(width);
+        return text;
+      }
+    };
+    modelPicker.setAdapter(modelAdapter);
+    modelPicker.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+      if (right - left != oldRight - oldLeft) modelPicker.post(modelAdapter::notifyDataSetChanged);
+    });
+    modelPicker.setSelection(initial);
+    Spinner effortPicker = new Spinner(this, Spinner.MODE_DROPDOWN);
+    effortPicker.setContentDescription("Reasoning");
+    panel.addView(label("Model", 15));
+    panel.addView(modelPicker, match());
+    panel.addView(label("Reasoning", 15));
+    panel.addView(effortPicker, match());
+
+    android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+    scroll.addView(panel);
+    AlertDialog dialog = new AlertDialog.Builder(this)
+        .setTitle("Model and reasoning")
+        .setView(scroll)
+        .setPositiveButton("OK", null)
+        .create();
+    dialog.setCanceledOnTouchOutside(false);
+    dialog.show();
+    java.util.ArrayList<String> efforts = new java.util.ArrayList<>();
+    Runnable refreshEfforts = () -> {
+      JSONObject model = models.get(modelPicker.getSelectedItemPosition());
+      efforts.clear();
+      String preferred = model == null || currentModel.equals(model.optString("model"))
+          ? currentEffort : "";
+      String fallback = model == null ? "" : reasoningValue(model, "defaultReasoningEffort", "");
+      if (preferred.isEmpty() && fallback.isEmpty()) efforts.add("");
+      if (!preferred.isEmpty()) efforts.add(preferred);
+      if (model != null) {
+        if (!fallback.isEmpty() && !efforts.contains(fallback)) efforts.add(fallback);
+        JSONArray supported = model.optJSONArray("supportedReasoningEfforts");
+        for (int i = 0; supported != null && i < supported.length(); i++) {
+          Object value = supported.opt(i);
+          if (value instanceof String && !((String) value).isEmpty() && !efforts.contains(value))
+            efforts.add((String) value);
+        }
+      }
+      java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+      for (String effort : efforts) labels.add(reasoningLabel(effort));
+      effortPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+      effortPicker.setEnabled(model != null && (efforts.size() > 1 || !efforts.get(0).isEmpty()));
+      dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(model != null);
+    };
+    modelPicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+      public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long itemId) {
+        refreshEfforts.run();
+      }
+
+      public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+    });
+    refreshEfforts.run();
+    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+      JSONObject model = models.get(modelPicker.getSelectedItemPosition());
+      if (model == null || api != client || !selected.equals(id)) return;
+      String slug = model.optString("model");
+      int effortPosition = effortPicker.getSelectedItemPosition();
+      if (effortPosition < 0) return;
+      String effort = efforts.get(effortPosition);
+      dialog.dismiss();
+      if (slug.equals(currentModel) && effort.equals(currentEffort)) return;
+      action(
+          () -> client.request("/conversations/" + ApiClient.segment(id) + "/model-selection",
+              new JSONObject().put("model", slug).put("effort", effort.isEmpty() ? JSONObject.NULL : effort)),
+          state -> {
+            if (api != client || !selected.equals(id)) return;
+            if (state instanceof JSONObject) renderConversation((JSONObject) state);
+            else refresh();
+          },
+          false);
+    });
   }
 
   private void archive(String id) {

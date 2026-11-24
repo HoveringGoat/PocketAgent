@@ -28,6 +28,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         public string? ActiveTurnId { get; set; }
         public string? Error { get; set; }
         public bool Resumed { get; set; }
+        public string? EffectiveModel { get; set; }
+        public string? EffectiveEffort { get; set; }
         public string? SandboxMode { get; set; }
         public string? ApprovalPolicy { get; set; }
         public DateTimeOffset? ActiveTurnStartedAt { get; set; }
@@ -118,6 +120,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             store.SaveConversation(id, title.Trim(), directory, model, reasoningEffort, deviceId);
             var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model, false, reasoningEffort)) { Resumed = true };
             CapturePermissions(state, result);
+            await ResolveModelSelection(state, result);
             states[id] = state;
             return Snapshot(state);
         }
@@ -153,6 +156,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 var newState = new State(new(replacementId, oldState.Reference.Title, DateTimeOffset.UtcNow, oldState.Reference.WorkingDirectory,
                     oldState.Reference.Model, false, oldState.Reference.ReasoningEffort, oldState.Reference.Pinned)) { Resumed = true };
                 CapturePermissions(newState, result);
+                await ResolveModelSelection(newState, result);
                 states[replacementId] = newState;
                 return Snapshot(newState);
             }
@@ -354,12 +358,34 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         try
         {
             RequireUnarchived(state); RequireIdle(state);
-            await ValidateModel(model);
-            store.SetModel(id, model);
-            var supported = (await diagnostics.Models()).First(option => option.Model == model).SupportedReasoningEfforts;
-            var reasoning = state.Reference.ReasoningEffort is not null && supported.Contains(state.Reference.ReasoningEffort, StringComparer.OrdinalIgnoreCase) ? state.Reference.ReasoningEffort : null;
-            if (reasoning is null && state.Reference.ReasoningEffort is not null) store.SetReasoningEffort(id, null);
-            state.Reference = state.Reference with { Model = model, ReasoningEffort = reasoning };
+            var option = await ValidateModel(model);
+            var previous = state.Reference.ReasoningEffort;
+            var effort = previous is not null && option.SupportedReasoningEfforts.Contains(previous, StringComparer.OrdinalIgnoreCase) ? previous : null;
+            store.SetModelSelection(id, model, effort);
+            state.Reference = state.Reference with { Model = model, ReasoningEffort = effort };
+            await ResolveModelSelection(state, default);
+            return Snapshot(state);
+        }
+        finally { state.Gate.Release(); await publisher.Changed(id); }
+    }
+
+    public async Task<ConversationSnapshot> SetModelSelection(string id, string model, string? effort, string? deviceId = null)
+    {
+        RequireAccess(id, deviceId);
+        var state = await GetState(id);
+        await state.Gate.WaitAsync();
+        try
+        {
+            RequireUnarchived(state);
+            RequireIdle(state);
+            var option = await ValidateModel(model);
+            if (effort is not null && !string.Equals(effort, NonEmpty(option.DefaultReasoningEffort), StringComparison.OrdinalIgnoreCase) &&
+                !option.SupportedReasoningEfforts.Contains(effort, StringComparer.OrdinalIgnoreCase))
+                throw new ApiException(400, "Choose a reasoning effort supported by the selected model.");
+            store.SetModelSelection(id, model, effort);
+            state.Reference = state.Reference with { Model = model, ReasoningEffort = effort };
+            state.EffectiveModel = model;
+            state.EffectiveEffort = NonEmpty(option.DefaultReasoningEffort);
             return Snapshot(state);
         }
         finally { state.Gate.Release(); await publisher.Changed(id); }
@@ -376,6 +402,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             if (effort is not null) await ValidateReasoning(state.Reference.Model, effort);
             store.SetReasoningEffort(id, effort);
             state.Reference = state.Reference with { ReasoningEffort = effort };
+            await ResolveModelSelection(state, default);
             return Snapshot(state);
         }
         finally { state.Gate.Release(); await publisher.Changed(id); }
@@ -613,6 +640,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             var state = new State(reference);
             var result = await codex.Request("thread/read", new { threadId = id, includeTurns = false });
             await Hydrate(state, result.GetProperty("thread"));
+            await ResolveModelSelection(state, result);
             await gate.WaitAsync();
             try
             {
@@ -830,7 +858,9 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         var items = state.Items.Skip(first).Select(Bounded).ToArray();
         return new(state.Reference.Id, state.Reference.Title, state.Status, state.ActiveTurnId,
             items, state.Requests.Values.Select(entry => entry.Request).ToArray(), state.Error, Path.GetFileName(state.Reference.WorkingDirectory), state.Reference.WorkingDirectory, Environment.MachineName,
-            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs, state.Reference.Model, state.Reference.Archived, state.Reference.ReasoningEffort, historyTruncated, historyTruncated ? state.Items[first].Id : null, state.Reference.Pinned, state.Reference.LastMessageAt);
+            settings.PermissionMode, state.SandboxMode, state.ApprovalPolicy, state.ActiveTurnId is null ? null : state.ActiveTurnStartedAt, state.LastWorkDurationMs,
+            state.Reference.Model ?? state.EffectiveModel, state.Reference.Archived, state.Reference.ReasoningEffort ?? state.EffectiveEffort,
+            historyTruncated, historyTruncated ? state.Items[first].Id : null, state.Reference.Pinned, state.Reference.LastMessageAt);
     }
 
     private static DisplayItem Bounded(DisplayItem item) => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) };
@@ -838,6 +868,39 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     private static string Limit(string value, int length) => value.Length <= length ? value : value[..length] + "\n[output truncated]";
 
     private static DateTimeOffset? Timestamp(JsonElement value) => value.TryGetInt64Safe(out var seconds) && seconds > 0 && seconds < 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+
+    private async Task ResolveModelSelection(State state, JsonElement response)
+    {
+        var reference = state.Reference;
+        state.EffectiveModel = reference.Model ?? NonEmpty(response.Text("model")) ?? NonEmpty(response.Field("thread").Text("model")) ?? state.EffectiveModel;
+        state.EffectiveEffort = reference.ReasoningEffort ?? NonEmpty(response.Text("reasoningEffort"));
+        if (state.EffectiveModel is not null && state.EffectiveEffort is not null) return;
+
+        try
+        {
+            var config = (await codex.Request("config/read", new { includeLayers = false, cwd = reference.WorkingDirectory })).Field("config");
+            state.EffectiveModel ??= NonEmpty(config.Text("model"));
+            state.EffectiveEffort ??= NonEmpty(config.Text("model_reasoning_effort"));
+        }
+        catch (ApiException exception)
+        {
+            logger.LogDebug("Could not read Codex model settings for {ConversationId}: {Status}", reference.Id, exception.Status);
+        }
+
+        if (state.EffectiveModel is not null && state.EffectiveEffort is not null) return;
+        try
+        {
+            var models = await diagnostics.Models();
+            state.EffectiveModel ??= models.FirstOrDefault(option => option.IsDefault)?.Model;
+            state.EffectiveEffort ??= NonEmpty(models.FirstOrDefault(option => option.Model == state.EffectiveModel)?.DefaultReasoningEffort);
+        }
+        catch (ApiException exception)
+        {
+            logger.LogDebug("Could not resolve model settings for {ConversationId}: {Status}", reference.Id, exception.Status);
+        }
+    }
+
+    private static string? NonEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static void CapturePermissions(State state, JsonElement response)
     {

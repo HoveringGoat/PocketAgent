@@ -152,7 +152,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
               data: [
                 {
                   model: 'gpt-6-astra',
-                  displayName: 'GPT-6 Astra',
+                  displayName:
+                    process.env.POCKETAGENT_FIXTURE_LONG_MODEL_NAME === '1'
+                      ? 'GPT-6 Astra for long-running software development and reasoning tasks'
+                      : 'GPT-6 Astra',
                   isDefault: true,
                   defaultReasoningEffort: 'high',
                   supportedReasoningEfforts: [

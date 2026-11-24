@@ -66,7 +66,7 @@ internal static class ConversationUiChecks
         var meta = (TextBlock)window.FindName("ConversationMeta");
         var format = typeof(MainWindow).GetMethod("FormatConversationMeta", BindingFlags.NonPublic | BindingFlags.Instance)!;
         meta.Text = (string)format.Invoke(window, [snapshot])!;
-        if (!meta.Text.StartsWith("running - worked ", StringComparison.Ordinal) || !meta.Text.EndsWith($" - {snapshot.Model} high", StringComparison.Ordinal))
+        if (!meta.Text.StartsWith("running - worked ", StringComparison.Ordinal) || !meta.Text.EndsWith($" - {snapshot.Model} High", StringComparison.Ordinal))
             throw new InvalidOperationException($"Desktop status must match the Android status format. Found {meta.Text}.");
         var stop = (Button)window.FindName("InterruptButton");
         stop.Visibility = Visibility.Visible;

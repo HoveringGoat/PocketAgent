@@ -11,12 +11,15 @@ const adb =
   process.env.POCKETAGENT_TEST_ADB ??
   'C:/Users/Spence/AppData/Local/Android/Sdk/platform-tools/adb.exe';
 const serial = process.env.POCKETAGENT_TEST_ANDROID;
+const modelPickerOnly = process.env.POCKETAGENT_TEST_ANDROID_MODEL_PICKER === '1';
 
 test(
   'native Android pairing steering and restoration',
   { skip: !serial, timeout: 150000 },
   async () => {
-    const relay = await startRelay();
+    const relay = await startRelay({
+      extraEnv: modelPickerOnly ? { POCKETAGENT_FIXTURE_LONG_MODEL_NAME: '1' } : {},
+    });
     const second = await startRelay();
     const port = new URL(relay.origin).port;
     const command = async (...args) => {
@@ -50,6 +53,7 @@ test(
         'am',
         'instrument',
         '-w',
+        ...(modelPickerOnly ? ['-e', 'phase', 'model-picker'] : []),
         '-e',
         'origin',
         relay.origin,
@@ -71,13 +75,18 @@ test(
         first.stdout.includes('INSTRUMENTATION_CODE: -1'),
         first.stdout.replaceAll(relay.pairingCode, '[redacted]'),
       );
+      const capture = modelPickerOnly ? 'model-picker.png' : 'native-chat.png';
       const screenshot = await run(
         adb,
-        ['-s', serial, 'exec-out', 'run-as', 'dev.pocketagent', 'cat', 'cache/native-chat.png'],
+        ['-s', serial, 'exec-out', 'run-as', 'dev.pocketagent', 'cat', `cache/${capture}`],
         { windowsHide: true, encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 },
       );
       await mkdir(resolve(root, '.local/previews'), { recursive: true });
-      await writeFile(resolve(root, '.local/previews/native-android-chat.png'), screenshot.stdout);
+      await writeFile(
+        resolve(root, '.local/previews', modelPickerOnly ? capture : 'native-android-chat.png'),
+        screenshot.stdout,
+      );
+      if (modelPickerOnly) return;
       await command('shell', 'am', 'force-stop', 'dev.pocketagent');
       const restored = await command(
         'shell',
