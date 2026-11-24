@@ -62,6 +62,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        CommandManager.AddPreviewCanExecuteHandler(Composer, CanPasteComposerImage);
+        CommandManager.AddPreviewExecutedHandler(Composer, PasteComposerImage);
         Title = $"PocketAgent Server {BuildInfo.Version}";
         ServerNameDisplay.Text = Environment.MachineName;
         BuildDisplay.Text = $"Desktop {BuildInfo.Version}\n{Environment.ProcessPath}";
@@ -874,8 +876,7 @@ public partial class MainWindow : Window
             InterruptButton.IsEnabled = snapshot.ActiveTurnId is not null;
             InterruptButton.Visibility = snapshot.ActiveTurnId is null ? Visibility.Hidden : Visibility.Visible;
             SendButton.Content = "Send";
-            SendButton.IsEnabled = !sending && snapshot.Status is not ("starting" or "uncertain" or "disconnected");
-            ScheduleButton.IsEnabled = SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
+            RefreshComposerAttachment();
             UpdateScheduledSummary(snapshot.Id);
             var content = JsonSerializer.Serialize(new { snapshot.Items, snapshot.Requests, snapshot.Error });
             if (content != rendered) { RenderTranscript(snapshot); rendered = content; }
@@ -985,6 +986,7 @@ public partial class MainWindow : Window
         selected = entry.Id; conversation = null; rendered = ""; InterruptButton.Visibility = Visibility.Hidden; ConversationMeta.Text = "Loading conversation..."; historyCursors.Remove(selected); olderHistory.Remove(selected);
         RememberSelectedConversation(selected);
         settingDraft = true; Composer.Text = drafts.GetValueOrDefault(selected, ""); settingDraft = false;
+        RefreshComposerAttachment();
         await Refresh();
     }
 
@@ -1132,6 +1134,7 @@ public partial class MainWindow : Window
         conversation = replacement;
         rendered = "";
         settingDraft = true; Composer.Clear(); settingDraft = false;
+        RefreshComposerAttachment();
         await Refresh();
         Composer.Focus();
     });
@@ -1149,7 +1152,7 @@ public partial class MainWindow : Window
     private void DraftChanged(object sender, TextChangedEventArgs e)
     {
         if (!settingDraft && selected is not null) drafts[selected] = Composer.Text;
-        ScheduleButton.IsEnabled = conversation is not null && SendButton.IsEnabled && !string.IsNullOrWhiteSpace(Composer.Text);
+        RefreshComposerActions();
     }
     private async void SendMessage(object sender, RoutedEventArgs e) => await Submit();
     private async void ComposerKeyDown(object sender, KeyEventArgs e)
@@ -1158,20 +1161,22 @@ public partial class MainWindow : Window
     }
     private async Task Submit()
     {
-        if (sending || relay is null || conversation is null || string.IsNullOrWhiteSpace(Composer.Text)) return;
+        if (relay is null || conversation is null || !SendButton.IsEnabled) return;
         var id = conversation.Id; var expectedTurn = conversation.ActiveTurnId; var text = Composer.Text;
+        var image = composerImages.GetValueOrDefault(id);
         var clientMessageId = Guid.NewGuid().ToString("N");
-        var optimistic = new DisplayItem($"local-{clientMessageId}", "userMessage", text, "", "pending", DateTimeOffset.UtcNow, clientMessageId);
+        var optimistic = new DisplayItem($"local-{clientMessageId}", "userMessage", text, "", "pending", DateTimeOffset.UtcNow, clientMessageId,
+            image is null ? null : [new("draft-image", MessageImage.DataUrl(image.Png), "Pasted image", "image/png")]);
         if (!optimisticItems.TryGetValue(id, out var pending)) optimisticItems[id] = pending = [];
         pending.Add(optimistic);
         conversation = conversation with { Items = conversation.Items.Append(optimistic).ToArray() };
         rendered = "";
         RenderTranscript(conversation);
-        sending = true; SendButton.IsEnabled = false;
+        sending = true; RefreshComposerActions();
         var accepted = false;
         await Act(async () =>
         {
-            var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null, clientMessageId);
+            var receipt = await relay.Services.GetRequiredService<ScheduledMessages>().Send(id, text, expectedTurn, null, clientMessageId, image?.Png);
             accepted = receipt.DeliveryStatus is "accepted" or "queued";
             if (accepted && optimisticItems.TryGetValue(id, out var acknowledged))
             {
@@ -1184,10 +1189,12 @@ public partial class MainWindow : Window
             {
                 if (drafts.GetValueOrDefault(id) == text) drafts[id] = "";
                 if (selected == id && Composer.Text == text) Composer.Clear();
+                if (image is not null && ReferenceEquals(composerImages.GetValueOrDefault(id), image)) composerImages.Remove(id);
+                RefreshComposerAttachment();
             }
         });
         if (!accepted && optimisticItems.TryGetValue(id, out var failed)) failed.Remove(optimistic);
-        sending = false; await Refresh();
+        sending = false; RefreshComposerActions(); await Refresh();
     }
     private async void InterruptWork(object sender, RoutedEventArgs e) => await Act(async () =>
     {
@@ -1299,7 +1306,8 @@ public partial class MainWindow : Window
                 var content = TranscriptMarkdown.ReadOnlyText(item.Text);
                 content.Margin = new Thickness(12);
                 renderedRows[item.Id] = content;
-                Transcript.Children.Add(new Border { Child = content, Background = Brushes.Transparent, CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
+                if (item.Images is not { Length: > 0 } || !string.IsNullOrWhiteSpace(item.Text))
+                    Transcript.Children.Add(new Border { Child = content, Background = Brushes.Transparent, CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 760, Margin = new Thickness(0, 0, 0, 10) });
             }
             foreach (var image in item.Images ?? []) RenderImage(item, image, snapshot);
         }
@@ -1333,6 +1341,8 @@ public partial class MainWindow : Window
             }
             if (previous.Text != item.Text)
             {
+                if (item.Type == "userMessage" && item.Images is { Length: > 0 } &&
+                    string.IsNullOrWhiteSpace(previous.Text) != string.IsNullOrWhiteSpace(item.Text)) return false;
                 if (renderedRows[item.Id] is TextBox text) text.Text = item.Text;
                 else TranscriptMarkdown.Render((StackPanel)renderedRows[item.Id], item.Text);
             }

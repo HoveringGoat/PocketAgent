@@ -16,17 +16,23 @@ import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 /** The shared conversation surface used by the live client and debug preview. */
 public final class ConversationScreenView {
+  private final LinearLayout attachmentRow;
+  private final ImageView attachmentPreview;
+  private final Button removeAttachment;
+  private final ScrollView conversationHeader;
   public static final int BACKGROUND = Color.rgb(17, 27, 23);
   public static final int SURFACE = Color.rgb(31, 47, 37);
   public static final int SURFACE_ALT = Color.rgb(25, 39, 31);
@@ -104,6 +110,11 @@ public final class ConversationScreenView {
     root.setBackgroundColor(BACKGROUND);
     root.setPadding(0, 0, 0, 0);
 
+    LinearLayout chrome = column();
+    conversationHeader = new ScrollView(host);
+    conversationHeader.addView(chrome);
+    root.addView(conversationHeader, match());
+
     LinearLayout header = row();
     LinearLayout brandIdentity = column();
     brand = label("PocketAgent", 16);
@@ -123,7 +134,7 @@ public final class ConversationScreenView {
     header.addView(settings);
     LinearLayout.LayoutParams headerLayout = match();
     headerLayout.setMargins(dp(12), 0, dp(12), 0);
-    root.addView(header, headerLayout);
+    chrome.addView(header, headerLayout);
 
     tabRow = row();
     tabRow.setBackground(tabDivider());
@@ -165,7 +176,7 @@ public final class ConversationScreenView {
     LinearLayout.LayoutParams newConversationLayout = new LinearLayout.LayoutParams(-2, -2);
     newConversationLayout.setMargins(dp(3), 0, 0, 0);
     tabRow.addView(newConversation, newConversationLayout);
-    root.addView(tabRow, tabRowLayout);
+    chrome.addView(tabRow, tabRowLayout);
 
     usageView = label("5h: 80%  ·  Weekly: 20%", 11);
     usageView.setTextColor(SUBTLE);
@@ -200,7 +211,7 @@ public final class ConversationScreenView {
     metadata.addView(archivedAction);
     LinearLayout.LayoutParams metadataLayout = match();
     metadataLayout.setMargins(dp(12), 0, dp(12), 0);
-    root.addView(metadata, metadataLayout);
+    chrome.addView(metadata, metadataLayout);
 
     transcriptScroll = new ScrollView(host);
     transcriptScroll.setFillViewport(true);
@@ -244,13 +255,14 @@ public final class ConversationScreenView {
     // Leave visible, symmetric breathing room around the action stack so it is
     // centered in the composer area instead of visually touching the status row.
     composeRow.setPadding(dp(12), dp(6), dp(12), dp(6));
-    composer = input("Message Codex");
+    composer = composerInput("Message Codex");
     composer.setContentDescription("Message Codex");
     composer.setMinLines(3);
     composer.setMaxLines(6);
+    LinearLayout composerColumn = column();
     LinearLayout.LayoutParams composerLayout = new LinearLayout.LayoutParams(0, -2, 1);
     composerLayout.setMargins(0, 0, dp(6), 0);
-    composeRow.addView(composer, composerLayout);
+    composeRow.addView(composerColumn, composerLayout);
     LinearLayout sendColumn = column();
     send = primaryButton("Send", v -> {});
     send.setContentDescription("Send message");
@@ -282,9 +294,23 @@ public final class ConversationScreenView {
     controlDivider.setBackgroundColor(OUTLINE);
     controlPanel.addView(controlDivider, new LinearLayout.LayoutParams(-1, dp(1)));
     controlPanel.addView(contextSurface, match());
+    attachmentRow = row();
+    attachmentRow.setGravity(Gravity.CENTER_VERTICAL);
+    attachmentRow.setVisibility(View.GONE);
+    attachmentPreview = new ImageView(host);
+    attachmentPreview.setContentDescription("Pasted image preview");
+    attachmentPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    LinearLayout.LayoutParams previewSize = new LinearLayout.LayoutParams(dp(52), dp(36));
+    previewSize.setMargins(0, 0, dp(8), 0);
+    attachmentRow.addView(attachmentPreview, previewSize);
+    removeAttachment = chip("Remove image", null, "Remove image");
+    attachmentRow.addView(removeAttachment);
+    composerColumn.addView(attachmentRow, match());
+    composerColumn.addView(composer, match());
     controlPanel.addView(composeRow, match());
     root.addView(controlPanel, match());
-
+    root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+        fitComposer(bottom - top));
   }
 
   public void addTab(String title, boolean active, View.OnClickListener click) {
@@ -511,8 +537,44 @@ public final class ConversationScreenView {
     return view;
   }
 
-  private EditText input(String hint) {
-    EditText field = new EditText(host);
+  void showAttachment(android.graphics.Bitmap preview, View.OnClickListener remove) {
+    attachmentPreview.setImageBitmap(preview);
+    removeAttachment.setOnClickListener(remove);
+    attachmentRow.setVisibility(preview == null ? View.GONE : View.VISIBLE);
+    fitComposer(root.getHeight());
+  }
+
+  private void fitComposer(int height) {
+    boolean compact = height > 0 && height < dp(330);
+    int lines = compact ? 2 : 6;
+    if (composer.getMaxLines() != lines) {
+      composer.setMinLines(compact ? 1 : 3);
+      composer.setMaxLines(lines);
+      composer.setPadding(dp(12), dp(compact ? 4 : 10), dp(12), dp(compact ? 4 : 10));
+      controlPanel.setPadding(0, dp(6), 0, dp(compact ? 5 : 10));
+    }
+    // Keep the bottom controls reachable when the keyboard consumes most of the viewport.
+    int headerBudget = height - dp(attachmentRow.getVisibility() == View.VISIBLE ? 128 : 105);
+    int headerHeight = ViewGroup.LayoutParams.WRAP_CONTENT;
+    ViewGroup chrome = (ViewGroup) conversationHeader.getChildAt(0);
+    if (compact && chrome.getHeight() > headerBudget) {
+      // End the initial viewport between rows so partially visible action icons
+      // are never mistaken for broken controls. The rest of the header scrolls.
+      headerHeight = Math.max(dp(36), chrome.getChildAt(0).getBottom());
+      for (int index = 1; index < chrome.getChildCount(); index++) {
+        int rowBottom = chrome.getChildAt(index).getBottom();
+        if (rowBottom <= headerBudget) headerHeight = Math.max(headerHeight, rowBottom);
+      }
+    }
+    if (conversationHeader.getLayoutParams().height != headerHeight) {
+      ViewGroup.LayoutParams layout = conversationHeader.getLayoutParams();
+      layout.height = headerHeight;
+      conversationHeader.setLayoutParams(layout);
+    }
+  }
+
+  private ComposerEditText composerInput(String hint) {
+    ComposerEditText field = new ComposerEditText(host);
     field.setHint(hint);
     field.setTextColor(TEXT);
     field.setHintTextColor(Color.rgb(155, 173, 158));

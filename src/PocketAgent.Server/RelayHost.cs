@@ -227,9 +227,9 @@ public static class RelayHost
         api.MapGet("/conversations/{id}", (string id, HttpContext context, Conversations conversations) => conversations.Get(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier)));
         api.MapPost("/conversations/{id}/messages", async (string id, MessageInput input, ScheduledMessages messages, HttpContext context) =>
         {
-            var receipt = await messages.Send(id, input.Text ?? "", input.ExpectedTurnId, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId);
+            var receipt = await messages.Send(id, input.Text ?? "", input.ExpectedTurnId, context.User.FindFirstValue(ClaimTypes.NameIdentifier), input.ClientMessageId, input.ImagePng);
             return Results.Accepted(value: receipt);
-        });
+        }).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(3 * 1024 * 1024));
         api.MapPost("/conversations/{id}/interrupt", async (string id, HttpContext context, Conversations conversations) =>
         {
             await conversations.Interrupt(id, context.User.FindFirstValue(ClaimTypes.NameIdentifier));
@@ -266,5 +266,5 @@ public sealed record ModelInput(string? Model);
 public sealed record ModelSelectionInput(string? Model, string? Effort);
 public sealed record ReasoningInput(string? Effort);
 public sealed record PinInput(bool Pinned);
-public sealed record MessageInput(string? Text, string? ExpectedTurnId = null, string? ClientMessageId = null);
+public sealed record MessageInput(string? Text, string? ExpectedTurnId = null, string? ClientMessageId = null, byte[]? ImagePng = null);
 public sealed record ScheduleInput(string? Text, DateTimeOffset DueAt, string? ClientMessageId = null);

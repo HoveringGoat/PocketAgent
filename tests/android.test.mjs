@@ -12,6 +12,7 @@ const adb =
   'C:/Users/Spence/AppData/Local/Android/Sdk/platform-tools/adb.exe';
 const serial = process.env.POCKETAGENT_TEST_ANDROID;
 const modelPickerOnly = process.env.POCKETAGENT_TEST_ANDROID_MODEL_PICKER === '1';
+const imagePasteOnly = process.env.POCKETAGENT_TEST_ANDROID_IMAGE_PASTE === '1';
 
 test(
   'native Android pairing steering and restoration',
@@ -53,7 +54,11 @@ test(
         'am',
         'instrument',
         '-w',
-        ...(modelPickerOnly ? ['-e', 'phase', 'model-picker'] : []),
+        ...(imagePasteOnly
+          ? ['-e', 'phase', 'image-paste']
+          : modelPickerOnly
+            ? ['-e', 'phase', 'model-picker']
+            : []),
         '-e',
         'origin',
         relay.origin,
@@ -75,7 +80,11 @@ test(
         first.stdout.includes('INSTRUMENTATION_CODE: -1'),
         first.stdout.replaceAll(relay.pairingCode, '[redacted]'),
       );
-      const capture = modelPickerOnly ? 'model-picker.png' : 'native-chat.png';
+      const capture = imagePasteOnly
+        ? 'image-paste.png'
+        : modelPickerOnly
+          ? 'model-picker.png'
+          : 'native-chat.png';
       const screenshot = await run(
         adb,
         ['-s', serial, 'exec-out', 'run-as', 'dev.pocketagent', 'cat', `cache/${capture}`],
@@ -83,9 +92,14 @@ test(
       );
       await mkdir(resolve(root, '.local/previews'), { recursive: true });
       await writeFile(
-        resolve(root, '.local/previews', modelPickerOnly ? capture : 'native-android-chat.png'),
+        resolve(
+          root,
+          '.local/previews',
+          modelPickerOnly || imagePasteOnly ? capture : 'native-android-chat.png',
+        ),
         screenshot.stdout,
       );
+      if (imagePasteOnly) return;
       if (modelPickerOnly) {
         const menu = await run(
           adb,

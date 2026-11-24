@@ -58,8 +58,10 @@ internal static class Program
             await using var client = await RelayApplicationClient.ConnectAsync(
                 new Uri($"ws://127.0.0.1:{relayPort}/relay"), hostId, deviceId, deviceToken, key);
             var first = await client.RequestAsync(RelayApplicationRequest.Create("POST", "/echo", Encoding.UTF8.GetBytes("first")));
-            var second = await client.RequestAsync(RelayApplicationRequest.Create("POST", "/echo", Encoding.UTF8.GetBytes("second")));
-            if (first.Status != 200 || Encoding.UTF8.GetString(first.Body) != "first" || second.Status != 200 || Encoding.UTF8.GetString(second.Body) != "second")
+            var attachmentRequest = Encoding.UTF8.GetBytes(new string('A', 3 * 1024 * 1024));
+            var second = await client.RequestAsync(RelayApplicationRequest.Create("POST", "/echo", attachmentRequest));
+            if (first.Status != 200 || Encoding.UTF8.GetString(first.Body) != "first" ||
+                second.Status != 200 || !second.Body.AsSpan().SequenceEqual(attachmentRequest))
                 throw new InvalidOperationException("The two-server relay round trip returned an unexpected response.");
 
             hostStop.Cancel();

@@ -9,7 +9,7 @@ public sealed record ConversationAccess(string ConversationId, string DeviceId, 
 public sealed record ConversationReference(string Id, string Title, DateTimeOffset CreatedAt, string WorkingDirectory, string? Model = null, bool Archived = false, string? ReasoningEffort = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
 public sealed record ScheduledMessage(string Id, string ConversationId, string Text, DateTimeOffset DueAt, DateTimeOffset NextAttemptAt,
     string Status, string Reason, string? Error, [property: System.Text.Json.Serialization.JsonIgnore] string? DeviceId);
-public sealed record MessageDelivery(string ConversationId, string ClientMessageId, string Text, string Status, string? ScheduleId, string? Error);
+public sealed record MessageDelivery(string ConversationId, string ClientMessageId, string Text, string Status, string? ScheduleId, string? Error, string? AttachmentFingerprint);
 
 public sealed class LocalStore
 {
@@ -44,6 +44,12 @@ public sealed class LocalStore
                 command.CommandText = $"ALTER TABLE conversations ADD COLUMN {name} {definition}";
                 command.ExecuteNonQuery();
             }
+        command.CommandText = "SELECT count(*) FROM pragma_table_info('message_deliveries') WHERE name = 'attachment_fingerprint'";
+        if (Convert.ToInt64(command.ExecuteScalar()) == 0)
+        {
+            command.CommandText = "ALTER TABLE message_deliveries ADD COLUMN attachment_fingerprint TEXT";
+            command.ExecuteNonQuery();
+        }
     }
 
     private SqliteConnection Open()
@@ -56,17 +62,18 @@ public sealed class LocalStore
     public MessageDelivery? Delivery(string conversationId, string clientMessageId)
     {
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "SELECT conversation_id,client_message_id,text,status,schedule_id,error FROM message_deliveries WHERE conversation_id=$conversation AND client_message_id=$client";
+        command.CommandText = "SELECT conversation_id,client_message_id,text,status,schedule_id,error,attachment_fingerprint FROM message_deliveries WHERE conversation_id=$conversation AND client_message_id=$client";
         command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$client", clientMessageId);
         using var reader = command.ExecuteReader();
-        return reader.Read() ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)) : null;
+        return reader.Read() ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6)) : null;
     }
 
-    public bool BeginDelivery(string conversationId, string clientMessageId, string text)
+    public bool BeginDelivery(string conversationId, string clientMessageId, string text, string? attachmentFingerprint = null)
     {
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "INSERT OR IGNORE INTO message_deliveries(conversation_id,client_message_id,text,status,created_at) VALUES($conversation,$client,$text,'pending',$created)";
+        command.CommandText = "INSERT OR IGNORE INTO message_deliveries(conversation_id,client_message_id,text,status,created_at,attachment_fingerprint) VALUES($conversation,$client,$text,'pending',$created,$attachment)";
         command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$client", clientMessageId); command.Parameters.AddWithValue("$text", text); command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        command.Parameters.AddWithValue("$attachment", (object?)attachmentFingerprint ?? DBNull.Value);
         return command.ExecuteNonQuery() == 1;
     }
 

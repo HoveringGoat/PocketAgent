@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.12 - 2026-11-24
+
+- Paste images from the Android clipboard or a compatible keyboard and preview them before sending.
+
 ## 0.4.11 - 2026-11-24
 
 - Match the model and reasoning dialog and dropdowns to the app theme.

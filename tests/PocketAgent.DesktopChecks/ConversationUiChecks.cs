@@ -77,6 +77,7 @@ internal static class ConversationUiChecks
         window.Width = window.MinWidth;
         window.Height = window.MinHeight;
         window.Show();
+        CheckComposerAttachment(window, snapshot, variant);
         var render = typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!;
         render.Invoke(window, [snapshot]);
         WaitFor(() => scroll.ScrollableHeight > 0 && NearBottom(scroll), "initial live edge", () => $"{scroll.VerticalOffset}/{scroll.ScrollableHeight}");
@@ -210,6 +211,44 @@ internal static class ConversationUiChecks
     }
 
     private static bool NearBottom(ScrollViewer scroll) => scroll.ScrollableHeight - scroll.VerticalOffset < 1;
+
+    private static void CheckComposerAttachment(MainWindow window, ConversationSnapshot snapshot, string variant)
+    {
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        typeof(MainWindow).GetField("selected", fields)!.SetValue(window, snapshot.Id);
+        typeof(MainWindow).GetField("conversation", fields)!.SetValue(window, snapshot);
+        var bitmap = BitmapSource.Create(320, 180, 96, 96, PixelFormats.Gray8, null,
+            Enumerable.Repeat((byte)190, 320 * 180).ToArray(), 320);
+        typeof(MainWindow).GetMethod("AttachComposerImage", fields)!.Invoke(window, [snapshot.Id, bitmap]);
+        var composer = (TextBox)window.FindName("Composer");
+        var preview = (Image)window.FindName("ComposerPreview");
+        var attachment = (DockPanel)window.FindName("ComposerAttachment");
+        var remove = attachment.Children.OfType<Button>().Single();
+        var send = (Button)window.FindName("SendButton");
+        var schedule = (Button)window.FindName("ScheduleButton");
+        if (!send.IsEnabled || schedule.IsEnabled || preview.Source is null || composer.Text.Length != 0)
+            throw new InvalidOperationException("An image-only draft must enable Send and show a thumbnail.");
+
+        composer.Text = string.Join("\n", Enumerable.Repeat(new string('W', 250), 10));
+        foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
+        {
+            window.Width = width;
+            window.Height = height;
+            window.UpdateLayout();
+            foreach (var control in new FrameworkElement[] { preview, remove, composer, send, schedule })
+            {
+                var bounds = control.TransformToAncestor(window).TransformBounds(new Rect(control.RenderSize));
+                if (!control.IsVisible || !new Rect(window.RenderSize).Contains(bounds) || LayoutInformation.GetLayoutClip(control) is not null)
+                    throw new InvalidOperationException($"A composer control clips at {width} × {height}.");
+            }
+            Capture(window, Path.Combine(variant, $"pasted-image-{width}-{height}.png"));
+        }
+        var caption = composer.Text;
+        remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (attachment.Visibility != Visibility.Collapsed || composer.Text != caption || !schedule.IsEnabled)
+            throw new InvalidOperationException("Removing the image must preserve the text and restore scheduling.");
+        composer.Clear();
+    }
 
     private static string CreateImageFixture()
     {

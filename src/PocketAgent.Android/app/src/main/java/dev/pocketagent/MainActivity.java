@@ -87,6 +87,9 @@ public final class MainActivity extends Activity {
   private long usageReadAt;
   private String serverName = "PocketAgent";
   private EditText composer;
+  private record DraftKey(String origin, String conversationId) {}
+  private final Map<DraftKey, ComposerImage> draftImages = new HashMap<>();
+  private final java.util.Set<DraftKey> receivingImages = new java.util.HashSet<>();
   private Button send, schedule;
   private ImageButton stop;
   private ImageButton renameAction, pinAction, modelAction, archiveAction, resetAction, archivedAction;
@@ -694,6 +697,7 @@ public final class MainActivity extends Activity {
           updateSend();
         });
     loadDraft();
+    ((ComposerEditText) composer).receiveImages(this::receiveComposerImage);
     updateScheduleButton();
     updateSend();
     if (resumed) {
@@ -709,6 +713,63 @@ public final class MainActivity extends Activity {
     composer.setText(selected.isEmpty() ? "" : store.draft(api.origin, selected));
     composer.setSelection(composer.length());
     loadingDraft = false;
+    renderComposerImage();
+  }
+
+  private DraftKey draftKey() {
+    return api == null || selected.isEmpty() ? null : new DraftKey(api.origin, selected);
+  }
+
+  private void renderComposerImage() {
+    if (screen == null) return;
+    DraftKey key = draftKey();
+    ComposerImage image = draftImages.get(key);
+    screen.showAttachment(image == null ? null : image.preview(), view -> {
+      draftImages.remove(key);
+      renderComposerImage();
+      updateSend();
+      composer.requestFocus();
+    });
+  }
+
+  private void receiveComposerImage(Uri uri, Runnable release) {
+    DraftKey key = draftKey();
+    if (key == null || conversation == null || conversation.optBoolean("archived")) {
+      release.run();
+      return;
+    }
+    if (!conversation.optBoolean("supportsImageAttachments")) {
+      release.run();
+      notice("Update PocketAgent on the desktop to send images.");
+      return;
+    }
+    if (draftImages.containsKey(key) || !receivingImages.add(key)) {
+      release.run();
+      notice("Remove the current image before pasting another.");
+      return;
+    }
+    updateSend();
+    network.execute(() -> {
+      ComposerImage image = null;
+      try {
+        image = ComposerImage.read(getContentResolver(), uri);
+      } catch (java.io.IOException | RuntimeException exception) {
+        // The source app can revoke clipboard access, or the image may be invalid.
+      } finally {
+        release.run();
+      }
+      ComposerImage attachment = image;
+      ui.post(() -> {
+        receivingImages.remove(key);
+        if (isDestroyed()) return;
+        if (attachment != null) draftImages.put(key, attachment);
+        if (!settingsPage && key.equals(draftKey())) {
+          if (attachment == null) problem("The clipboard image could not be attached.");
+          renderComposerImage();
+          updateSend();
+        }
+      });
+    });
   }
 
   private void select(String id) {
@@ -1032,9 +1093,11 @@ public final class MainActivity extends Activity {
           text.setMaxWidth(getResources().getDisplayMetrics().widthPixels - dp(48));
         }
         margin.setMargins(0, dp(6), 0, dp(6));
-        transcript.addView(text, margin);
-        renderedRows.put(item.optString("id"), text);
         JSONArray images = item.optJSONArray("images");
+        if (!user || images == null || images.length() == 0 || !item.optString("text").trim().isEmpty()) {
+          transcript.addView(text, margin);
+          renderedRows.put(item.optString("id"), text);
+        }
         if (images != null) {
           for (int imageIndex = 0; imageIndex < images.length(); imageIndex++) {
             JSONObject image = images.optJSONObject(imageIndex);
@@ -1269,12 +1332,17 @@ public final class MainActivity extends Activity {
   private void updateSend() {
     if (send == null) return;
     String status = conversation == null ? "" : conversation.optString("status");
+    DraftKey key = draftKey();
+    boolean hasImage = draftImages.containsKey(key);
+    boolean readingImage = receivingImages.contains(key);
     send.setEnabled(
         connected
             && conversation != null
             && !conversation.optBoolean("archived")
             && !submitting
-            && !composer.getText().toString().trim().isEmpty()
+            && !readingImage
+            && (!hasImage || conversation.optBoolean("supportsImageAttachments"))
+            && (hasImage || !composer.getText().toString().trim().isEmpty())
             && !"starting".equals(status)
             && !"uncertain".equals(status)
             && !"disconnected".equals(status));
@@ -1283,6 +1351,8 @@ public final class MainActivity extends Activity {
           connected
               && conversation != null
               && !submitting
+              && !hasImage
+              && !readingImage
               && !conversation.optBoolean("archived"));
     stop.setEnabled(connected && !submitting);
   }
@@ -1364,6 +1434,9 @@ public final class MainActivity extends Activity {
     if (conversation == null || api == null || !send.isEnabled()) return;
     if (reviewDelivery()) return;
     String id = selected, text = composer.getText().toString();
+    DraftKey key = draftKey();
+    ComposerImage image = draftImages.get(key);
+    String imageBase64 = image == null ? null : android.util.Base64.encodeToString(image.png(), android.util.Base64.NO_WRAP);
     ApiClient client = api;
     JSONObject state = conversation;
     final String optimisticId = "local-" + java.util.UUID.randomUUID();
@@ -1377,6 +1450,8 @@ public final class MainActivity extends Activity {
               .put("status", "pending")
               .put("clientMessageId", clientMessageId)
               .put("timestamp", java.time.Instant.now().toString());
+      if (imageBase64 != null) optimistic.put("images", new JSONArray().put(new JSONObject()
+          .put("source", "data:image/png;base64," + imageBase64).put("altText", "Pasted image")));
       optimisticItems.computeIfAbsent(id, ignored -> new java.util.ArrayList<>()).add(optimistic);
       renderConversation(state);
     } catch (Exception ignored) {
@@ -1384,6 +1459,7 @@ public final class MainActivity extends Activity {
     action(
         () -> {
           JSONObject body = new JSONObject().put("text", text).put("clientMessageId", clientMessageId);
+          if (imageBase64 != null) body.put("imagePng", imageBase64);
           if (!state.isNull("activeTurnId"))
             body.put("expectedTurnId", state.getString("activeTurnId"));
           return client.request("/conversations/" + ApiClient.segment(id) + "/messages", body);
@@ -1401,6 +1477,8 @@ public final class MainActivity extends Activity {
           if (accepted) {
             if (store.draft(client.origin, id).equals(text)) store.draft(client.origin, id, "");
             if (selected.equals(id) && composer.getText().toString().equals(text)) composer.setText("");
+            if (image != null) draftImages.remove(key, image);
+            renderComposerImage();
           }
         },
         true,

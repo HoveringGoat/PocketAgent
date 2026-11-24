@@ -2,11 +2,18 @@ package dev.pocketagent;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.EditText;
 import android.widget.TextView;
 import java.io.File;
@@ -93,6 +100,12 @@ public final class SmokeInstrumentation extends Instrumentation {
         main(() -> description("New conversation").performClick());
         dialogClick("Create conversation");
         await(() -> main(() -> description("Conversation PocketAgent") != null));
+        if ("image-paste".equals(arguments.getString("phase"))) {
+          checkImagePaste();
+          result.putString("checks", "clipboard paste, preview, removal, and sending passed");
+          finish(Activity.RESULT_OK, result);
+          return;
+        }
         boolean persistedBeforeDelivery =
             main(
                 () -> {
@@ -321,7 +334,12 @@ public final class SmokeInstrumentation extends Instrumentation {
   private <T> T main(Callable<T> action) throws Exception {
     java.util.concurrent.FutureTask<T> task = new java.util.concurrent.FutureTask<>(action);
     runOnMainSync(task);
-    return task.get();
+    try {
+      return task.get();
+    } catch (java.util.concurrent.ExecutionException exception) {
+      if (exception.getCause() instanceof AssertionErrorException assertion) throw assertion;
+      throw exception;
+    }
   }
 
   private View find(View parent, java.util.function.Predicate<View> predicate) {
@@ -385,6 +403,83 @@ public final class SmokeInstrumentation extends Instrumentation {
       if (found != null) return found;
     }
     return null;
+  }
+
+  private void checkImagePaste() throws Exception {
+    checkStage = "clipboard image paste";
+    var resolver = activity.getContentResolver();
+    ContentValues values = new ContentValues();
+    values.put(MediaStore.Images.Media.DISPLAY_NAME, "pocketagent-paste-fixture.png");
+    values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+    Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+    check(uri != null, "Could not create the clipboard fixture.");
+    try {
+      Bitmap bitmap = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888);
+      bitmap.eraseColor(0xff8db397);
+      try (var output = resolver.openOutputStream(uri)) {
+        check(output != null && bitmap.compress(Bitmap.CompressFormat.PNG, 100, output), "Could not write the clipboard fixture.");
+      } finally {
+        bitmap.recycle();
+      }
+      ClipboardManager clipboard = activity.getSystemService(ClipboardManager.class);
+      await(() -> main(() -> activity.hasWindowFocus()));
+      main(() -> {
+        EditText input = (EditText) description("Message Codex");
+        input.requestFocus();
+        clipboard.setPrimaryClip(ClipData.newUri(resolver, "Fixture", uri));
+        check(input.onTextContextMenuItem(android.R.id.paste), "The composer did not handle Paste.");
+        return true;
+      });
+      await(() -> main(() -> description("Pasted image preview").isShown() && description("Send message").isEnabled()));
+      main(() -> {
+        EditText input = (EditText) description("Message Codex");
+        check(input.length() == 0, "Pasting an image must not insert its URI.");
+        input.setText("Wide caption ".repeat(120));
+        if (android.os.Build.VERSION.SDK_INT >= 30 && input.getWindowInsetsController() != null)
+          input.getWindowInsetsController().show(WindowInsets.Type.ime());
+        return true;
+      });
+      if (android.os.Build.VERSION.SDK_INT >= 30) {
+        await(() -> main(() -> activity.getWindow().getDecorView().getRootWindowInsets().isVisible(WindowInsets.Type.ime())));
+      }
+      // Allow the system clipboard overlay to disappear before recording the conversation.
+      Thread.sleep(6500);
+      waitForIdleSync();
+      main(() -> {
+        String scheduleName = "Schedule message or view scheduled messages";
+        for (String name : new String[] {"Conversation location and actions", "Pasted image preview", "Remove image", "Message Codex", "Send message", scheduleName}) {
+          View control = description(name);
+          Rect visible = new Rect();
+          check(control != null && control.getGlobalVisibleRect(visible) &&
+              visible.width() == control.getWidth() && visible.height() == control.getHeight(), name + " is clipped.");
+        }
+        check(!description(scheduleName).isEnabled(), "Image drafts must disable scheduling.");
+        return true;
+      });
+      try (var output = new FileOutputStream(new File(getTargetContext().getCacheDir(), "image-paste.png"))) {
+        Bitmap capture = getUiAutomation().takeScreenshot();
+        check(capture != null && capture.compress(Bitmap.CompressFormat.PNG, 100, output), "Could not capture the image composer.");
+      }
+      main(() -> {
+        EditText input = (EditText) description("Message Codex");
+        description("Remove image").performClick();
+        check(!description("Pasted image preview").isShown() && input.getText().toString().startsWith("Wide caption"),
+            "Remove must preserve the caption.");
+        input.setText("");
+        clipboard.setPrimaryClip(ClipData.newPlainText("Fixture caption", "Plain text"));
+        input.onTextContextMenuItem(android.R.id.paste);
+        check(input.getText().toString().equals("Plain text"), "Normal text paste must still work.");
+        input.setText("");
+        clipboard.setPrimaryClip(ClipData.newUri(resolver, "Fixture", uri));
+        input.onTextContextMenuItem(android.R.id.paste);
+        return true;
+      });
+      await(() -> main(() -> description("Send message").isEnabled()));
+      main(() -> description("Send message").performClick());
+      await(() -> main(() -> !description("Pasted image preview").isShown() && description("View image: Pasted image") != null));
+    } finally {
+      resolver.delete(uri, null, null);
+    }
   }
 
   private void checkModelPicker() throws Exception {

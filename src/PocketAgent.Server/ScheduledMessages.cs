@@ -5,9 +5,11 @@ public sealed record MessageReceipt(bool Queued, string? ScheduleId = null, Date
 public sealed class ScheduledMessages(LocalStore store, Conversations conversations, ProviderUsage usage, CodexConnection codex,
     ProgressPublisher publisher, IHostApplicationLifetime application, ILogger<ScheduledMessages> logger) : BackgroundService
 {
-    public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId, string? clientMessageId = null)
+    public async Task<MessageReceipt> Send(string id, string text, string? expectedTurnId, string? deviceId, string? clientMessageId = null, byte[]? imagePng = null)
     {
         conversations.RequireAccess(id, deviceId);
+        var imageUrl = MessageImage.Validate(imagePng);
+        if (imageUrl is not null) return await SendImage(id, text, expectedTurnId, deviceId, clientMessageId, imagePng!, imageUrl);
         if (string.IsNullOrWhiteSpace(text) || text.Length > 32000) throw new ApiException(400, "Messages must contain 1–32,000 characters.");
         if (!string.IsNullOrWhiteSpace(clientMessageId) && clientMessageId.Length > 100) throw new ApiException(400, "Message IDs are too long.");
         if (!string.IsNullOrWhiteSpace(clientMessageId))
@@ -38,6 +40,40 @@ public sealed class ScheduledMessages(LocalStore store, Conversations conversati
         }
         if (!string.IsNullOrWhiteSpace(clientMessageId)) store.UpdateDelivery(id, clientMessageId, "accepted");
         return new(false, ClientMessageId: clientMessageId, DeliveryStatus: "accepted");
+    }
+
+    private async Task<MessageReceipt> SendImage(string id, string text, string? expectedTurnId, string? deviceId, string? clientMessageId, byte[] png, string imageUrl)
+    {
+        if (text.Length > 32_000) throw new ApiException(400, "Captions can contain at most 32,000 characters.");
+        if (clientMessageId is not { Length: > 0 and <= 100 } || string.IsNullOrWhiteSpace(clientMessageId))
+            throw new ApiException(400, "An image message requires a valid message ID.");
+        // Keep image bytes and captions out of the text-only scheduled delivery store.
+        var captionHash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.Unicode.GetBytes(text));
+        var imageHash = System.Security.Cryptography.SHA256.HashData(png);
+        var fingerprint = Convert.ToHexString(captionHash) + Convert.ToHexString(imageHash);
+        MessageReceipt Existing(MessageDelivery delivery)
+        {
+            if (!string.Equals(delivery.AttachmentFingerprint, fingerprint, StringComparison.Ordinal))
+                throw new ApiException(409, "That message ID was already used for different content.");
+            return Receipt(delivery);
+        }
+        if (store.Delivery(id, clientMessageId) is { } existing) return Existing(existing);
+        if ((await usage.Check()).Exhausted)
+            throw new ApiException(429, "Image messages cannot be queued. Try again when usage resets.");
+        if (!store.BeginDelivery(id, clientMessageId, "", fingerprint))
+            return Existing(store.Delivery(id, clientMessageId) ?? throw new ApiException(409, "That message is already being delivered."));
+        try
+        {
+            await conversations.StartTurnWithInput(id, text, expectedTurnId, deviceId, clientMessageId: clientMessageId, imageUrl: imageUrl);
+        }
+        catch (ApiException exception)
+        {
+            store.UpdateDelivery(id, clientMessageId, exception.Status is 503 or 504 ? "uncertain" : "failed", error: exception.Message);
+            if (exception.Status == 429) throw new ApiException(429, "Image messages cannot be queued. Try again when usage resets.");
+            throw;
+        }
+        store.UpdateDelivery(id, clientMessageId, "accepted");
+        return new(false, ClientMessageId: clientMessageId);
     }
 
     private async Task<MessageReceipt> Defer(string id, string text, UsageStatus limits, string? deviceId, string? clientMessageId)

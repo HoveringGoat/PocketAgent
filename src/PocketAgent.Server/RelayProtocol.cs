@@ -13,7 +13,8 @@ public static class RelayProtocol
 {
     public const int Version = 1;
     public const int ApplicationVersion = 1;
-    internal const int MaxRequestFrameBytes = 512 * 1024;
+    // The JSON request body is base64 encoded inside an encrypted, base64 encoded envelope.
+    internal const int MaxRequestFrameBytes = 6 * 1024 * 1024;
     internal const int MaxResponseFrameBytes = 30 * 1024 * 1024;
 }
 

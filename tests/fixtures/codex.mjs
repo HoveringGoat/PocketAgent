@@ -254,7 +254,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       const thread = threads[threadId];
       if (params.cwd !== thread.cwd) throw new Error('Turn started in the wrong folder.');
       thread.model = params.model;
-      const text = params.input[0].text;
+      const text = params.input.find((item) => item.type === 'text')?.text ?? '';
       const turn = {
         id: randomUUID(),
         startedAt: Math.floor(Date.now() / 1000),

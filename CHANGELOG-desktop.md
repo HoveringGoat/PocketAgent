@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.45 - 2026-11-24
+
+- Paste a screenshot or copied image into chat, preview or remove it, and send it with an optional caption.
+
 ## 0.3.44 - 2026-11-24
 
 - Match the model and reasoning dropdowns to the desktop theme, including focus and selected-row styling.

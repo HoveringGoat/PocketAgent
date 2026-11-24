@@ -7,7 +7,10 @@ public sealed record DisplayImage(string Id, string Source, string AltText, stri
 public sealed record DisplayItem(string Id, string Type, string Text, string Detail, string Status, DateTimeOffset? Timestamp = null, string? ClientMessageId = null, DisplayImage[]? Images = null);
 public sealed record PendingRequest(string Id, string Method, JsonElement Parameters, string[] Decisions, bool Supported);
 public sealed record ConversationSummary(string Id, string Title, DateTimeOffset CreatedAt, string Status, string Repository, string WorkingDirectory, string HostName, string? Model, bool Archived, string? ReasoningEffort = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
-public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null);
+public sealed record ConversationSnapshot(string Id, string Title, string Status, string? ActiveTurnId, DisplayItem[] Items, PendingRequest[] Requests, string? Error, string Repository, string WorkingDirectory, string HostName, string PermissionMode, string? SandboxMode, string? ApprovalPolicy, DateTimeOffset? ActiveTurnStartedAt, long? LastWorkDurationMs, string? Model, bool Archived, string? ReasoningEffort = null, bool HistoryTruncated = false, string? HistoryBefore = null, bool Pinned = false, DateTimeOffset? LastMessageAt = null)
+{
+    public bool SupportsImageAttachments => true;
+}
 public sealed record ConversationHistoryPage(DisplayItem[] Items, bool HasMore, string? Before);
 public sealed record AnswerRequest(string? Decision, Dictionary<string, string[]>? Answers);
 
@@ -39,7 +42,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         public string? ActivePrompt { get; set; }
         public string? SourceDeviceId { get; set; }
         public string? ScheduledMessageId { get; set; }
-        public Queue<(string Id, string Text)> ClientMessages { get; } = [];
+        public Queue<(string Id, string Text, bool HasImage)> ClientMessages { get; } = [];
         public Queue<string> HiddenPrompts { get; } = [];
         public DateTimeOffset? HeartbeatDueAt { get; set; }
         public SemaphoreSlim Gate { get; } = new(1, 1);
@@ -218,7 +221,18 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         var state = await GetState(id).ConfigureAwait(false);
         await state.Gate.WaitAsync().ConfigureAwait(false);
         string workingDirectory;
-        try { workingDirectory = state.Reference.WorkingDirectory; }
+        try
+        {
+            workingDirectory = state.Reference.WorkingDirectory;
+            if (source.StartsWith(MessageImage.ReferencePrefix, StringComparison.Ordinal))
+            {
+                var imageId = source[MessageImage.ReferencePrefix.Length..];
+                var image = state.Items.Where(item => item.Type == "userMessage")
+                    .SelectMany(item => item.Images ?? [])
+                    .FirstOrDefault(image => image.Id == imageId && IsEmbeddedImage(image));
+                source = image?.Source ?? throw new ApiException(404, "That attachment is no longer available.");
+            }
+        }
         finally { state.Gate.Release(); }
 
         if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
@@ -489,23 +503,30 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
         finally { state.Gate.Release(); await publisher.Changed(id); }
     }
 
-    public async Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null)
+    public Task StartTurn(string id, string text, string? expectedTurnId = null, string? sourceDeviceId = null, string? scheduledMessageId = null, string? clientMessageId = null) =>
+        StartTurnWithInput(id, text, expectedTurnId, sourceDeviceId, scheduledMessageId, clientMessageId);
+
+    internal async Task StartTurnWithInput(string id, string text, string? expectedTurnId, string? sourceDeviceId, string? scheduledMessageId = null, string? clientMessageId = null, string? imageUrl = null)
     {
         lock (turnAdmission)
         {
             RequireAcceptingWork();
             turnsStarting++;
         }
-        try { await StartTurnCore(id, text, expectedTurnId, sourceDeviceId, scheduledMessageId, clientMessageId); }
+        try { await StartTurnCore(id, text, expectedTurnId, sourceDeviceId, scheduledMessageId, clientMessageId, imageUrl); }
         finally { lock (turnAdmission) turnsStarting--; }
     }
 
-    private async Task StartTurnCore(string id, string text, string? expectedTurnId, string? sourceDeviceId, string? scheduledMessageId, string? clientMessageId)
+    private async Task StartTurnCore(string id, string text, string? expectedTurnId, string? sourceDeviceId, string? scheduledMessageId, string? clientMessageId, string? imageUrl)
     {
         RequireAccess(id, sourceDeviceId);
-        if (string.IsNullOrWhiteSpace(text) || text.Length > 32_000)
+        if ((imageUrl is null && string.IsNullOrWhiteSpace(text)) || text.Length > 32_000)
             throw new ApiException(400, "Messages must contain 1–32,000 characters.");
         var state = await GetState(id);
+        if (imageUrl is not null && string.IsNullOrWhiteSpace(text)) text = "";
+        var input = new List<object>(2);
+        if (text.Length > 0) input.Add(new { type = "text", text, text_elements = Array.Empty<object>() });
+        if (imageUrl is not null) input.Add(new { type = "image", url = imageUrl });
         await state.Gate.WaitAsync();
         try
         {
@@ -520,11 +541,11 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                     {
                         threadId = id,
                         expectedTurnId,
-                        input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
+                        input
                     });
                     if (result.Text("turnId") != expectedTurnId)
                         throw new ApiException(504, "Codex did not confirm the expected turn. Steering delivery is unknown; do not resend automatically.");
-                    if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text));
+                    if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text, imageUrl is not null));
                     state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
                 }
                 catch (ApiException exception) when (exception.Status is 503 or 504)
@@ -548,8 +569,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             }
             state.Status = "starting";
             state.Error = null;
-            state.ActivePrompt = text; state.SourceDeviceId = sourceDeviceId; state.ScheduledMessageId = scheduledMessageId;
-            if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text));
+            state.ActivePrompt = imageUrl is null ? text : null;
+            state.SourceDeviceId = sourceDeviceId; state.ScheduledMessageId = scheduledMessageId;
             state.HasWork = false; state.ActiveTurnStartedAt = DateTimeOffset.UtcNow;
             try
             {
@@ -557,7 +578,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 {
                     threadId = id,
                     cwd = directories.Resolve(state.Reference.WorkingDirectory),
-                    input = new[] { new { type = "text", text, text_elements = Array.Empty<object>() } }
+                    input
                 }, turn: true, workingDirectory: state.Reference.WorkingDirectory);
                 if (state.Reference.Model is not null) parameters["model"] = state.Reference.Model;
                 if (state.Reference.ReasoningEffort is not null) parameters["effort"] = state.Reference.ReasoningEffort;
@@ -567,6 +588,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 state.ActiveTurnId = turn.Text("id");
                 state.Status = "running";
                 state.HeartbeatDueAt = DateTimeOffset.UtcNow + HeartbeatDelay;
+                if (!string.IsNullOrWhiteSpace(clientMessageId)) state.ClientMessages.Enqueue((clientMessageId, text, imageUrl is not null));
                 AddTurn(state, turn);
             }
             catch (ApiException exception)
@@ -714,11 +736,6 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             foreach (var item in items.EnumerateArray())
             {
                 var rendered = Render(item) with { Timestamp = state.Hydrating ? null : item.Text("type") == "userMessage" ? times.Start : times.End ?? times.Start };
-                if (!state.Hydrating && rendered.Type == "userMessage" && state.ClientMessages.TryPeek(out var pending) && string.Equals(pending.Text, rendered.Text, StringComparison.Ordinal))
-                {
-                    state.ClientMessages.Dequeue();
-                    rendered = rendered with { ClientMessageId = pending.Id };
-                }
                 Upsert(state, rendered);
             }
         }
@@ -728,7 +745,7 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
     {
         if (item.Id.Length == 0 || item.Type == "reasoning")
             return;
-        if (string.Equals(item.Text.Trim(), HeartbeatPrompt, StringComparison.OrdinalIgnoreCase))
+        if (item.Images is null && string.Equals(item.Text.Trim(), HeartbeatPrompt, StringComparison.OrdinalIgnoreCase))
         {
             var queued = state.HiddenPrompts.Count > 0;
             var hidden = item.Type == "userMessage" && IsHiddenPrompt(state, item.Text);
@@ -737,6 +754,15 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             if (hidden) return;
         }
         var index = state.Items.FindIndex(existing => existing.Id == item.Id);
+        if (index >= 0)
+            item = item with { ClientMessageId = state.Items[index].ClientMessageId };
+        else if (!state.Hydrating && item.Type == "userMessage" && state.ClientMessages.TryPeek(out var pending) &&
+            string.Equals(pending.Text, item.Text, StringComparison.Ordinal) &&
+            pending.HasImage == (item.Images?.Any(IsEmbeddedImage) == true))
+        {
+            state.ClientMessages.Dequeue();
+            item = item with { ClientMessageId = pending.Id };
+        }
         var existingTime = index >= 0 ? state.Items[index].Timestamp : null;
         item = item with { Timestamp = existingTime ?? store.RememberTimestamp(state.Reference.Id, item.Id, item.Timestamp ?? (state.Hydrating ? null : DateTimeOffset.UtcNow)) };
         if (item.Type is "userMessage" or "agentMessage")
@@ -865,7 +891,16 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
             historyTruncated, historyTruncated ? state.Items[first].Id : null, state.Reference.Pinned, state.Reference.LastMessageAt);
     }
 
-    private static DisplayItem Bounded(DisplayItem item) => item with { Text = Limit(item.Text, MaxSnapshotText), Detail = Limit(item.Detail, MaxSnapshotDetail) };
+    private static bool IsEmbeddedImage(DisplayImage image) => image.Source.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
+
+    private static DisplayItem Bounded(DisplayItem item) => item with
+    {
+        Text = Limit(item.Text, MaxSnapshotText),
+        Detail = Limit(item.Detail, MaxSnapshotDetail),
+        Images = item.Type == "userMessage" ? item.Images?.Select(image => IsEmbeddedImage(image)
+            ? image with { Source = MessageImage.ReferencePrefix + image.Id, AltText = image.AltText.Length == 0 ? "Pasted image" : image.AltText }
+            : image).ToArray() : item.Images
+    };
 
     private static string Limit(string value, int length) => value.Length <= length ? value : value[..length] + "\n[output truncated]";
 
