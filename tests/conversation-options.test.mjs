@@ -176,6 +176,49 @@ test('conversation folders and models remain independent across turns and restar
   }
 });
 
+test('empty new and reset conversations survive a server restart', async () => {
+  const extraEnv = { POCKETAGENT_FIXTURE_DEFER_EMPTY_THREADS: '1' };
+  let relay = await startRelay({ extraEnv });
+  try {
+    const paired = await relay.pairNative();
+    const model = 'gpt-5.6-sol';
+    const create = async (title) => {
+      const response = await relay.request('/conversations', {
+        title,
+        model,
+        reasoningEffort: 'low',
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const fresh = await create('Fresh after restart');
+    const source = await create('Reset after restart');
+    const reset = await relay.request(`/conversations/${source.id}/reset`, {});
+    assert.equal(reset.status, 200);
+    const replacement = await reset.json();
+    assert.notEqual(replacement.id, source.id);
+    const dataDirectory = relay.directory;
+    await relay.stop();
+    relay = await startRelay({ dataDirectory, extraEnv });
+    relay.authenticateBearer(paired.token);
+    for (const original of [fresh, replacement]) {
+      const path = `/conversations/${original.id}`;
+      const reopened = await relay.request(path);
+      assert.equal(reopened.status, 200);
+      const state = await reopened.json();
+      assert.equal(state.status, 'idle');
+      assert.equal(state.title, original.title);
+      assert.equal(state.workingDirectory, original.workingDirectory);
+      assert.equal(state.model, model);
+      assert.equal(state.reasoningEffort, 'low');
+      assert.deepEqual(state.items, []);
+      assert.equal((await relay.request(`${path}/messages`, { text: 'hold' })).status, 202);
+    }
+  } finally {
+    await relay.stop();
+  }
+});
+
 test('archive hides idle conversations, cancels pending schedules and restores without replay', async () => {
   let relay = await startRelay();
   try {

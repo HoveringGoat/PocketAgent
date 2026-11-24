@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.43 - 2026-11-24
+
+- Save new and reset Codex threads before their first message so they can reopen after a server restart.
+
 ## 0.3.42 - 2026-11-23
 
 - Edit a conversation's model and reasoning in one dropdown dialog and show the effective choices in the conversation status.

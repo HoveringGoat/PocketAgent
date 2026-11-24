@@ -108,23 +108,31 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 title = baseName;
                 for (var suffix = 2; existing.Contains(title); suffix++) title = $"{baseName} · {suffix}";
             }
-            await codex.EnsureStarted();
-            // Model selection belongs to this conversation; reviewer and permission selection remain desktop-owned.
-            var parameters = CodexPermissions.Apply(settings, new { cwd = directory });
-            if (model is not null) parameters["model"] = model;
-            var result = await codex.Request("thread/start", parameters);
-            var thread = result.GetProperty("thread");
-            var id = thread.Text("id");
-            if (id.Length == 0)
-                throw new ApiException(502, "Codex returned a thread without an ID.");
-            store.SaveConversation(id, title.Trim(), directory, model, reasoningEffort, deviceId);
-            var state = new State(new(id, title.Trim(), DateTimeOffset.UtcNow, directory, model, false, reasoningEffort)) { Resumed = true };
+            title = title.Trim();
+            var (id, result) = await StartNamedThread(title, directory, model);
+            store.SaveConversation(id, title, directory, model, reasoningEffort, deviceId);
+            var state = new State(new(id, title, DateTimeOffset.UtcNow, directory, model, false, reasoningEffort)) { Resumed = true };
             CapturePermissions(state, result);
             await ResolveModelSelection(state, result);
             states[id] = state;
             return Snapshot(state);
         }
         finally { gate.Release(); await publisher.Changed(); }
+    }
+
+    private async Task<(string Id, JsonElement Response)> StartNamedThread(string title, string directory, string? model)
+    {
+        await codex.EnsureStarted();
+        // Model selection belongs to this conversation; reviewer and permission selection remain desktop-owned.
+        var parameters = CodexPermissions.Apply(settings, new { cwd = directory });
+        if (model is not null) parameters["model"] = model;
+        var response = await codex.Request("thread/start", parameters);
+        var id = response.Field("thread").Text("id");
+        if (id.Length == 0)
+            throw new ApiException(502, "Codex returned a thread without an ID.");
+        // Naming writes the empty thread's metadata so Codex can reopen it even before its first turn.
+        await codex.Request("thread/name/set", new { threadId = id, name = title });
+        return (id, response);
     }
 
     public async Task<ConversationSnapshot> Reset(string id, string? deviceId = null)
@@ -141,14 +149,8 @@ public sealed class Conversations(CodexConnection codex, LocalStore store, Progr
                 RequireUnarchived(oldState);
                 RequireIdle(oldState);
                 RequireAcceptingWork();
-                await codex.EnsureStarted();
-                var parameters = CodexPermissions.Apply(settings, new { cwd = oldState.Reference.WorkingDirectory });
-                if (oldState.Reference.Model is not null) parameters["model"] = oldState.Reference.Model;
-                var result = await codex.Request("thread/start", parameters);
-                var thread = result.GetProperty("thread");
-                var replacementId = thread.Text("id");
-                if (replacementId.Length == 0)
-                    throw new ApiException(502, "Codex returned a reset conversation without an ID.");
+                var (replacementId, result) = await StartNamedThread(
+                    oldState.Reference.Title, oldState.Reference.WorkingDirectory, oldState.Reference.Model);
 
                 store.ResetConversation(id, replacementId, oldState.Reference);
                 newId = replacementId;

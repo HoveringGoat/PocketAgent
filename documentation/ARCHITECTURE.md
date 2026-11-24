@@ -127,6 +127,8 @@ The desktop initializes a rotating diagnostic log at `%LOCALAPPDATA%/PocketAgent
 
 Conversation metadata is stored locally, but transcript history is owned by the Codex app-server thread store. If a saved conversation's thread is unavailable, the relay returns the local title, folder, model, and an explicit disconnected error without deleting the row or automatically creating a replacement thread. History remains recoverable only if the original Codex executable and `CODEX_HOME` can see that thread; otherwise the relay cannot reconstruct the missing transcript. Client refreshes must keep session-list and usage requests independent from this per-conversation failure.
 
+When creating or resetting a conversation, the host sets the new thread's initial title through `thread/name/set` before registering it in SQLite. This writes the empty thread's metadata so the same thread ID can be read and resumed after a restart with zero turns. If naming fails, the host leaves the conversation registry as it was. Previously missing provider threads still follow the disconnected behavior above.
+
 - `src/PocketAgent.Server`: API, provider protocol, policy mapping, authentication, SQLite, timing and scheduler.
 - `src/PocketAgent.Desktop`: shipped WPF control/chat UI, Wi-Fi setup and connector lifecycle.
 - `src/PocketAgent.Android`: native multi-server client, encrypted vault, transport and debug-only instrumentation.

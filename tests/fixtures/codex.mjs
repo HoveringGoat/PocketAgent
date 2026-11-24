@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const path = process.env.POCKETAGENT_FIXTURE_STATE;
+const deferEmptyThreads = process.env.POCKETAGENT_FIXTURE_DEFER_EMPTY_THREADS === '1';
 const threads = path && existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
 const pending = new Map();
 const permissionMode = process.env.POCKETAGENT_EXPECT_PERMISSION_MODE ?? 'inherit';
@@ -30,7 +31,13 @@ function checkPermissions(params, turn = false) {
 }
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const save = () => {
-  if (path) writeFileSync(path, JSON.stringify(threads));
+  if (!path) return;
+  const durable = deferEmptyThreads
+    ? Object.fromEntries(
+        Object.entries(threads).filter(([, thread]) => thread.name || thread.turns.length),
+      )
+    : threads;
+  writeFileSync(path, JSON.stringify(durable));
 };
 const notify = (method, params) => write({ method, params });
 const complete = (threadId, status = 'completed') => {
@@ -209,6 +216,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'thread/list':
       reply({ data: Object.values(threads), nextCursor: null });
       break;
+    case 'thread/name/set': {
+      const thread = threads[params.threadId];
+      if (!thread || !params.name?.trim()) throw new Error('Expected a valid thread and name.');
+      thread.name = params.name;
+      save();
+      reply({});
+      break;
+    }
     case 'thread/read':
       if (!threads[params.threadId]) {
         write({ id: request.id, error: { code: -32000, message: 'thread not loaded' } });
