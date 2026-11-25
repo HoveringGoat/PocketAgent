@@ -92,11 +92,21 @@ final class SessionStore {
     boolean updated = false;
     for (int i = 0; i < servers.length(); i++)
       if (origin.equals(servers.getJSONObject(i).optString("origin"))) {
+        connection.put("stateKey", servers.getJSONObject(i).optString("stateKey", origin));
         servers.put(i, connection);
         updated = true;
         break;
       }
-    if (!updated) servers.put(connection);
+    if (!updated) {
+      for (int i = 0; i < servers.length(); i++) {
+        JSONObject saved = servers.getJSONObject(i);
+        if (origin.equals(saved.optString("stateKey", saved.optString("origin")))) {
+          connection.put("stateKey", java.util.UUID.randomUUID().toString());
+          break;
+        }
+      }
+      servers.put(connection);
+    }
     vault.put("active", origin);
     writeVault(vault);
     preferences.edit().putString("lastOrigin", origin).apply();
@@ -140,17 +150,45 @@ final class SessionStore {
     return load();
   }
 
+  synchronized void updateAddress(ApiClient previous, ApiClient updated) throws Exception {
+    JSONObject vault = readVault();
+    org.json.JSONArray servers = vault.getJSONArray("servers");
+    int index = -1;
+    for (int i = 0; i < servers.length(); i++) {
+      JSONObject saved = servers.getJSONObject(i);
+      if (previous.origin.equals(saved.getString("origin")) && previous.token.equals(saved.getString("token"))) {
+        index = i;
+      } else if (updated.origin.equals(saved.getString("origin"))) {
+        throw new IllegalArgumentException("Another saved server already uses this address.");
+      }
+    }
+    if (index < 0) throw new IllegalStateException("The saved connection changed. Try again.");
+    JSONObject saved = servers.getJSONObject(index);
+    saved.put("origin", updated.origin).put("stateKey", updated.stateKey);
+    if (updated.relay != null) saved.put("relay", updated.relay.toJson());
+    if (previous.origin.equals(vault.optString("active"))) vault.put("active", updated.origin);
+    writeVault(vault);
+    if (previous.origin.equals(lastOrigin())) preferences.edit().putString("lastOrigin", updated.origin).apply();
+  }
+
   synchronized void remove(String origin) throws Exception {
+    remove(origin, null);
+  }
+
+  synchronized void remove(String origin, String expectedToken) throws Exception {
     JSONObject vault = readVault();
     org.json.JSONArray servers = vault.getJSONArray("servers"),
         remaining = new org.json.JSONArray();
-    for (int i = 0; i < servers.length(); i++)
-      if (!origin.equals(servers.getJSONObject(i).optString("origin")))
-        remaining.put(servers.getJSONObject(i));
-    vault
-        .put("servers", remaining)
-        .put(
-            "active", remaining.length() > 0 ? remaining.getJSONObject(0).getString("origin") : "");
+    for (int i = 0; i < servers.length(); i++) {
+      JSONObject saved = servers.getJSONObject(i);
+      if (!origin.equals(saved.optString("origin"))) remaining.put(saved);
+      else if (expectedToken != null && !expectedToken.equals(saved.optString("token")))
+        throw new IllegalStateException("The saved connection changed. Try again.");
+    }
+    vault.put("servers", remaining);
+    if (origin.equals(vault.optString("active"))) {
+      vault.put("active", remaining.length() > 0 ? remaining.getJSONObject(0).getString("origin") : "");
+    }
     writeVault(vault);
   }
 

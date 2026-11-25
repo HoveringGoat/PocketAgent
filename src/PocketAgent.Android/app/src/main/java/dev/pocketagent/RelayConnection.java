@@ -27,6 +27,7 @@ final class RelayConnection {
   private final RelayTarget target;
   private final SecretKeySpec key;
   private volatile Session session;
+  private volatile boolean paused;
   private OkHttpClient socketClient;
 
   static final class Reply {
@@ -93,7 +94,7 @@ final class RelayConnection {
     }
   }
 
-  private Session connect() throws Exception {
+  private Session connect(int timeoutSeconds) throws Exception {
     if (socketClient == null) {
       OkHttpClient.Builder builder = HTTP.newBuilder();
       if (!target.pin.isEmpty()) {
@@ -104,18 +105,24 @@ final class RelayConnection {
     }
     Session opened = new Session();
     session = opened;
+    if (paused) throw new IOException("The saved connection is being checked.");
     opened.socket = socketClient.newWebSocket(new Request.Builder().url(target.endpoint).build(), opened);
     opened.send(new JSONObject().put("kind", "authenticate-client").put("hostId", target.host)
         .put("clientId", target.device).put("token", target.credential));
-    if (!"authenticated".equals(opened.receive(15).optString("kind")))
+    if (!"authenticated".equals(opened.receive(Math.min(timeoutSeconds, 15)).optString("kind")))
       throw new IOException("Relay authentication failed. Check the enrollment and relay version.");
     return opened;
   }
 
-  synchronized Reply request(String path, JSONObject body, String token, boolean image) throws Exception {
+  Reply request(String path, JSONObject body, String token, boolean image) throws Exception {
+    return request(path, body, token, image, image ? 30 : 75);
+  }
+
+  synchronized Reply request(String path, JSONObject body, String token, boolean image, int timeoutSeconds) throws Exception {
+    if (paused) throw new IOException("The saved connection is being checked.");
     try {
       Session active = session;
-      if (active == null || active.ended) active = connect();
+      if (active == null || active.ended) active = connect(timeoutSeconds);
       String id = UUID.randomUUID().toString();
       byte[] nonce = new byte[12];
       RANDOM.nextBytes(nonce);
@@ -131,7 +138,7 @@ final class RelayConnection {
           .put("deviceId", target.device).put("envelope", sealed);
       active.send(new JSONObject().put("kind", "frame").put("frame",
           new JSONObject().put("version", 1).put("kind", "client-request").put("request", route)));
-      JSONObject message = active.receive(image ? 30 : 75);
+      JSONObject message = active.receive(timeoutSeconds);
       JSONObject frame = message.getJSONObject("frame");
       JSONObject response = frame.getJSONObject("response");
       if (!"frame".equals(message.optString("kind")) || frame.optInt("version") != 1
@@ -162,6 +169,12 @@ final class RelayConnection {
   void close() {
     Session active = session;
     if (active != null) active.stop(new IOException("The relay connection closed."));
+  }
+
+  void pause(boolean value) {
+    // The relay routes a device ID to one socket.
+    paused = value;
+    if (value) close();
   }
 
   private Cipher cipher(int mode, byte[] nonce, String requestId) throws Exception {

@@ -10,6 +10,7 @@ import org.json.JSONTokener;
 
 final class ApiClient {
   final String origin;
+  final String stateKey;
   final String token;
   final String pin;
   final RelayTarget relay;
@@ -33,7 +34,12 @@ final class ApiClient {
   }
 
   ApiClient(String origin, String token, String pin, RelayTarget relay) {
+    this(origin, token, pin, relay, origin);
+  }
+
+  private ApiClient(String origin, String token, String pin, RelayTarget relay, String stateKey) {
     this.origin = origin;
+    this.stateKey = stateKey;
     this.token = token;
     this.pin = pin;
     this.relay = relay;
@@ -44,12 +50,43 @@ final class ApiClient {
     JSONObject target = session.optJSONObject("relay");
     RelayTarget relay = target == null ? null : RelayTarget.fromJson(target);
     String origin = relay == null ? normalizeOrigin(session.getString("origin")) : relay.origin();
-    return new ApiClient(origin, session.getString("token"), session.optString("pin"), relay);
+    return new ApiClient(origin, session.getString("token"), session.optString("pin"), relay,
+        session.optString("stateKey", origin));
   }
 
   String address() { return relay == null ? origin : relay.endpoint; }
 
+  ApiClient atUpdatedAddress(String input) throws Exception {
+    String value = input.trim();
+    if (value.startsWith("pocketagent://")) {
+      PairingTicket ticket = PairingTicket.parse(value);
+      if (!pin.equalsIgnoreCase(ticket.pin) || (relay == null) != (ticket.relay == null)
+          || (relay != null && !relay.host.equals(ticket.relay.host))) {
+        throw new IllegalArgumentException("This QR belongs to a different saved connection.");
+      }
+      value = ticket.relay == null ? ticket.origin : ticket.relay.endpoint;
+    }
+    if (relay != null) {
+      if (value.startsWith("wss://")) value = "https://" + value.substring(6);
+      if (value.endsWith("/relay")) value = value.substring(0, value.length() - 6);
+    }
+    String updated = normalizeOrigin(value);
+    URI target = new URI(updated);
+    URI previous = new URI(address());
+    if (!"https".equals(target.getScheme())
+        || (pin.isEmpty() && (!previous.getHost().equalsIgnoreCase(target.getHost())
+            || "http".equals(previous.getScheme())))) {
+      throw new IllegalArgumentException("This connection needs a fresh pairing to use that address.");
+    }
+    if (relay == null) return new ApiClient(updated, token, pin, null, stateKey);
+    RelayTarget moved = new RelayTarget("wss" + updated.substring(5) + "/relay",
+        relay.pin, relay.host, relay.device, relay.credential, relay.key);
+    return new ApiClient(origin, token, pin, moved, stateKey);
+  }
+
   void close() { if (connection != null) connection.close(); }
+
+  void pauseRelay(boolean paused) { if (connection != null) connection.pause(paused); }
 
   static String normalizeOrigin(String input) throws Exception {
     String address = input.trim();
@@ -80,8 +117,16 @@ final class ApiClient {
   }
 
   Object request(String path, JSONObject body) throws Exception {
+    return request(path, body, 10, 75);
+  }
+
+  Object connectionRequest(String path, JSONObject body) throws Exception {
+    return request(path, body, 6, 6);
+  }
+
+  private Object request(String path, JSONObject body, int connectSeconds, int readSeconds) throws Exception {
     if (this.connection != null) {
-      RelayConnection.Reply reply = this.connection.request(path, body, token, false);
+      RelayConnection.Reply reply = this.connection.request(path, body, token, false, readSeconds);
       return parseResponse(reply.status, new String(reply.body, StandardCharsets.UTF_8));
     }
     HttpURLConnection connection =
@@ -95,8 +140,8 @@ final class ApiClient {
       // scanned key pin.
     }
     connection.setInstanceFollowRedirects(false);
-    connection.setConnectTimeout(10000);
-    connection.setReadTimeout(75000);
+    connection.setConnectTimeout(connectSeconds * 1000);
+    connection.setReadTimeout(readSeconds * 1000);
     connection.setUseCaches(false);
     connection.setRequestProperty("Accept", "application/json");
     if (!token.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + token);

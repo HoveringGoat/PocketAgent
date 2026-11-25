@@ -19,6 +19,7 @@
   - [Direct IP and port](SETUP.md#direct-internet-ip-and-port)
   - [QR or pairing-string enrollment](SETUP.md#pair-by-qr-or-pairing-string)
   - [Relay mode](SETUP.md#relay-mode)
+  - [Update a saved connection](SETUP.md#update-a-saved-connection)
   - [Android servers and conversations](SETUP.md#android-servers-and-conversations)
   - [Desktop conversations](SETUP.md#desktop-conversations)
   - [Usage and scheduled messages](SETUP.md#usage-and-scheduled-messages)

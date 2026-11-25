@@ -63,7 +63,8 @@ public final class MainActivity extends Activity {
   private final java.util.HashMap<String, String> connectionNames = new java.util.HashMap<>();
   private final java.util.concurrent.ConcurrentHashMap<String, Boolean> connectionStates = new java.util.concurrent.ConcurrentHashMap<>();
   private final java.util.concurrent.ConcurrentHashMap<String, String> connectionErrors = new java.util.concurrent.ConcurrentHashMap<>();
-  private final java.util.Set<String> backgroundPolling = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.Set<ApiClient> backgroundPolling = new java.util.HashSet<>();
+  private String addressScanOrigin;
   private String selected = "", tabSignature = "", transcriptSignature = "";
   private String historyBefore = "";
   private JSONObject conversation;
@@ -128,6 +129,7 @@ public final class MainActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    if (state != null) addressScanOrigin = state.getString("addressScanOrigin");
     store = new SessionStore(this);
     appPreferences = getSharedPreferences("app", MODE_PRIVATE);
     uiScale = appPreferences.getFloat(UI_SCALE_KEY, 1.0f);
@@ -143,7 +145,7 @@ public final class MainActivity extends Activity {
         }
         serverName = session.optString("name", api.origin);
         connectionNames.put(api.origin, serverName);
-        selected = store.selected(api.origin);
+        selected = store.selected(api.stateKey);
       }
     } catch (Exception ignored) {
       store.clear();
@@ -151,6 +153,12 @@ public final class MainActivity extends Activity {
     if (api == null) showPairing();
     else showChat();
     if (store.checkUpdatesOnStartup()) updater.check(false);
+  }
+
+  @Override
+  protected void onSaveInstanceState(Bundle state) {
+    super.onSaveInstanceState(state);
+    state.putString("addressScanOrigin", addressScanOrigin);
   }
 
   @Override
@@ -186,7 +194,7 @@ public final class MainActivity extends Activity {
     ui.removeCallbacksAndMessages(null);
     updater.close();
     network.shutdownNow();
-    connections.values().forEach(ApiClient::close);
+    connections.values().forEach(client -> client.pauseRelay(true));
     super.onDestroy();
   }
 
@@ -206,21 +214,24 @@ public final class MainActivity extends Activity {
   private void refreshBackgroundConnections() {
     for (java.util.Map.Entry<String, ApiClient> entry : connections.entrySet()) {
       if (!settingsPage && api != null && api.origin.equals(entry.getKey())) continue;
-      if (!backgroundPolling.add(entry.getKey())) continue;
       ApiClient client = entry.getValue();
-      network.execute(
-          () -> {
-            try {
-              client.request("/conversations", null);
-              connectionStates.put(client.origin, true);
-              connectionErrors.remove(client.origin);
-            } catch (Exception exception) {
-              connectionStates.put(client.origin, false);
-              connectionErrors.put(client.origin, safeError(exception));
-            } finally {
-              backgroundPolling.remove(client.origin);
-            }
-          });
+      if (!backgroundPolling.add(client)) continue;
+      network.execute(() -> {
+        String failure = null;
+        try {
+          client.request("/conversations", null);
+        } catch (Exception exception) {
+          failure = safeError(exception);
+        }
+        String message = failure;
+        ui.post(() -> {
+          backgroundPolling.remove(client);
+          if (connections.get(client.origin) != client) return;
+          connectionStates.put(client.origin, message == null);
+          if (message == null) connectionErrors.remove(client.origin);
+          else connectionErrors.put(client.origin, message);
+        });
+      });
     }
   }
 
@@ -421,18 +432,22 @@ public final class MainActivity extends Activity {
                                   .put("code", ticket.ticket));
                   String token = result.getString("token");
                   store.save(ticket.origin, token, label, ticket.pin, ticket.relay);
+                  ApiClient saved = ApiClient.fromSaved(store.connection(ticket.origin));
                   ui.post(
                       () -> {
-                        if (epoch != generation) return;
+                        if (epoch != generation) {
+                          saved.close();
+                          return;
+                        }
                         pairingInput.setText("");
-                         api = ticket.client(token);
+                         api = saved;
                          ApiClient old = connections.put(ticket.origin, api);
                          if (old != null) old.close();
                          connectionNames.put(ticket.origin, label);
                          connectionStates.put(ticket.origin, false);
                          connected = false;
                         serverName = label;
-                        selected = store.selected(api.origin);
+                        selected = store.selected(api.stateKey);
                         conversation = null;
                         showChat();
                         ui.removeCallbacks(poll);
@@ -455,6 +470,13 @@ public final class MainActivity extends Activity {
   protected void onActivityResult(int request, int result, android.content.Intent data) {
     super.onActivityResult(request, result, data);
     if (updater.activityResult(request, result)) return;
+    if (request == 44) {
+      String origin = addressScanOrigin;
+      addressScanOrigin = null;
+      if (origin != null && result == RESULT_OK && data != null)
+        showUpdateAddress(origin, data.getStringExtra("pairing"));
+      return;
+    }
     if (request == 41 && result == RESULT_OK && data != null && pairingInput != null) {
       String payload = data.getStringExtra("pairing");
       try {
@@ -566,7 +588,7 @@ public final class MainActivity extends Activity {
     watch(
         composer,
         text -> {
-          if (!loadingDraft && !selected.isEmpty()) store.draft(api.origin, selected, text);
+          if (!loadingDraft && !selected.isEmpty()) store.draft(api.stateKey, selected, text);
           updateSend();
         });
     loadDraft();
@@ -583,14 +605,14 @@ public final class MainActivity extends Activity {
 
   private void loadDraft() {
     loadingDraft = true;
-    composer.setText(selected.isEmpty() ? "" : store.draft(api.origin, selected));
+    composer.setText(selected.isEmpty() ? "" : store.draft(api.stateKey, selected));
     composer.setSelection(composer.length());
     loadingDraft = false;
     renderComposerImage();
   }
 
   private DraftKey draftKey() {
-    return api == null || selected.isEmpty() ? null : new DraftKey(api.origin, selected);
+    return api == null || selected.isEmpty() ? null : new DraftKey(api.stateKey, selected);
   }
 
   private void renderComposerImage() {
@@ -647,7 +669,7 @@ public final class MainActivity extends Activity {
 
   private void select(String id) {
     selected = id;
-    store.select(api.origin, id);
+    store.select(api.stateKey, id);
     conversation = null;
     scheduledState = new JSONArray();
     historyBefore = "";
@@ -723,7 +745,7 @@ public final class MainActivity extends Activity {
                    }
                    if (!id.isEmpty() && !selectedVisible) {
                      selected = "";
-                     store.select(client.origin, "");
+                     store.select(client.stateKey, "");
                      conversation = null;
                      scheduledState = new JSONArray();
                      setConversationActionsVisible(false);
@@ -1250,7 +1272,7 @@ public final class MainActivity extends Activity {
     int epoch = generation;
     String id = selected;
     ApiClient client = api;
-    if (delivery && !store.uncertain(client.origin, id, true)) {
+    if (delivery && !store.uncertain(client.stateKey, id, true)) {
       submitting = false;
       problem("Could not save delivery state. Your message was not sent.");
       updateSend();
@@ -1264,7 +1286,7 @@ public final class MainActivity extends Activity {
                 () -> {
                   if (epoch != generation || api != client) return;
                   submitting = false;
-                  if (delivery) store.uncertain(client.origin, id, false);
+                  if (delivery) store.uncertain(client.stateKey, id, false);
                   try {
                     done.accept(result);
                   } catch (RuntimeException exception) {
@@ -1281,10 +1303,10 @@ public final class MainActivity extends Activity {
                 && ex instanceof ApiClient.ApiError
                 && ((ApiClient.ApiError) ex).status < 500;
             if (rejected)
-              store.uncertain(client.origin, id, false);
+              store.uncertain(client.stateKey, id, false);
             if (delivery
                 && (!(ex instanceof ApiClient.ApiError) || ((ApiClient.ApiError) ex).status >= 500))
-              store.uncertain(client.origin, id, true);
+              store.uncertain(client.stateKey, id, true);
             ui.post(
                 () -> {
                   if (epoch == generation) {
@@ -1292,7 +1314,7 @@ public final class MainActivity extends Activity {
                     if (rejected && definiteFailure != null) definiteFailure.run();
                     problem(
                         safeError(ex)
-                            + (store.uncertain(client.origin, id)
+                            + (store.uncertain(client.stateKey, id)
                                 ? " Delivery is unknown. Review the conversation before sending"
                                     + " again."
                                 : ""));
@@ -1345,10 +1367,10 @@ public final class MainActivity extends Activity {
             accepted = "accepted".equals(deliveryStatus) || "queued".equals(deliveryStatus);
             if (response.optBoolean("queued")) notice(response.optString("message", "Queued until usage resets."));
           }
-          store.uncertain(client.origin, id, !accepted);
+          store.uncertain(client.stateKey, id, !accepted);
           if (!accepted) notice("This message's delivery is uncertain. Review the conversation before retrying.");
           if (accepted) {
-            if (store.draft(client.origin, id).equals(text)) store.draft(client.origin, id, "");
+            if (store.draft(client.stateKey, id).equals(text)) store.draft(client.stateKey, id, "");
             if (selected.equals(id) && composer.getText().toString().equals(text)) composer.setText("");
             if (image != null) draftImages.remove(key, image);
             renderComposerImage();
@@ -1381,8 +1403,8 @@ public final class MainActivity extends Activity {
   }
 
   private boolean reviewDelivery() {
-    if (!store.uncertain(api.origin, selected)) return false;
-    String origin = api.origin, id = selected;
+    if (!store.uncertain(api.stateKey, selected)) return false;
+    String origin = api.stateKey, id = selected;
     new AlertDialog.Builder(this)
         .setTitle("Review delivery first")
         .setMessage(
@@ -2089,14 +2111,9 @@ public final class MainActivity extends Activity {
     LinearLayout actions = row();
     actions.addView(button("Usage and resets", v -> showServerUsage(origin)));
     actions.addView(button("Open", v -> activateSavedServer(origin)));
-    actions.addView(
-        button(
-            "Unpair",
-            v -> {
-              if (active) unpairServer();
-              else unpairSavedServer(origin);
-            }));
+    actions.addView(button("Unpair", v -> confirmUnpair(origin)));
     card.addView(actions, match());
+    settingsAction(card, "Update address", () -> showUpdateAddress(origin, null));
     LinearLayout.LayoutParams layout = match();
     layout.setMargins(0, dp(6), 0, 0);
     panel.addView(card, layout);
@@ -2113,7 +2130,7 @@ public final class MainActivity extends Activity {
       serverName = connectionNames.getOrDefault(origin, saved.optString("name", api.origin));
       connectionNames.put(origin, serverName);
       connected = connectionStates.getOrDefault(origin, false);
-      selected = store.selected(api.origin);
+      selected = store.selected(api.stateKey);
       conversation = null;
       answers.clear();
       showChat();
@@ -2122,52 +2139,185 @@ public final class MainActivity extends Activity {
     }
   }
 
-  private void unpairSavedServer(String origin) {
+  private void showUpdateAddress(String origin, String scanned) {
+    ApiClient client = connections.get(origin);
+    if (client == null) return;
+    EditText input = new EditText(this);
+    input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+    input.setSingleLine(true);
+    input.setHint("HTTPS address or pairing string");
     try {
-      ApiClient client = connections.get(origin);
-      if (client == null) throw new IllegalArgumentException("Saved server was not found.");
-      action(
-          () -> client.request("/logout", new JSONObject()),
-          ignored -> {
-            try {
-              store.remove(origin);
-              connections.remove(origin);
-              client.close();
-              connectionNames.remove(origin);
-              connectionStates.remove(origin);
-              connectionErrors.remove(origin);
-              showSettings();
-            } catch (Exception exception) {
-              problem("The saved server could not be removed.");
-            }
-          },
-          false);
+      if (scanned == null) input.setText(client.address());
+      else {
+        ApiClient decoded = client.atUpdatedAddress(scanned);
+        input.setText(decoded.address());
+        decoded.close();
+      }
     } catch (Exception exception) {
-      problem("The saved server could not be opened. Pair with it again.");
+      input.setText(client.address());
+      input.setError(safeError(exception));
+    }
+    LinearLayout content = column();
+    content.setPadding(dp(24), dp(8), dp(24), 0);
+    content.addView(input, match());
+    AlertDialog dialog = new AlertDialog.Builder(this)
+        .setTitle("Update address")
+        .setMessage("Enter the new address for this server, or scan its pairing QR.")
+        .setView(content)
+        .setNegativeButton("Cancel", null)
+        .setNeutralButton("Scan QR", (ignored, which) -> {
+          addressScanOrigin = origin;
+          startActivityForResult(new Intent(this, QrScanActivity.class), 44);
+        })
+        .setPositiveButton("Verify and save", null)
+        .show();
+    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+      try {
+        ApiClient candidate = client.atUpdatedAddress(input.getText().toString());
+        dialog.dismiss();
+        verifyUpdatedAddress(client, candidate);
+      } catch (Exception exception) {
+        input.setError(safeError(exception));
+      }
+    });
+  }
+
+  private void verifyUpdatedAddress(ApiClient previous, ApiClient candidate) {
+    AlertDialog checking = connectionProgress("Checking address", "Verifying the saved pairing at the new address…");
+    previous.pauseRelay(true);
+    network.execute(() -> {
+      String failure = null;
+      try {
+        if (!(candidate.connectionRequest("/conversations", null) instanceof JSONArray))
+          throw new IllegalStateException("The address did not return a PocketAgent conversation list.");
+      } catch (Exception exception) {
+        failure = safeError(exception);
+      }
+      String result = failure;
+      ui.post(() -> {
+        checking.dismiss();
+        if (isFinishing() || isDestroyed() || connections.get(previous.origin) != previous) {
+          candidate.close();
+          return;
+        }
+        String message = result;
+        if (message == null) {
+          try {
+            store.updateAddress(previous, candidate);
+          } catch (IllegalArgumentException | IllegalStateException exception) {
+            message = exception.getMessage();
+          } catch (Exception exception) {
+            message = "The saved connection could not be updated.";
+          }
+        }
+        if (message != null) {
+          candidate.close();
+          previous.pauseRelay(false);
+          new AlertDialog.Builder(this)
+              .setTitle("Address wasn’t updated")
+              .setMessage(message)
+              .setNegativeButton("Close", null)
+              .setPositiveButton("Try again", (ignored, which) -> showUpdateAddress(previous.origin, null))
+              .show();
+          return;
+        }
+        String name = connectionNames.getOrDefault(previous.origin, previous.origin);
+        removeClient(previous);
+        connections.put(candidate.origin, candidate);
+        connectionNames.put(candidate.origin, name);
+        connectionStates.put(candidate.origin, true);
+        if (api == previous) {
+          api = candidate;
+          connected = true;
+          polling = false;
+          submitting = false;
+        }
+        showSettings();
+        notice("Address updated. Pairing kept.");
+      });
+    });
+  }
+
+  private AlertDialog connectionProgress(String title, String message) {
+    return new AlertDialog.Builder(this).setTitle(title).setMessage(message).setCancelable(false).show();
+  }
+
+  private void confirmUnpair(String origin) {
+    ApiClient client = connections.get(origin);
+    if (client == null) return;
+    new AlertDialog.Builder(this)
+        .setTitle("Unpair server?")
+        .setMessage("PocketAgent will try to revoke this phone’s access on the desktop.")
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton("Unpair", (ignored, which) -> unpair(client))
+        .show();
+  }
+
+  private void unpair(ApiClient client) {
+    AlertDialog checking = connectionProgress("Unpairing", "Checking whether the server can revoke access…");
+    client.pauseRelay(true);
+    network.execute(() -> {
+      boolean revoked;
+      ApiClient request = null;
+      try {
+        request = ApiClient.fromSaved(store.connection(client.origin));
+        if (!request.token.equals(client.token)) throw new IllegalStateException("Connection changed.");
+        request.connectionRequest("/logout", new JSONObject());
+        revoked = true;
+      } catch (Exception exception) {
+        revoked = exception instanceof ApiClient.ApiError && ((ApiClient.ApiError) exception).status == 401;
+      } finally {
+        if (request != null) request.close();
+      }
+      boolean confirmed = revoked;
+      ui.post(() -> {
+        checking.dismiss();
+        if (isFinishing() || isDestroyed() || connections.get(client.origin) != client) return;
+        if (confirmed) {
+          forgetClient(client, "Server unpaired.");
+        } else {
+          client.pauseRelay(false);
+          new AlertDialog.Builder(this)
+              .setTitle("Couldn’t confirm revocation")
+              .setMessage("You can remove the saved connection from this phone. To revoke its old access, open Devices on the desktop.")
+              .setNegativeButton("Keep connection", null)
+              .setPositiveButton("Forget on this phone", (ignored, which) ->
+                  forgetClient(client, "Connection forgotten. Revoke old access in Devices on the desktop."))
+              .show();
+        }
+      });
+    });
+  }
+
+  private void forgetClient(ApiClient client, String message) {
+    if (connections.get(client.origin) != client) return;
+    try {
+      store.remove(client.origin, client.token);
+      removeClient(client);
+      if (api == client) {
+        api = null;
+        conversation = null;
+        selected = "";
+        send = null;
+        JSONObject next = store.load();
+        if (next == null) showPairing();
+        else activateSavedServer(next.getString("origin"));
+      } else {
+        showSettings();
+      }
+      notice(message);
+    } catch (Exception exception) {
+      client.pauseRelay(false);
+      problem("The saved server could not be removed.");
     }
   }
 
-  private void unpairServer() {
-    ApiClient client = api;
-    action(
-        () -> client.request("/logout", new JSONObject()),
-        ignored -> {
-          try {
-            store.remove(client.origin);
-          } catch (Exception ignoredError) {
-          }
-          connections.remove(client.origin);
-          client.close();
-          connectionNames.remove(client.origin);
-          connectionStates.remove(client.origin);
-          connectionErrors.remove(client.origin);
-          api = null;
-          conversation = null;
-          selected = "";
-          send = null;
-          showPairing();
-        },
-        false);
+  private void removeClient(ApiClient client) {
+    connections.remove(client.origin);
+    connectionNames.remove(client.origin);
+    connectionStates.remove(client.origin);
+    connectionErrors.remove(client.origin);
+    client.pauseRelay(true);
   }
 
   private void showServers() {
@@ -2384,8 +2534,8 @@ public final class MainActivity extends Activity {
                                     "/conversations/" + ApiClient.segment(id) + "/scheduled",
                                     new JSONObject().put("text", text).put("dueAt", due).put("clientMessageId", java.util.UUID.randomUUID().toString())),
                             result -> {
-                              if (store.draft(client.origin, id).equals(text))
-                                store.draft(client.origin, id, "");
+                              if (store.draft(client.stateKey, id).equals(text))
+                                store.draft(client.stateKey, id, "");
                               if (selected.equals(id) && composer.getText().toString().equals(text))
                                 composer.setText("");
                                refresh();

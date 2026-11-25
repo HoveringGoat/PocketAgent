@@ -219,9 +219,18 @@
               </StackPanel>
               <WrapPanel>
                 <Button x:Name="SaveRelayEnrollmentButton" Content="Save enrollment" Click="SaveRelayEnrollment"/>
+                <Button x:Name="UpdateRelayAddressButton" Content="Update relay address" Click="ShowRelayAddress"/>
                 <Button x:Name="ReplaceRelayEnrollmentButton" Content="Replace enrollment" Click="ReplaceRelayEnrollment"/>
                 <Button x:Name="UnenrollRelayButton" Content="Unenroll" Click="UnenrollRelay"/>
               </WrapPanel>
+              <StackPanel x:Name="RelayAddressPanel" Visibility="Collapsed" Margin="0,6,0,4">
+                <TextBlock Text="Relay address"/>
+                <TextBox x:Name="RelayAddressSetting" AutomationProperties.Name="Relay address" Margin="0,5,0,6"/>
+                <WrapPanel>
+                  <Button x:Name="SaveRelayAddressButton" Content="Verify and save" Click="SaveRelayAddress"/>
+                  <Button x:Name="CancelRelayAddressButton" Content="Cancel" Click="CancelRelayAddress"/>
+                </WrapPanel>
+              </StackPanel>
               <Expander x:Name="RelayClientAdvanced" Header="Advanced .NET client pairing" Visibility="Collapsed" Margin="0,4,0,0">
                 <StackPanel>
                   <TextBlock Text="A custom .NET client uses a one-time device pairing ticket to access this desktop through the relay." Foreground="#A7BAA7"/>

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,6 +10,8 @@ public partial class MainWindow
 {
     private bool CanEditRelaySettings => relay is null && ServerToggle.IsEnabled;
     private bool replacingRelayEnrollment;
+    private bool editingRelayAddress;
+    private bool verifyingRelayAddress;
 
     private static HostSettings RuntimeHostSettings(HostSettings host) =>
         host.Relay.ConnectsUpstream && !host.Relay.Enabled ? host.WithLoopbackHttpListener() : host;
@@ -95,11 +98,16 @@ public partial class MainWindow
         var showEnrollment = editing && (!enrolled || replacingRelayEnrollment);
         RelayEnrollmentPanel.Visibility = SaveRelayEnrollmentButton.Visibility = showEnrollment ? Visibility.Visible : Visibility.Collapsed;
         ReplaceRelayEnrollmentButton.Visibility = editing && enrolled ? Visibility.Visible : Visibility.Collapsed;
+        ReplaceRelayEnrollmentButton.IsEnabled = !verifyingRelayAddress;
+        UpdateRelayAddressButton.Visibility = editing && enrolled && !editingRelayAddress && !replacingRelayEnrollment
+            ? Visibility.Visible : Visibility.Collapsed;
+        RelayAddressPanel.Visibility = editing && enrolled && editingRelayAddress ? Visibility.Visible : Visibility.Collapsed;
+        RelayAddressPanel.IsEnabled = !verifyingRelayAddress;
         ReplaceRelayEnrollmentButton.Content = replacingRelayEnrollment ? "Cancel replacement" : "Replace enrollment";
         using var enrollmentInput = showEnrollment && mode == "client" ? RelayEnrollmentSetting.SecurePassword : null;
         SaveRelayEnrollmentButton.IsEnabled = enrollmentInput is { Length: > 0 };
         UnenrollRelayButton.Visibility = enrolled ? Visibility.Visible : Visibility.Collapsed;
-        UnenrollRelayButton.IsEnabled = editing && enrolled;
+        UnenrollRelayButton.IsEnabled = editing && enrolled && !verifyingRelayAddress;
         RelayClientAdvanced.Visibility = status == RelayConnectionStatus.Connected ? Visibility.Visible : Visibility.Collapsed;
         CopyRelayDeviceTicketButton.IsEnabled = status == RelayConnectionStatus.Connected;
         RelayUpstreamStatus.Text = status switch
@@ -107,6 +115,7 @@ public partial class MainWindow
             RelayConnectionStatus.Connected => "Connected to relay.",
             RelayConnectionStatus.Connecting => "Connecting to relay…",
             RelayConnectionStatus.Retrying => "Relay unavailable. Retrying…",
+            _ when verifyingRelayAddress => "Verifying the relay address…",
             _ when replacingRelayEnrollment && editing => "Paste a new enrollment to replace the saved one.",
             _ when enrolled => "Enrollment saved. Turn the server ON to connect.",
             _ when editing => "Paste an enrollment to connect to a relay.",
@@ -117,6 +126,7 @@ public partial class MainWindow
     private void RelayModeChanged(object sender, SelectionChangedEventArgs e)
     {
         replacingRelayEnrollment = false;
+        editingRelayAddress = false;
         RelayEnrollmentSetting.Clear();
         UpdateRelaySetup();
     }
@@ -124,11 +134,71 @@ public partial class MainWindow
 
     private void ReplaceRelayEnrollment(object sender, RoutedEventArgs e)
     {
+        editingRelayAddress = false;
         replacingRelayEnrollment = !replacingRelayEnrollment;
         if (!replacingRelayEnrollment) RelayEnrollmentSetting.Clear();
         UpdateRelaySetup();
         if (replacingRelayEnrollment) RelayEnrollmentSetting.Focus();
     }
+
+    private void ShowRelayAddress(object sender, RoutedEventArgs e)
+    {
+        editingRelayAddress = true;
+        RelayAddressSetting.Text = settings.Host.Relay.UpstreamUrl;
+        UpdateRelaySetup();
+        RelayAddressSetting.Focus();
+        RelayAddressSetting.SelectAll();
+    }
+
+    private void CancelRelayAddress(object sender, RoutedEventArgs e)
+    {
+        editingRelayAddress = false;
+        UpdateRelaySetup();
+    }
+
+    private async void SaveRelayAddress(object sender, RoutedEventArgs e) => await Act(async () =>
+    {
+        if (verifyingRelayAddress) return;
+        if (!CanEditRelaySettings) throw new InvalidOperationException("Turn the server OFF to update the relay address.");
+        var saved = settings.Host.Relay;
+        var previous = new Uri(saved.UpstreamUrl);
+        var input = RelayAddressSetting.Text.Trim();
+        if (input.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) input = "wss://" + input[8..];
+        if (!input.Contains("://", StringComparison.Ordinal)) input = "wss://" + input;
+        var address = RelayEnrollment.ValidateEndpoint(input, saved.UpstreamCertificatePin);
+        if (saved.UpstreamCertificatePin.Length == 0
+            && (previous.Scheme != address.Scheme || !StringComparer.OrdinalIgnoreCase.Equals(previous.IdnHost, address.IdnHost)))
+            throw new InvalidOperationException("This enrollment uses hostname trust. Copy a fresh enrollment from the relay node to change its hostname.");
+
+        verifyingRelayAddress = true;
+        UpdateRelaySetup();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            try
+            {
+                await using var probe = await RelayTransportClient.ConnectAsync(address, true, Guid.Parse(saved.RemoteHostId),
+                    saved.RemoteHostToken, timeout.Token, saved.UpstreamCertificatePin);
+            }
+            catch (Exception exception) when (exception is System.Net.WebSockets.WebSocketException or
+                OperationCanceledException or InvalidOperationException or IOException)
+            {
+                throw new InvalidOperationException("Could not verify the saved enrollment at this address. Check that the relay node is running and its address and certificate are current.", exception);
+            }
+            if (!CanEditRelaySettings || !ReferenceEquals(settings.Host.Relay, saved) || !editingRelayAddress)
+                throw new InvalidOperationException("Relay settings changed during verification. Try again with the server stopped.");
+            saved.UpstreamUrl = address.AbsoluteUri;
+            try { settings.Save(); }
+            catch { saved.UpstreamUrl = previous.AbsoluteUri; throw; }
+            editingRelayAddress = false;
+            ErrorDisplay.Text = "Relay address updated. Enrollment kept.";
+        }
+        finally
+        {
+            verifyingRelayAddress = false;
+            UpdateRelaySetup();
+        }
+    });
 
     private async void SaveRelayEnrollment(object sender, RoutedEventArgs e) => await Act(() =>
     {

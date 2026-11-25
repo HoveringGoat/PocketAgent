@@ -28,7 +28,7 @@ Only the selected HTTPS chat port needs forwarding. No public CA, port 80/443, C
 4. Forward that TCP port to the desktop and approve the one-time Windows Firewall rule named `PocketAgent inbound TCP <port>`.
 5. Start the server, open Devices and pair the phone. Test cellular reachability with Wi-Fi disabled.
 
-CGNAT and double NAT require router/ISP changes. Local diagnostics verify listener, TLS identity and API behavior; they cannot prove outside reachability. A changed public IP requires pairing at the new origin.
+CGNAT and double NAT require router/ISP changes. Local diagnostics verify listener, TLS identity and API behavior. Test outside reachability over cellular. If the desktop moves from Wi-Fi to Ethernet, check that the router forwards the port to the desktop’s current LAN address. Use [connection recovery](#update-a-saved-connection) when a client’s saved endpoint changes.
 
 ## Relay mode
 
@@ -42,6 +42,14 @@ Relay mode lets a locked-down desktop reach the relay node over an outbound WebS
 
 **Off** is the default and hides both setup panels. Saving **Off** pauses relay use and retains saved credentials. To change or remove a client enrollment, stop the server and choose **Replace enrollment** or **Unenroll** in **Connect to relay**. Unenrolling removes the saved upstream credentials and leaves the client ready to enroll again. Each node provisions one reusable host/client enrollment.
 
+### Update a saved connection
+
+On Android, open **Settings**, find the server card, and tap **Update address**. Enter the new HTTPS address or scan the current PocketAgent pairing QR for that server. For a relay connection, enter the relay node’s address. PocketAgent uses the QR to read the address and check the connection identity. It verifies the saved credential at the new endpoint before saving. The existing pairing, selected conversation, and drafts carry over. If verification fails, the previous endpoint stays saved.
+
+On a Windows desktop that connects to an upstream relay, turn its server **OFF**, then open **Settings > Relay mode > Connect to relay > Update relay address**. Enter the new address and choose **Verify and save**. PocketAgent checks TLS and authenticates to the relay with the saved enrollment. Turn the server back on after the address is saved. A connection that uses platform hostname trust can change its port while keeping the hostname. To change a hostname without a saved certificate pin, use a fresh pairing on Android or **Replace enrollment** on the Windows relay client.
+
+**Unpair** on Android asks the desktop to revoke this phone’s access. If the request fails, **Forget on this phone** removes the saved connection locally. Open **Devices** on the desktop to revoke access there.
+
 The server can also be configured through `PocketAgent__Relay__*` settings. A network relay uses `wss://`. Without a configured pin, the client uses platform certificate trust. Plain `ws://` is supported for loopback. Two focused checks cover desktop and transport behavior:
 
 ```powershell
@@ -49,7 +57,7 @@ dotnet run --project tests/PocketAgent.DesktopChecks -- --relay-setup
 dotnet run --project tests/PocketAgent.RelayChecks
 ```
 
-The desktop check starts the real relay node and outbound service over pinned WSS on separate loopback ports. It verifies the remote API, restart and reconnection, and Settings at minimum and larger window sizes. The transport check exercises two sequential encrypted requests through the relay. Test reachability from the remote network after configuring a public endpoint.
+The desktop check starts the real relay node and outbound service over pinned WSS on separate loopback ports. It moves the node to a new port, verifies that the saved enrollment reconnects, and checks Settings at minimum and larger window sizes. The transport check exercises two sequential encrypted requests through the relay. Test reachability from the remote network after configuring a public endpoint.
 
 To verify phone pairing on an isolated emulator, install the Android debug APK, set `POCKETAGENT_TEST_ANDROID` to the emulator serial, and run:
 
@@ -57,7 +65,7 @@ To verify phone pairing on an isolated emulator, install the Android debug APK, 
 dotnet run --project tests/PocketAgent.DesktopChecks -- --relay-setup --android-relay
 ```
 
-The check uses ADB reverse, decodes the Windows-generated QR in the Android app, pairs through Add server, reloads the stored connection, reconnects, and checks device revocation.
+The check uses ADB reverse, decodes the Windows-generated QR in the Android app, pairs through Add server, verifies an endpoint move through a second forwarded port, and checks failed address verification, offline removal, and online device revocation.
 
 ## Wi-Fi and device pairing
 

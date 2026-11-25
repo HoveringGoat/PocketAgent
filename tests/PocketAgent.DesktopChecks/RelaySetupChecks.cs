@@ -47,7 +47,7 @@ internal static class RelaySetupChecks
 
     private static async Task CheckEnrollment(string repository, string output)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(75));
         var cancellation = timeout.Token;
         var nodeDirectory = Path.Combine(output, "node");
         var remoteDirectory = Path.Combine(output, "remote");
@@ -132,7 +132,7 @@ internal static class RelaySetupChecks
                 Control<Button>(remote, "UnenrollRelayButton").IsEnabled)
                 throw new InvalidOperationException("A running client must show its status and explain how to unlock unenrollment.");
             await CheckRequests(remote, enrollment, clientId, savedNode.ClientToken, cancellation);
-            await CheckPhonePairing(remote, output, clientSettings.Origin, enrollment, cancellation);
+            await CheckPhonePairing(remote, node, output, clientSettings.Origin, enrollment, cancellation);
 
             Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
             Click(node, "ServerToggle");
@@ -148,6 +148,41 @@ internal static class RelaySetupChecks
             Click(remote, "ServerToggle");
             await WaitForServer(remote, running: false, cancellation);
             await CheckLayout(remote, output, "saved", cancellation);
+            Click(remote, "UpdateRelayAddressButton");
+            var addressInput = Control<TextBox>(remote, "RelayAddressSetting");
+            addressInput.Text = "wss://" + new string('a', 55) + ".example.test:0/relay";
+            await CheckLayout(remote, output, "address", cancellation);
+            Click(remote, "SaveRelayAddressButton");
+            if (DesktopSettings.Load().Host.Relay.UpstreamUrl != enrollment.RelayUrl ||
+                !Control<TextBlock>(remote, "ErrorDisplay").Text.Contains("WebSocket", StringComparison.Ordinal))
+                throw new InvalidOperationException("An invalid address must leave the saved relay enrollment intact.");
+
+            Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", nodeDirectory);
+            Click(node, "ServerToggle");
+            await WaitForServer(node, running: false, cancellation);
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var newPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            Control<TextBox>(node, "PortSetting").Text = newPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Click(node, "ServerToggle");
+            await WaitForServer(node, running: true, cancellation);
+
+            Environment.SetEnvironmentVariable("POCKETAGENT_DESKTOP_DATA", remoteDirectory);
+            var movedUrl = new UriBuilder(enrollment.RelayUrl) { Port = newPort }.Uri.AbsoluteUri;
+            addressInput.Text = movedUrl;
+            Click(remote, "SaveRelayAddressButton");
+            await WaitUntil(() => DesktopSettings.Load().Host.Relay.UpstreamUrl == movedUrl, cancellation);
+            var moved = DesktopSettings.Load().Host.Relay;
+            if (moved.RemoteHostId != restored.RemoteHostId || moved.RemoteHostToken != restored.RemoteHostToken ||
+                moved.SessionKey != restored.SessionKey || moved.UpstreamCertificatePin != restored.UpstreamCertificatePin)
+                throw new InvalidOperationException("Changing the address must keep the relay enrollment identity and secrets.");
+            Click(remote, "ServerToggle");
+            await WaitForServer(remote, running: true, cancellation);
+            await WaitUntil(() => Control<TextBlock>(remote, "RelayUpstreamStatus").Text == "Connected to relay.", cancellation);
+            await CheckRequests(remote, enrollment with { RelayUrl = movedUrl }, clientId, savedNode.ClientToken, cancellation);
+            Click(remote, "ServerToggle");
+            await WaitForServer(remote, running: false, cancellation);
             Control<ComboBox>(remote, "RelayModeSetting").SelectedValue = "off";
             Click(remote, "SaveButton");
             var inactive = DesktopSettings.Load().Host.Relay;
@@ -194,7 +229,7 @@ internal static class RelaySetupChecks
                 ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
                     certificate is not null && PeerCertificates.Fingerprint(certificate) == enrollment.CertificatePin
             });
-            var disabledEndpoint = new UriBuilder(enrollment.RelayUrl) { Scheme = "https" }.Uri;
+            var disabledEndpoint = new UriBuilder(movedUrl) { Scheme = "https" }.Uri;
             using var disabled = await probe.GetAsync(disabledEndpoint, cancellation);
             if (disabled.StatusCode != HttpStatusCode.NotFound)
                 throw new InvalidOperationException("Disabling the relay node must remove its WebSocket endpoint.");
@@ -293,7 +328,8 @@ internal static class RelaySetupChecks
             window.UpdateLayout();
             var viewport = (ScrollContentPresenter)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
             var primaryControls = new[] { "RelayModeSetting", "RelayServerOffNotice", "RelayEnrollmentSetting", "RelayNodeStatus", "RelayUpstreamStatus",
-                "CopyRelayEnrollmentButton", "UnenrollRelayButton", "SaveRelayEnrollmentButton", "ReplaceRelayEnrollmentButton", "CodexApiKeySetting",
+                "CopyRelayEnrollmentButton", "UnenrollRelayButton", "SaveRelayEnrollmentButton", "ReplaceRelayEnrollmentButton",
+                "UpdateRelayAddressButton", "RelayAddressSetting", "SaveRelayAddressButton", "CancelRelayAddressButton", "CodexApiKeySetting",
                 "CodexApiKeyVariableSetting", "SaveCodexApiKeyButton", "RemoveCodexApiKeyButton", "VerifyProviderButton", "ProviderDisplay" };
             foreach (var name in primaryControls)
             {
@@ -327,7 +363,8 @@ internal static class RelaySetupChecks
         }
     }
 
-    private static async Task CheckPhonePairing(MainWindow window, string output, string origin, RelayEnrollment enrollment, CancellationToken cancellation)
+    private static async Task CheckPhonePairing(MainWindow window, MainWindow node, string output, string origin,
+        RelayEnrollment enrollment, CancellationToken cancellation)
     {
         var navigation = Control<TabControl>(window, "Navigation");
         navigation.SelectedIndex = 1;
@@ -389,7 +426,10 @@ internal static class RelaySetupChecks
             Capture(window, Path.Combine(output, $"relay-client-devices-{width}-{height}.png"));
         }
         if (Environment.GetCommandLineArgs().Contains("--android-relay", StringComparer.OrdinalIgnoreCase))
-            await CheckAndroid((BitmapSource)qr.Source, endpoint.Port, cancellation);
+        {
+            var relayNode = (WebApplication)typeof(MainWindow).GetField("relay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(node)!;
+            await CheckAndroid((BitmapSource)qr.Source, endpoint.Port, relayNode.Services.GetRequiredService<HostSettings>(), cancellation);
+        }
     }
 
     private static RelayApplicationRequest PairPhoneRequest(string ticket) =>
@@ -397,7 +437,7 @@ internal static class RelaySetupChecks
             JsonSerializer.SerializeToUtf8Bytes(new { deviceName = "Relay phone fixture", code = ticket })) with
         { Headers = [new("Content-Type", "application/json")] };
 
-    private static async Task CheckAndroid(BitmapSource qr, int port, CancellationToken cancellation)
+    private static async Task CheckAndroid(BitmapSource qr, int port, HostSettings node, CancellationToken cancellation)
     {
         var serial = Environment.GetEnvironmentVariable("POCKETAGENT_TEST_ANDROID") ?? "";
         if (!System.Text.RegularExpressions.Regex.IsMatch(serial, @"^emulator-\d+$"))
@@ -424,22 +464,34 @@ internal static class RelaySetupChecks
         encoder.Frames.Add(BitmapFrame.Create(qr));
         using var png = new MemoryStream();
         encoder.Save(png);
+        using var aliasListener = new TcpListener(IPAddress.Loopback, 0);
+        aliasListener.Start();
+        var aliasPort = ((IPEndPoint)aliasListener.LocalEndpoint).Port;
+        aliasListener.Stop();
         await Run(null, "reverse", $"tcp:{port}", $"tcp:{port}");
+        var previousPublicOrigin = node.PublicOrigin;
         try
         {
+            // The isolated node accepts its forwarded address as well as its listening address.
+            node.PublicOrigin = $"https://127.0.0.1:{aliasPort}";
+            await Run(null, "reverse", $"tcp:{aliasPort}", $"tcp:{port}");
             var encoded = System.Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(png.ToArray()));
             await Run(encoded, "shell", "-T", "run-as dev.pocketagent sh -c 'mkdir -p cache && base64 -d > cache/relay-pairing.png'");
             var written = (await Run(null, "shell", "run-as", "dev.pocketagent", "stat", "-c", "%s", "cache/relay-pairing.png")).Trim();
             if (written != png.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))
                 throw new InvalidOperationException($"The generated QR did not transfer intact to the emulator ({written} of {png.Length} bytes).");
-            var result = await Run(null, "shell", "am", "instrument", "-w", "-r", "dev.pocketagent/.RelayPairingInstrumentation");
+            var result = await Run(null, "shell", "am", "instrument", "-w", "-r",
+                "-e", "alternatePort", aliasPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "dev.pocketagent/.RelayPairingInstrumentation");
             if (!result.Contains("INSTRUMENTATION_CODE: -1", StringComparison.Ordinal))
                 throw new InvalidOperationException(result);
             Console.WriteLine(result);
         }
         finally
         {
+            node.PublicOrigin = previousPublicOrigin;
             await Run(null, "shell", "run-as", "dev.pocketagent", "rm", "-f", "cache/relay-pairing.png");
+            await Run(null, "reverse", "--remove", $"tcp:{aliasPort}");
             await Run(null, "reverse", "--remove", $"tcp:{port}");
         }
     }

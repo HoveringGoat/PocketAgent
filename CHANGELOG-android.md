@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.14 - 2026-11-24
+
+- Update a saved server address by entering the new endpoint or scanning its pairing QR while preserving pairing and drafts.
+- Forget unreachable servers from the phone and revoke access when the server is reachable.
+
 ## 0.4.13 - 2026-11-24
 
 - Download and verify Android updates in PocketAgent, then confirm installation in Android's package installer.
