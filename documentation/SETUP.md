@@ -50,6 +50,10 @@ On a Windows desktop that connects to an upstream relay, turn its server **OFF**
 
 **Unpair** on Android asks the desktop to revoke this phone’s access. If the request fails, **Forget on this phone** removes the saved connection locally. Open **Devices** on the desktop to revoke access there.
 
+If a pairing QR points to the public address and the phone reports a refused connection after a switch to Ethernet, check that the gateway’s existing TCP forward targets the Ethernet address. Test the public address from the phone with Wi-Fi off. If it works over cellular, use a local address on the LAN when the gateway cannot route connections back through its public address.
+
+For PocketAgent 0.3.47, changing the listener address while keeping the same public address can leave the old LAN address in the HTTPS certificate. To refresh both addresses while keeping the pairing key, turn the server off. Run **Set up Wi-Fi connection** in **Advanced certificate settings** and select the Ethernet address. Then run **Set up direct internet**, select the same Ethernet address, and restore the public address and port before starting the server. On the home network, use **Update address** with the Ethernet HTTPS address to reach the desktop directly.
+
 The server can also be configured through `PocketAgent__Relay__*` settings. A network relay uses `wss://`. Without a configured pin, the client uses platform certificate trust. Plain `ws://` is supported for loopback. Two focused checks cover desktop and transport behavior:
 
 ```powershell
