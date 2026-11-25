@@ -33,15 +33,10 @@ import android.widget.ArrayAdapter;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.net.Uri;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.ConnectException;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.net.UnknownHostException;
 import java.net.NoRouteToHostException;
 import java.net.SocketTimeoutException;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -56,9 +51,9 @@ public final class MainActivity extends Activity {
       ACCENT = Color.rgb(193, 218, 166);
   private static final int PICKER_OUTLINE = Color.rgb(71, 96, 75);
   private static final int PICKER_ACTIVE = Color.rgb(41, 67, 51);
-  private static final String RELEASE_LIST_ENDPOINT = "https://api.github.com/repos/HoveringGoat/PocketAgent/releases?per_page=30";
   private final Handler ui = new Handler(Looper.getMainLooper());
   private final ExecutorService network = Executors.newCachedThreadPool();
+  private final AndroidUpdater updater = new AndroidUpdater(this, network);
   private SessionStore store;
   private SharedPreferences appPreferences;
   private static final String UI_SCALE_KEY = "uiScale";
@@ -97,7 +92,6 @@ public final class MainActivity extends Activity {
   private ScrollView scroll;
   private boolean resumed, polling, connected, submitting, loadingDraft, connectionProblem, historyLoading, settingsPage;
   private boolean transientMessage;
-  private boolean updateCheckStarted;
   private int generation;
   private final Map<String, String> answers = new HashMap<>();
   private final Runnable dismissTransientMessage =
@@ -156,7 +150,7 @@ public final class MainActivity extends Activity {
     }
     if (api == null) showPairing();
     else showChat();
-    if (store.checkUpdatesOnStartup()) checkForUpdates();
+    if (store.checkUpdatesOnStartup()) updater.check(false);
   }
 
   @Override
@@ -190,6 +184,7 @@ public final class MainActivity extends Activity {
   protected void onDestroy() {
     generation++;
     ui.removeCallbacksAndMessages(null);
+    updater.close();
     network.shutdownNow();
     connections.values().forEach(ApiClient::close);
     super.onDestroy();
@@ -235,129 +230,6 @@ public final class MainActivity extends Activity {
 
   private int scaledDp(int value) {
     return dp(Math.round(value * uiScale));
-  }
-
-  private void checkForUpdates() {
-    if (updateCheckStarted) return;
-    updateCheckStarted = true;
-    network.execute(
-        () -> {
-          HttpURLConnection connection = null;
-          try {
-            connection = (HttpURLConnection) new URL(RELEASE_LIST_ENDPOINT).openConnection();
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(8000);
-            connection.setRequestProperty("Accept", "application/vnd.github+json");
-            connection.setRequestProperty("User-Agent", "PocketAgent/" + BuildConfig.VERSION_NAME);
-            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) return;
-            StringBuilder body = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-              String line;
-              while ((line = reader.readLine()) != null && body.length() < 512_000) body.append(line);
-            }
-            JSONObject release = selectChannelRelease(new JSONArray(body.toString()), "android-v");
-            if (release == null) return;
-            String version = release.optString("tag_name").substring("android-v".length());
-            if (!isNewerVersion(version, BuildConfig.VERSION_NAME)) return;
-            boolean hasAndroidAsset = false;
-            JSONArray assets = release.optJSONArray("assets");
-            if (assets != null) {
-              String expectedAsset = "PocketAgent-" + version + "-android.apk";
-              for (int i = 0; i < assets.length(); i++) {
-                JSONObject asset = assets.optJSONObject(i);
-                if (asset != null && expectedAsset.equals(asset.optString("name"))) {
-                  hasAndroidAsset = true;
-                  break;
-                }
-              }
-            }
-            if (!hasAndroidAsset) return;
-            String releasePage = release.optString("html_url", "https://github.com/HoveringGoat/PocketAgent/releases");
-            String notes = channelNotes(release.optString("body", ""));
-            if (notes.length() > 1200) notes = notes.substring(0, 1200) + "…";
-            String message = "PocketAgent " + version + " is available.\n\n" + (notes.isEmpty() ? "Open the GitHub release page to download the APK." : notes);
-            String finalReleasePage = releasePage;
-            ui.post(() -> showUpdatePrompt(version, message, finalReleasePage));
-          } catch (Exception ignored) {
-            // Update checks are best effort and must never affect pairing or chat.
-          } finally {
-            if (connection != null) connection.disconnect();
-            updateCheckStarted = false;
-          }
-        });
-  }
-
-  private static JSONObject selectChannelRelease(JSONArray releases, String prefix) {
-    JSONObject selected = null;
-    int[] selectedVersion = new int[] {0, 0, 0};
-    for (int i = 0; i < releases.length(); i++) {
-      JSONObject candidate = releases.optJSONObject(i);
-      if (candidate == null) continue;
-      String tag = candidate.optString("tag_name");
-      if (!tag.regionMatches(true, 0, prefix, 0, prefix.length())) continue;
-      int[] version = parseVersion(tag.substring(prefix.length()));
-      if (version == null || (selected == null && version != null) || compareVersion(version, selectedVersion) > 0) {
-        if (version != null) {
-          selected = candidate;
-          selectedVersion = version;
-        }
-      }
-    }
-    return selected;
-  }
-
-  private static String channelNotes(String notes) {
-    String marker = "## Android";
-    int start = notes.indexOf(marker);
-    if (start < 0) return notes.trim();
-    int end = notes.indexOf("\n## ", start + marker.length());
-    return notes.substring(start + marker.length(), end < 0 ? notes.length() : end).trim();
-  }
-
-  private static int[] parseVersion(String value) {
-    try {
-      String[] pieces = value.replaceFirst("^[vV]", "").split("\\.");
-      int[] version = new int[] {0, 0, 0};
-      for (int i = 0; i < Math.min(3, pieces.length); i++) version[i] = Integer.parseInt(pieces[i].replaceAll("[^0-9].*", ""));
-      return version;
-    } catch (Exception ignored) {
-      return null;
-    }
-  }
-
-  private static int compareVersion(int[] left, int[] right) {
-    for (int i = 0; i < 3; i++) if (left[i] != right[i]) return Integer.compare(left[i], right[i]);
-    return 0;
-  }
-
-  private void showUpdatePrompt(String version, String message, String releasePage) {
-    if (isFinishing() || isDestroyed()) return;
-    new AlertDialog.Builder(this)
-        .setTitle("Update available: " + version)
-        .setMessage(message)
-        .setNegativeButton("Later", null)
-        .setPositiveButton("Open release", (dialog, which) -> {
-          try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(releasePage)));
-          } catch (Exception ignored) {
-            notice("Could not open the release page.");
-          }
-        })
-        .show();
-  }
-
-  private static boolean isNewerVersion(String candidate, String current) {
-    try {
-      String[] next = candidate.split("\\.");
-      String[] installed = current.split("\\.");
-      for (int i = 0; i < Math.max(next.length, installed.length); i++) {
-        int a = i < next.length ? Integer.parseInt(next[i].replaceAll("[^0-9].*", "")) : 0;
-        int b = i < installed.length ? Integer.parseInt(installed[i].replaceAll("[^0-9].*", "")) : 0;
-        if (a != b) return a > b;
-      }
-    } catch (Exception ignored) {
-    }
-    return false;
   }
 
   private LinearLayout column() {
@@ -582,6 +454,7 @@ public final class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int request, int result, android.content.Intent data) {
     super.onActivityResult(request, result, data);
+    if (updater.activityResult(request, result)) return;
     if (request == 41 && result == RESULT_OK && data != null && pairingInput != null) {
       String payload = data.getStringExtra("pairing");
       try {
@@ -2157,7 +2030,7 @@ public final class MainActivity extends Activity {
     panel.addView(scale, match());
 
     settingsSection(panel, "Application");
-    settingsAction(panel, "Check for updates", this::checkForUpdates);
+    settingsAction(panel, "Check for updates", () -> updater.check(true));
     android.widget.CheckBox updates = new android.widget.CheckBox(this);
     updates.setText(R.string.check_updates_on_startup);
     updates.setTextColor(TEXT);

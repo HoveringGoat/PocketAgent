@@ -4,6 +4,11 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.13 - 2026-11-24
+
+- Download and verify Android updates in PocketAgent, then confirm installation in Android's package installer.
+- Show download progress and cancellation, retry failed updates, and report the result of manual update checks.
+
 ## 0.4.12 - 2026-11-24
 
 - Paste images from the Android clipboard or a compatible keyboard and preview them before sending.

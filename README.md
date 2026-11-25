@@ -143,9 +143,9 @@ are tracked independently and may have different version numbers.
 
 The desktop updater can check GitHub Releases, show platform-specific notes,
 download a verified update, and hand installation to a separate updater process
-when the server is idle. Android checks on startup and opens the matching APK
-release for manual installation. Runtime state is kept outside replaceable
-package files.
+when the server is idle. Android can check on startup or from Settings, then
+download and verify the APK in PocketAgent. Android's package installer asks
+for confirmation. Runtime state is kept outside replaceable package files.
 
 Read [desktop/server changes](CHANGELOG-desktop.md) and
 [Android changes](CHANGELOG-android.md) for release history.

@@ -23,6 +23,7 @@
   - [Desktop conversations](SETUP.md#desktop-conversations)
   - [Usage and scheduled messages](SETUP.md#usage-and-scheduled-messages)
   - [Build from source](SETUP.md#build-from-source)
+  - [Android app updates](SETUP.md#android-app-updates)
   - [Android visual preview](SETUP.md#android-visual-preview)
   - [Verification and limits](SETUP.md#verification-commands-and-limits)
 - [Project brief](PROJECT.md)

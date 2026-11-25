@@ -111,6 +111,21 @@ With **Check for updates on startup** enabled, a newer desktop release with a ch
 
 Desktop updates keep the main window open under a modal while the installer downloads and its SHA-256 checksum is verified. The modal shows a percentage when the download server supplies a content length. `UpdateDownloadDialog` receives progress over a per-update, current-user named pipe. The separately launched updater displays its own window before signaling readiness. The desktop checks for active work before downloading and again before authorizing installation and closing. An accepted startup offer stays queued if work begins during the download. The updater window stays visible during silent installation and restart, then closes after the launched desktop writes its version-matched startup confirmation. Preparation failures leave the desktop open. Install and startup failures leave a dismissible updater window with the log location documented below.
 
+## Android app updates
+
+Open **Settings > Check for updates** or enable **Check for updates on startup**. The offer includes the Android release notes. Tap **Download and install**. If prompted, open Android Settings, enable **Allow from this source** for PocketAgent, and return. PocketAgent starts downloading after permission is granted. The dialog shows a percentage when the server supplies a size. **Cancel** stops the transfer. If anything fails, **Retry** starts a fresh attempt and **Open release** opens GitHub for manual recovery.
+
+`AndroidUpdater` selects the newest stable `android-v` release with the matching APK. It checks SHA-256 against the GitHub asset digest or the release's per-APK checksum, then checks the APK's package name and version. It gives Android's installer read access to the verified file through `UpdateApkProvider`. Android checks signing compatibility and asks for confirmation. The first upgrade to a build with this updater still uses the prior version's browser flow. The app needs internet access to GitHub during checks and downloads, including when paired to a local server.
+
+For the focused updater check, build with `scripts/Build-Android.ps1 -DebugOnly` and install the debug APK on an isolated emulator. Build a fixture APK with package `dev.pocketagent`, version name `9.0.0`, version code `90000`, and the debug signing key. For this check, the APK can contain only an Android manifest linked with `aapt2`. Push it to `/data/local/tmp/pocketagent-update-fixture.apk` and copy it into the app cache:
+
+```powershell
+adb shell "cat /data/local/tmp/pocketagent-update-fixture.apk | run-as dev.pocketagent sh -c 'cat > cache/update-fixture.apk'"
+adb shell am instrument -w dev.pocketagent/.UpdateInstrumentation
+```
+
+The check serves fixtures in-process and exercises cancellation, checksum rejection, retry, and the real Android installer. It cancels at the confirmation screen and saves screenshots as `cache/update-*.png`. Run once with install permission unset to exercise the Settings round trip and repeat at a compact display size with long release notes.
+
 ## Verification commands and limits
 
 Focused relay and solution checks:
