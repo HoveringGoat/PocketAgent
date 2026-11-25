@@ -94,10 +94,15 @@
             <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <StackPanel>
                 <DockPanel x:Name="ComposerAttachment" Visibility="Collapsed" Margin="0,0,0,4" LastChildFill="False">
-                  <Image x:Name="ComposerPreview" Width="48" Height="36" Stretch="Uniform" Margin="0,0,8,0" AutomationProperties.Name="Pasted image preview"/>
+                  <Image x:Name="ComposerPreview" Width="48" Height="36" Stretch="Uniform" Margin="0,0,8,0" AutomationProperties.Name="Attached image preview"/>
                   <Button Content="Remove image" Click="RemoveComposerImage" MinHeight="32" Margin="0"/>
                 </DockPanel>
-                <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" MinHeight="72" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
+                <Grid x:Name="ComposerDropTarget" AllowDrop="True" PreviewDragEnter="ComposerFileDragOver" PreviewDragOver="ComposerFileDragOver" PreviewDragLeave="ComposerFileDragLeave" PreviewDrop="ComposerFileDrop">
+                  <TextBox x:Name="Composer" AutomationProperties.Name="Message Codex" AutomationProperties.HelpText="Paste an image or drop a PNG or JPEG file here." MinHeight="72" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" PreviewKeyDown="ComposerKeyDown"/>
+                  <Border x:Name="ComposerDropHint" IsHitTestVisible="False" Visibility="Collapsed" BorderThickness="2" Background="#1D2C23" Padding="10">
+                    <TextBlock x:Name="ComposerDropHintLabel" Foreground="#EBF1EA" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                  </Border>
+                </Grid>
               </StackPanel>
               <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="8,0,0,12">
                 <Button x:Name="SendButton" Content="Send" Click="SendMessage" Background="#C1DAA6" Foreground="#111B17" MinWidth="104"><Button.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="NoWrap" Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"/></DataTemplate></Button.ContentTemplate></Button>

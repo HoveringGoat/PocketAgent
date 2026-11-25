@@ -71,6 +71,8 @@ Messages preserve user, assistant and activity roles. Commands and provider acti
 
 ## Desktop conversations
 
+Drag one PNG or JPEG from File Explorer over **Message Codex**. When the composer highlights and says **Drop image to attach**, release the file to preview it. You can edit the caption or remove the image before sending. If the hovered file is unsupported or a draft already has an image, the composer shows what to do.
+
 Copy an image or screenshot and paste it into **Message Codex** with Ctrl+V or the Paste menu. On Android, long-press the composer and choose **Paste**, or paste an image from a compatible keyboard. Check the thumbnail, choose **Remove image** if needed, then send it with or without a caption. Each draft holds one pasted image and keeps it until Send succeeds, you remove it, or you close the app. On Android, image paste requires desktop/server 0.3.45 or later. If you connect through a separate relay node, update it to 0.3.45 or later too so it can carry larger images. Remove the image to schedule the text.
 
 Open **Edit conversation** from the pencil icon beside the conversation tabs to rename or pin the conversation, or manage device access. The **Reset conversation** icon starts a clean Codex thread with the same name, folder, model, reasoning, pin state and device access after confirmation, then archives the old transcript. Reset is unavailable while work or scheduled delivery is active. The status bar shows elapsed work, model, and reasoning. The Stop icon is available during an active turn.
@@ -123,7 +125,7 @@ node --test tests/relay.test.mjs
 
 The relay checks verify encrypted routing, managed certificate trust, and Android pairing on an isolated emulator. Router reachability and a real Codex inference turn require separate acceptance tests.
 
-For image paste, use `dotnet run --project tests/PocketAgent.DesktopChecks -- --conversation-ui` for Windows preview and layout checks and `node --test --test-name-pattern 'pasted images' tests/native.test.mjs` for provider routing against the fixture. Build the Android debug APK, set `POCKETAGENT_TEST_ANDROID` to an isolated emulator serial, and set `POCKETAGENT_TEST_ANDROID_IMAGE_PASTE=1` before running `node --test tests/android.test.mjs`. The Android check exercises native paste, plain text paste, preview removal, image-only send, and the composer with the keyboard open.
+For image attachments, use `dotnet run --project tests/PocketAgent.DesktopChecks -- --conversation-ui` for Windows routed file-drop, preview, and layout checks and `node --test --test-name-pattern 'pasted images' tests/native.test.mjs` for provider routing against the fixture. Build the Android debug APK, set `POCKETAGENT_TEST_ANDROID` to an isolated emulator serial, and set `POCKETAGENT_TEST_ANDROID_IMAGE_PASTE=1` before running `node --test tests/android.test.mjs`. The Android check exercises native paste, plain text paste, preview removal, image-only send, and the composer with the keyboard open.
 
 ## Diagnostics
 

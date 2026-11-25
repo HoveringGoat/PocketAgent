@@ -38,7 +38,7 @@ internal static class ConversationUiChecks
             window.Close();
             if (startupValue is not null) startup.SetValue("PocketAgent", startupValue, startupKind);
         }
-        Console.WriteLine("PASS desktop conversation scrolling, status layout, edit action, grouped activity, streamed Markdown and standalone image viewing.");
+        Console.WriteLine("PASS desktop conversation layout, composer image paste and drop, scrolling, edit action, grouped activity, streamed Markdown and standalone image viewing.");
     }
 
     private static void CheckTranscript(MainWindow window, string root)
@@ -78,6 +78,7 @@ internal static class ConversationUiChecks
         window.Height = window.MinHeight;
         window.Show();
         CheckComposerAttachment(window, snapshot, variant);
+        CheckComposerFileDrop(window, variant);
         var render = typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!;
         render.Invoke(window, [snapshot]);
         WaitFor(() => scroll.ScrollableHeight > 0 && NearBottom(scroll), "initial live edge", () => $"{scroll.VerticalOffset}/{scroll.ScrollableHeight}");
@@ -247,6 +248,89 @@ internal static class ConversationUiChecks
         remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         if (attachment.Visibility != Visibility.Collapsed || composer.Text != caption || !schedule.IsEnabled)
             throw new InvalidOperationException("Removing the image must preserve the text and restore scheduling.");
+        composer.Clear();
+    }
+
+    private static void CheckComposerFileDrop(MainWindow window, string variant)
+    {
+        var png = Path.Combine(variant, "drag-fixture.png");
+        var jpeg = Path.Combine(variant, "drag-fixture.jpg");
+        var invalid = Path.Combine(variant, "invalid-fixture.png");
+        File.WriteAllBytes(png, Convert.FromBase64String(CreateImageFixture()));
+        var jpgEncoder = new JpegBitmapEncoder();
+        jpgEncoder.Frames.Add(BitmapFrame.Create(new Uri(png), BitmapCreateOptions.None, BitmapCacheOption.OnLoad));
+        using (var output = File.Create(jpeg)) jpgEncoder.Save(output);
+        File.WriteAllText(invalid, "Invalid image fixture");
+
+        var composer = (TextBox)window.FindName("Composer");
+        var target = (Grid)window.FindName("ComposerDropTarget");
+        var hint = (Border)window.FindName("ComposerDropHint");
+        var label = (TextBlock)window.FindName("ComposerDropHintLabel");
+        var preview = (Image)window.FindName("ComposerPreview");
+        var attachment = (DockPanel)window.FindName("ComposerAttachment");
+        var remove = attachment.Children.OfType<Button>().Single();
+        var send = (Button)window.FindName("SendButton");
+        var errors = (TextBlock)window.FindName("ErrorDisplay");
+        const string caption = "Keep this draft while attaching an image.";
+        composer.Text = caption;
+
+        var constructor = typeof(DragEventArgs).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+        DragDropEffects Drag(RoutedEvent action, params string[] paths)
+        {
+            // Exercise the preview route from the TextBox, where WPF has its own drop handling.
+            var data = new DataObject(DataFormats.FileDrop, paths);
+            var args = (DragEventArgs)constructor.Invoke([data, DragDropKeyStates.LeftMouseButton,
+                DragDropEffects.Copy | DragDropEffects.Move, composer, new Point(10, 10)]);
+            args.RoutedEvent = action;
+            composer.RaiseEvent(args);
+            return args.Effects;
+        }
+
+        foreach (var (width, height) in new[] { (window.MinWidth, window.MinHeight), (1150d, 820d) })
+        {
+            window.Width = width;
+            window.Height = height;
+            window.UpdateLayout();
+            if (!target.AllowDrop || Drag(DragDrop.PreviewDragOverEvent, png) != DragDropEffects.Copy || !hint.IsVisible ||
+                label.Text != "Drop image to attach" || hint.IsHitTestVisible)
+                throw new InvalidOperationException("Dragging a PNG over the composer must show the copy drop target.");
+            window.UpdateLayout();
+            var hintBounds = hint.TransformToAncestor(target).TransformBounds(new Rect(hint.RenderSize));
+            var labelBounds = label.TransformToAncestor(hint).TransformBounds(new Rect(label.RenderSize));
+            if (!new Rect(target.RenderSize).Contains(hintBounds) || !new Rect(hint.RenderSize).Contains(labelBounds) ||
+                LayoutInformation.GetLayoutClip(label) is not null)
+                throw new InvalidOperationException($"The drop hint clips at {width} × {height}.");
+            Capture(window, Path.Combine(variant, $"image-drag-hover-{width}-{height}.png"));
+            Drag(DragDrop.PreviewDragLeaveEvent, png);
+            if (hint.IsVisible) throw new InvalidOperationException("Leaving the composer must clear the drop hint.");
+
+            var imagePath = width == window.MinWidth ? png : jpeg;
+            if (Drag(DragDrop.PreviewDropEvent, imagePath) != DragDropEffects.Copy)
+                throw new InvalidOperationException("Dropping a single image file must use the copy effect.");
+            WaitFor(() => preview.Source is BitmapSource { PixelWidth: 320, PixelHeight: 180 }, "decoded dropped image");
+            if (composer.Text != caption || !send.IsEnabled || hint.IsVisible)
+                throw new InvalidOperationException("Dropping an image must preserve the caption and leave it ready to send.");
+            window.UpdateLayout();
+            Capture(window, Path.Combine(variant, $"image-dropped-{width}-{height}.png"));
+            if (Drag(DragDrop.PreviewDragOverEvent, jpeg) != DragDropEffects.None ||
+                label.Text != "Remove the current image before dropping another." || preview.Source is null)
+                throw new InvalidOperationException("A second file must leave the current attachment in place.");
+            window.UpdateLayout();
+            var rejectionBounds = label.TransformToAncestor(hint).TransformBounds(new Rect(label.RenderSize));
+            if (!new Rect(hint.RenderSize).Contains(rejectionBounds) || LayoutInformation.GetLayoutClip(label) is not null)
+                throw new InvalidOperationException($"The rejected-drop hint clips at {width} × {height}.");
+            Capture(window, Path.Combine(variant, $"image-drag-rejected-{width}-{height}.png"));
+            Drag(DragDrop.PreviewDragLeaveEvent, jpeg);
+            remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }
+        if (Drag(DragDrop.PreviewDragOverEvent, png, jpeg) != DragDropEffects.None ||
+            Drag(DragDrop.PreviewDragOverEvent, Path.ChangeExtension(png, ".txt")) != DragDropEffects.None)
+            throw new InvalidOperationException("The composer must reject multiple files and unsupported formats.");
+        Drag(DragDrop.PreviewDropEvent, invalid);
+        WaitFor(() => errors.Text.Contains("dropped image", StringComparison.OrdinalIgnoreCase), "unreadable drop feedback");
+        if (composer.Text != caption || preview.Source is not null || !send.IsEnabled)
+            throw new InvalidOperationException("The composer must preserve the caption after an unreadable drop.");
+        errors.Text = "";
         composer.Clear();
     }
 
