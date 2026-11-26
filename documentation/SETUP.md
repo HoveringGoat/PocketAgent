@@ -79,7 +79,7 @@ While stopped, choose a private interface under Wi-Fi setup and start the server
 
 Android stores each server's origin, pin and bearer token in its encrypted vault. Servers keep separate tabs, drafts, usage and uncertain-delivery state. The selected conversation exposes Rename, Model/reasoning, Pin, Archive, Reset and archived-history actions. Reset confirms before creating a clean conversation with the same name, folder, model, reasoning, pin state and device access; the previous transcript is archived rather than deleted. Devices are paired globally; conversation access is granted separately by the desktop. Ungranted devices cannot see a conversation.
 
-Messages preserve user, assistant and activity roles. Commands and provider activity remain collapsed. History is bounded and cursor-paginated; refreshing does not replay a prompt. Images are fetched through the authenticated conversation image endpoint.
+Messages preserve user, assistant and activity roles. Assistant and user message text is rendered as selectable Markdown on Android, including headings, emphasis, code, quotes, lists, tables, and safe HTTP(S) links; streamed assistant updates use the same renderer. Commands and provider activity remain collapsed. History is bounded and cursor-paginated; refreshing does not replay a prompt. Images are fetched through the authenticated conversation image endpoint.
 
 ## Desktop conversations
 
@@ -95,10 +95,20 @@ On desktop or Android, open **Model and reasoning** on the conversation. The two
 
 Scroll up to read earlier messages while work continues and select **Jump to latest** to follow new output again. Expand an activity group to see the individual actions. Select text in messages, formatted agent replies, activity details, or conversation errors and press **Ctrl+C** to copy it. Select an image thumbnail to open the image at a larger size.
 
+In the desktop composer, Up on the first line moves the caret to that line's start, and Down on the last line moves it to that line's end. Arrows between interior lines retain normal multiline movement; Ctrl+Enter still sends.
+
 The focused desktop conversation check uses the native WPF window and captures layouts at 800×580 and 1150×820 with Large scaling.
 
 ```powershell
 dotnet run --project tests/PocketAgent.DesktopChecks -c Release -- --conversation-ui
+```
+
+The Android source check uses the pinned Gradle wrapper and JDK 17 or 21:
+
+```powershell
+Push-Location src/PocketAgent.Android
+./gradlew.bat :app:compileDebugJavaWithJavac --no-daemon
+Pop-Location
 ```
 
 ## Usage and scheduled messages

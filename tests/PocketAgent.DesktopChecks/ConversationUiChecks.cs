@@ -8,6 +8,7 @@ using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -79,6 +80,7 @@ internal static class ConversationUiChecks
         window.Show();
         CheckComposerAttachment(window, snapshot, variant);
         CheckComposerFileDrop(window, variant);
+        CheckComposerArrowNavigation(window);
         var render = typeof(MainWindow).GetMethod("RenderTranscript", BindingFlags.NonPublic | BindingFlags.Instance)!;
         render.Invoke(window, [snapshot]);
         WaitFor(() => scroll.ScrollableHeight > 0 && NearBottom(scroll), "initial live edge", () => $"{scroll.VerticalOffset}/{scroll.ScrollableHeight}");
@@ -331,6 +333,31 @@ internal static class ConversationUiChecks
         if (composer.Text != caption || preview.Source is not null || !send.IsEnabled)
             throw new InvalidOperationException("The composer must preserve the caption after an unreadable drop.");
         errors.Text = "";
+        composer.Clear();
+    }
+
+    private static void CheckComposerArrowNavigation(MainWindow window)
+    {
+        var composer = (TextBox)window.FindName("Composer");
+        composer.Text = "first line\nmiddle line\nlast line";
+        composer.SelectionLength = 0;
+        composer.CaretIndex = "first line".Length;
+        var up = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, 0, Key.Up)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent
+        };
+        composer.RaiseEvent(up);
+        if (!up.Handled || composer.CaretIndex != 0)
+            throw new InvalidOperationException("Up on the first composer line must move the caret to its start.");
+
+        composer.CaretIndex = composer.Text.Length - "last line".Length;
+        var down = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, 0, Key.Down)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent
+        };
+        composer.RaiseEvent(down);
+        if (!down.Handled || composer.CaretIndex != composer.Text.Length)
+            throw new InvalidOperationException("Down on the last composer line must move the caret to its end.");
         composer.Clear();
     }
 

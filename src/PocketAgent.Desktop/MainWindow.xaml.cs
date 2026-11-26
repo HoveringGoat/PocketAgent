@@ -1157,7 +1157,18 @@ public partial class MainWindow : Window
     private async void SendMessage(object sender, RoutedEventArgs e) => await Submit();
     private async void ComposerKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key is (Key.Up or Key.Down) && MoveComposerCaretToBoundary(Composer, e.Key)) { e.Handled = true; return; }
         if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { e.Handled = true; await Submit(); }
+    }
+    private static bool MoveComposerCaretToBoundary(TextBox composer, Key key)
+    {
+        if (key is not (Key.Up or Key.Down) || Keyboard.Modifiers != ModifierKeys.None || composer.LineCount == 0) return false;
+        var line = composer.GetLineIndexFromCharacterIndex(composer.CaretIndex);
+        var target = key == Key.Up ? 0 : composer.LineCount - 1;
+        if ((key == Key.Up && line != 0) || (key == Key.Down && line != composer.LineCount - 1)) return false;
+        var start = composer.GetCharacterIndexFromLineIndex(target);
+        composer.CaretIndex = key == Key.Up ? start : start + composer.GetLineLength(target);
+        return true;
     }
     private async Task Submit()
     {

@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.48 - 2026-11-26
+
+- Move the composer caret to the first-line start or last-line end when Up or Down reaches the edge of a multiline draft.
+
 ## 0.3.47 - 2026-11-24
 
 - Verify and update a saved upstream relay address while preserving the existing enrollment.

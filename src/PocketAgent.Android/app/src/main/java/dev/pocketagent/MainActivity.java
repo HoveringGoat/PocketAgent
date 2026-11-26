@@ -959,8 +959,8 @@ public final class MainActivity extends Activity {
             }
           } catch (Exception ignored) {
           }
-          text = label(item.optString("text"), 16);
-          text.setTextIsSelectable(true);
+          text = label("", 16);
+          MarkdownText.apply(text, item.optString("text"));
         } else {
           String summary = type + " - " + item.optString("status");
           boolean expanded = expandedItems.contains(item.optString("id"));
@@ -1048,7 +1048,7 @@ public final class MainActivity extends Activity {
       JSONObject item = items.optJSONObject(i);
       String type = item.optString("type");
       TextView row = renderedRows.get(item.optString("id"));
-      if ("userMessage".equals(type) || "agentMessage".equals(type)) row.setText(item.optString("text"));
+      if ("userMessage".equals(type) || "agentMessage".equals(type)) MarkdownText.apply(row, item.optString("text"));
       else {
         String summary = type + " - " + item.optString("status");
         row.setText(expandedItems.contains(item.optString("id")) ? summary + "\n" + item.optString("detail") : summary);

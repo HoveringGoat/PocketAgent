@@ -493,7 +493,8 @@ public final class ConversationScreenView {
     LinearLayout row = new LinearLayout(host);
     row.setOrientation(LinearLayout.VERTICAL);
     row.setGravity(outgoing ? Gravity.END : Gravity.START);
-    TextView message = label(text, 15);
+    TextView message = label("", 15);
+    MarkdownText.apply(message, text);
     message.setTextColor(outgoing ? BACKGROUND : TEXT);
     message.setBackground(surface(outgoing ? ACCENT : SURFACE, 12, Color.TRANSPARENT));
     message.setPadding(dp(13), dp(9), dp(13), dp(9));

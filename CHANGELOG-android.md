@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.15 - 2026-11-26
+
+- Render Markdown in conversation messages, including formatted text, code, lists, tables, quotes, and safe links, while preserving formatting during streamed updates.
+
 ## 0.4.14 - 2026-11-24
 
 - Update a saved server address by entering the new endpoint or scanning its pairing QR while preserving pairing and drafts.
