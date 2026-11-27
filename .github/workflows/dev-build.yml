@@ -54,3 +54,20 @@ jobs:
           name: pocketagent-android-debug-${{ github.sha }}
           path: src/PocketAgent.Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  prune:
+    name: Keep the latest three dev builds
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
+        with:
+          script: |
+            const prune = require('./.github/scripts/prune-dev-artifacts.cjs');
+            await prune(github, context, core);

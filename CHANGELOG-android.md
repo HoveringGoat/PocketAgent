@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.17 - 2026-11-27
+
+- Retain debug APK artifacts for the three latest complete development builds.
+
 ## 0.4.16 - 2026-11-27
 
 - Build and lint the Android debug APK on pushes to the development branch and make it available from the GitHub Actions run.

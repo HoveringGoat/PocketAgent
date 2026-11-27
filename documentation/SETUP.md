@@ -139,7 +139,9 @@ Every push to `dev` starts [Dev builds](../.github/workflows/dev-build.yml) on G
 
 Open the completed run under **Actions → Dev builds** and download the Windows installer or Android debug APK from **Artifacts**. Artifact names include the source commit SHA. These are test builds. Use the Android APK on an emulator or dedicated test device because each fresh runner uses a local debug signing key and Android enforces signing compatibility on upgrades.
 
-The workflow uses read-only repository permissions and runs without signing or publishing secrets. GitHub Releases are created separately through the release process.
+After both build jobs succeed, a cleanup job keeps the three newest `dev` runs with both artifacts available. It deletes build artifacts from runs older than those three. Newer partial runs keep their available artifacts so a failed build job can be retried. Run history and logs remain available. Artifacts also expire under the repository's age-based retention setting.
+
+The build jobs use read-only repository permissions. The cleanup job uses the workflow token with Actions write permission to delete artifacts. GitHub Releases are created separately through the release process.
 
 ## Android app updates
 
