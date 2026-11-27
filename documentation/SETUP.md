@@ -133,6 +133,14 @@ With **Check for updates on startup** enabled, a newer desktop release with a ch
 
 Desktop updates keep the main window open under a modal while the installer downloads and its SHA-256 checksum is verified. The modal shows a percentage when the download server supplies a content length. `UpdateDownloadDialog` receives progress over a per-update, current-user named pipe. The separately launched updater displays its own window before signaling readiness. The desktop checks for active work before downloading and again before authorizing installation and closing. An accepted startup offer stays queued if work begins during the download. The updater window stays visible during silent installation and restart, then closes after the launched desktop writes its version-matched startup confirmation. Preparation failures leave the desktop open. Install and startup failures leave a dismissible updater window with the log location documented below.
 
+### Development builds on GitHub Actions
+
+Every push to `dev` starts [Dev builds](../.github/workflows/dev-build.yml) on GitHub-hosted Windows Server 2025 runners. The Windows job uses the SDK in `global.json`, `scripts/Build.ps1 -Target Desktop -Publish`, and the repository's Inno Setup definition. The Android job uses JDK 17, the runner's Android SDK, and `scripts/Build-Android.ps1 -DebugOnly` to assemble and lint the debug APK.
+
+Open the completed run under **Actions → Dev builds** and download the Windows installer or Android debug APK from **Artifacts**. Artifact names include the source commit SHA. These are test builds. Use the Android APK on an emulator or dedicated test device because each fresh runner uses a local debug signing key and Android enforces signing compatibility on upgrades.
+
+The workflow uses read-only repository permissions and runs without signing or publishing secrets. GitHub Releases are created separately through the release process.
+
 ## Android app updates
 
 Open **Settings > Check for updates** or enable **Check for updates on startup**. The offer includes the Android release notes. Tap **Download and install**. If prompted, open Android Settings, enable **Allow from this source** for PocketAgent, and return. PocketAgent starts downloading after permission is granted. The dialog shows a percentage when the server supplies a size. **Cancel** stops the transfer. If anything fails, **Retry** starts a fresh attempt and **Open release** opens GitHub for manual recovery.

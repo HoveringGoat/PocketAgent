@@ -1,0 +1,56 @@
+name: Dev builds
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Windows installer
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: global.json
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          ./scripts/Build.ps1 -Target Desktop -Publish
+          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version.Trim()
+          $outputDir = Join-Path $PWD "artifacts/releases/$version"
+          $sourceDir = Join-Path $outputDir 'desktop'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" `
+            "/DOutputBaseFilename=PocketAgent-$version-dev-Setup" "/DProjectRoot=$PWD" installer/PocketAgent.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed to compile the dev installer.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pocketagent-windows-${{ github.sha }}
+          path: artifacts/releases/*/PocketAgent-*-dev-Setup.exe
+          if-no-files-found: error
+
+  android:
+    name: Android debug APK
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build and lint Android debug APK
+        shell: pwsh
+        run: ./scripts/Build-Android.ps1 -DebugOnly
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pocketagent-android-debug-${{ github.sha }}
+          path: src/PocketAgent.Android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

@@ -4,6 +4,10 @@ This file covers the Android companion application.
 
 ## Unreleased
 
+## 0.4.16 - 2026-11-27
+
+- Build and lint the Android debug APK on pushes to the development branch and make it available from the GitHub Actions run.
+
 ## 0.4.15 - 2026-11-26
 
 - Render Markdown in conversation messages, including formatted text, code, lists, tables, quotes, and safe links, while preserving formatting during streamed updates.

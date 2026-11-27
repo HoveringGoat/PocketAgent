@@ -4,6 +4,10 @@ This file covers the Windows desktop application and the local PocketAgent serve
 
 ## Unreleased
 
+## 0.3.49 - 2026-11-27
+
+- Build a Windows installer on pushes to the development branch and make it available from the GitHub Actions run.
+
 ## 0.3.48 - 2026-11-26
 
 - Move the composer caret to the first-line start or last-line end when Up or Down reaches the edge of a multiline draft.
